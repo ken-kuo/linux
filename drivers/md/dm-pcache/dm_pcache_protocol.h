@@ -8,8 +8,9 @@
  * Protocol version history:
  *   1 — Phase 1: HANDSHAKE / DATA / ACK / NACK only, full-resync on every reconnect
  *   2 — Phase 2: + SYNC_PARAMS / BITMAP / RS_DATA / RS_ACK / OUT_OF_SYNC / PING
+ *   3 — Phase 3.5: + DEMOTE_REQ / DEMOTE_ACK for coordinated promote/demote
  */
-#define PCACHE_PROTO_VERSION	2
+#define PCACHE_PROTO_VERSION	3
 #define PCACHE_DEFAULT_PORT	9764
 
 enum pcache_conn_state {
@@ -49,7 +50,22 @@ enum pcache_packet_type {
 	PCACHE_P_OUT_OF_SYNC	= 0x15,	/* mark region dirty on peer */
 	PCACHE_P_PING		= 0x20,	/* keep-alive request */
 	PCACHE_P_PING_ACK	= 0x21,	/* keep-alive reply */
+
+	/* Phase 3.5 — coordinated demote handshake (B1) */
+	PCACHE_P_DEMOTE_REQ	= 0x30,	/* peer asks me to demote (it wants to promote) */
+	PCACHE_P_DEMOTE_ACK	= 0x31,	/* I have demoted (or was already Secondary) */
 };
+
+/* Phase 3.5 — body for P_DEMOTE_REQ / P_DEMOTE_ACK (carried inline after
+ * pcache_packet_header). */
+struct pcache_demote_pkt {
+	__le32	initiator_node_id;	/* who is about to promote */
+	__le32	flags;			/* reserved for force / status hints */
+	__le32	status;			/* on ACK: 0 = OK, !=0 = errno */
+	__le32	reserved;
+} __packed;
+
+#define PCACHE_DM_PKT_SIZE	sizeof(struct pcache_demote_pkt)
 
 #define PCACHE_F_ACK		BIT(0)
 #define PCACHE_F_HANDSHAKE	BIT(1)
@@ -94,6 +110,7 @@ struct pcache_bitmap_pkt {
 
 #define PCACHE_BM_ENC_RAW	0
 #define PCACHE_BM_ENC_RLE	1
+#define PCACHE_BM_ENC_RUN	2	/* Step 6: contiguous set-bits run, no payload */
 
 /* Phase 2 — single resync data block (header is reused: pcache_packet_header) */
 struct pcache_rs_data_pkt {
