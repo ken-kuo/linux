@@ -8,6 +8,7 @@
 #include "dm_pcache.h"
 #include "dm_pcache_bitmap.h"
 #include "dm_pcache_net.h"
+#include "dm_pcache_registry.h"
 #include "cache.h"
 #include "pcache_internal.h"
 
@@ -46,6 +47,137 @@ static void pcache_set_repl_state(struct pcache_peer *peer,
 }
 
 /*
+ * Phase 3.5 Step A3 — id-based connection direction.
+ * Lower node_id initiates the outbound TCP connect; higher node_id waits
+ * for the accept_thread to dispatch the inbound socket. Symmetric across
+ * the pair, so each connection is opened exactly once regardless of which
+ * side is Primary.
+ */
+static inline bool pcache_peer_is_initiator(struct pcache_peer *peer)
+{
+	return peer->pcache->my_node_id < (u32)peer->node_id;
+}
+
+/*
+ * Phase 3 Step 6 — bilateral bitmap exchange helpers.
+ *
+ * After sync_params + role decision but before any P_RS_DATA flows, each
+ * side dumps its dirty bitmap to the peer. The peer ORs the received bits
+ * into its local bitmap so the SYNC_SOURCE drain in do_resync covers
+ * regions either side marked out-of-sync.
+ *
+ * Wire encoding: PCACHE_BM_ENC_RUN — one P_BITMAP packet per contiguous
+ * set-bits run with header-only (no payload). End-of-stream marker is a
+ * P_BITMAP_DONE header (length=0), reused from the resync protocol.
+ */
+#define PCACHE_BM_EXCHANGE_MAX_RUN_BITS  (1U << 20)	/* up to 1M bits / packet */
+
+static int pcache_send_bitmap_run(struct socket *sock,
+				  u64 start_bit, u32 nr_bits)
+{
+	struct pcache_packet_header hdr = {
+		.type	= cpu_to_le16(PCACHE_P_BITMAP),
+		.length	= cpu_to_le16(PCACHE_BM_PKT_SIZE),
+	};
+	struct pcache_bitmap_pkt bp = {
+		.start_bit = cpu_to_le64(start_bit),
+		.nr_bits   = cpu_to_le32(nr_bits),
+		.encoding  = cpu_to_le32(PCACHE_BM_ENC_RUN),
+	};
+	u8 buf[sizeof(hdr) + sizeof(bp)];
+
+	memcpy(buf, &hdr, sizeof(hdr));
+	memcpy(buf + sizeof(hdr), &bp, sizeof(bp));
+	return pcache_send_all(sock, buf, sizeof(buf));
+}
+
+static int pcache_send_bitmap_full(struct pcache_peer *peer, struct socket *sock)
+{
+	struct pcache_bitmap *bm = peer->bm;
+	struct pcache_packet_header done = {
+		.type   = cpu_to_le16(PCACHE_P_BITMAP_DONE),
+		.length = 0,
+	};
+	u64 cursor = 0;
+	u32 nr_bits;
+	int ret, runs_sent = 0;
+
+	if (bm) {
+		while (pcache_bm_find_next_dirty(bm, &cursor, &nr_bits,
+						 PCACHE_BM_EXCHANGE_MAX_RUN_BITS)) {
+			ret = pcache_send_bitmap_run(sock, cursor, nr_bits);
+			if (ret)
+				return ret;
+			runs_sent++;
+			cursor += nr_bits;
+		}
+	}
+	ret = pcache_send_packet(sock, &done);
+	if (ret)
+		return ret;
+
+	pcache_info("bitmap-exchange: sent %d run(s)\n", runs_sent);
+	return 0;
+}
+
+static int pcache_recv_bitmap_merge(struct pcache_peer *peer, struct socket *sock)
+{
+	struct pcache_bitmap *bm = peer->bm;
+	struct pcache_packet_header hdr;
+	struct pcache_bitmap_pkt bp;
+	int ret, runs_recv = 0;
+
+	while (1) {
+		ret = pcache_recv_all(sock, &hdr, sizeof(hdr));
+		if (ret)
+			return ret;
+
+		if (le16_to_cpu(hdr.type) == PCACHE_P_BITMAP_DONE)
+			break;
+		if (le16_to_cpu(hdr.type) != PCACHE_P_BITMAP)
+			return -EPROTO;
+
+		ret = pcache_recv_all(sock, &bp, sizeof(bp));
+		if (ret)
+			return ret;
+
+		if (le32_to_cpu(bp.encoding) != PCACHE_BM_ENC_RUN)
+			return -EPROTONOSUPPORT;
+
+		if (bm) {
+			u64 start = le64_to_cpu(bp.start_bit);
+			u32 nbits = le32_to_cpu(bp.nr_bits);
+			u64 sector = start * PCACHE_BM_SECTORS_PER_BIT;
+			u32 size = nbits * PCACHE_BM_BLOCK_SIZE;
+
+			pcache_bm_set_range(bm, sector, size);
+		}
+		runs_recv++;
+	}
+
+	pcache_info("bitmap-exchange: received %d run(s)\n", runs_recv);
+	return 0;
+}
+
+/* Symmetric send-then-recv (initiator) / recv-then-send (non-initiator). */
+static int pcache_exchange_bitmaps(struct pcache_peer *peer,
+				   struct socket *sock, bool initiator)
+{
+	int ret;
+
+	if (initiator) {
+		ret = pcache_send_bitmap_full(peer, sock);
+		if (ret)
+			return ret;
+		return pcache_recv_bitmap_merge(peer, sock);
+	}
+	ret = pcache_recv_bitmap_merge(peer, sock);
+	if (ret)
+		return ret;
+	return pcache_send_bitmap_full(peer, sock);
+}
+
+/*
  * Phase 2 — decide which role this node plays after exchanging sync_params.
  * Only consults generation counters and the NEED_FULL flag; bitmap content
  * comparison is left to Step 7 (P_BITMAP exchange).
@@ -54,7 +186,7 @@ static enum pcache_repl_state
 pcache_decide_sync_role(struct pcache_peer *peer,
 			const struct pcache_sync_params_pkt *peer_sp)
 {
-	struct pcache_bitmap *bm = peer->pcache->bitmap;
+	struct pcache_bitmap *bm = peer->bm;
 	u64 my_gen, my_peer_gen, peer_gen, peer_my_gen;
 	u32 my_flags, peer_flags;
 	bool primary = peer->is_primary;
@@ -118,7 +250,7 @@ static int pcache_exchange_sync_params(struct pcache_peer *peer,
 				       struct pcache_sync_params_pkt *peer_sp,
 				       bool initiator)
 {
-	struct pcache_bitmap *bm = peer->pcache->bitmap;
+	struct pcache_bitmap *bm = peer->bm;
 	u64 my_gen = 0, my_peer_gen = 0, my_nr_bits = 0;
 	u32 my_flags = 0;
 	int ret;
@@ -194,7 +326,7 @@ static void pcache_handle_ack(struct pcache_peer *peer,
 	 * next resync covers it. (ACK path: bitmap should already be clean
 	 * for this region; nothing to do.) */
 	if (!success)
-		pcache_bm_set_range(peer->pcache->bitmap,
+		pcache_bm_set_range(peer->bm,
 				    found->sector, found->size);
 
 	pcache_req_put(found->pcache_req, success ? 0 : -EIO);
