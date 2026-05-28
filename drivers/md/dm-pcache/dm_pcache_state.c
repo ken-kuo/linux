@@ -369,6 +369,13 @@ static int pcache_handle_rs_data_recv(struct pcache_peer *peer,
 	if (ret)
 		pcache_err("secondary: RS_DATA write_to_cache failed: %d\n", ret);
 
+	/* Step 6 fix — clear the dirty bits we just brought into sync. Without
+	 * this, bits OR'd in during bilateral bitmap exchange (Step 6) would
+	 * stay set after resync, making sync_params at the next handshake see
+	 * Secondary as having unsynced data and decide HALT on gen mismatch. */
+	if (!ret && peer->bm)
+		pcache_bm_clear_range(peer->bm, sector, size);
+
 	{
 		struct pcache_packet_header ack;
 
@@ -437,78 +444,81 @@ free_data:
 /*
  * Secondary worker thread.
  *
- * Wait for the listen socket, accept(), exchange handshake, then loop on
- * (recv header, dispatch). On disconnect, return to accept().
+ * Phase 3.5 Step A3 — direction-aware socket acquisition:
+ *   - If we are the initiator (my_node_id < peer.node_id), open the
+ *     outbound TCP connection and do the handshake ourselves.
+ *   - Otherwise, wait for accept_thread to install peer->sock (handshake
+ *     already done there).
+ * After that the role-based recv loop runs unchanged.
  */
 static int pcache_secondary_worker(void *arg)
 {
 	struct pcache_peer *peer = arg;
 	struct socket *sock = NULL;
 	struct pcache_packet_header hdr;
+	bool initiator = pcache_peer_is_initiator(peer);
 	int ret;
 
 	allow_signal(SIGTERM);
 
-	if (!peer->listen_sock) {
-		wait_event_interruptible(peer->wait_for_listen,
-			peer->listen_sock || kthread_should_stop());
+wait_sock:
+	if (sock) {
+		sock_release(sock);
+		sock = NULL;
+	}
+
+	if (initiator) {
+		/* outbound connect retry loop */
+		while (!kthread_should_stop()) {
+			ret = pcache_create_peer_socket(peer);
+			if (!ret)
+				break;
+			pcache_err("secondary[initiator]: connect failed: %d\n", ret);
+			set_current_state(TASK_INTERRUPTIBLE);
+			schedule_timeout(3 * HZ);
+		}
 		if (kthread_should_stop())
 			return 0;
-	}
+		sock = peer->sock;
 
-connect:
-	while (!kthread_should_stop()) {
-		if (sock) {
-			sock_release(sock);
-			sock = NULL;
-		}
-
-		ret = kernel_accept(peer->listen_sock, &sock, 0);
-		if (ret < 0) {
-			pcache_err("secondary: accept failed: %d\n", ret);
+		ret = pcache_send_handshake(sock, (int)peer->pcache->my_node_id);
+		if (ret) {
+			pcache_err("secondary[initiator]: handshake send failed: %d\n", ret);
+			spin_lock(&peer->sock_lock);
+			peer->sock = NULL;
+			peer->state = PCACHE_C_CONNECTING;
+			spin_unlock(&peer->sock_lock);
 			set_current_state(TASK_INTERRUPTIBLE);
 			schedule_timeout(HZ);
-			continue;
+			goto wait_sock;
 		}
-
-		/* Apply matching TCP tuning + SO_KEEPALIVE to the accepted sock
-		 * so silent-failure zombie connections get RST'd in ~50 s
-		 * instead of hanging the recv loop indefinitely. */
-		pcache_apply_socket_opts(sock);
-
-		peer->state = PCACHE_C_CONNECTING;
 		ret = pcache_recv_handshake(sock, NULL);
 		if (ret) {
-			pcache_err("secondary: HANDSHAKE recv failed: %d\n", ret);
-			continue;
+			pcache_err("secondary[initiator]: handshake recv failed: %d\n", ret);
+			spin_lock(&peer->sock_lock);
+			peer->sock = NULL;
+			peer->state = PCACHE_C_CONNECTING;
+			spin_unlock(&peer->sock_lock);
+			set_current_state(TASK_INTERRUPTIBLE);
+			schedule_timeout(HZ);
+			goto wait_sock;
 		}
-
-		ret = pcache_send_handshake(sock, peer->node_id);
-		if (ret) {
-			pcache_err("secondary: HANDSHAKE reply failed: %d\n", ret);
-			continue;
-		}
-
-		/*
-		 * Long timeout for data phase. kthread_should_stop() and a
-		 * shutdown from pcache_net_stop() handle teardown.
-		 */
-		pcache_sock_set_timeout(sock, 300 * HZ);
+	} else {
+		wait_event_interruptible(peer->wait_for_socket,
+			(peer->sock && peer->state == PCACHE_C_CONNECTED) ||
+			kthread_should_stop());
+		if (kthread_should_stop())
+			return 0;
 
 		spin_lock(&peer->sock_lock);
-		peer->sock = sock;
-		peer->state = PCACHE_C_CONNECTED;
+		sock = peer->sock;
 		spin_unlock(&peer->sock_lock);
-		break;
+		if (!sock)
+			goto wait_sock;
 	}
 
-	if (kthread_should_stop()) {
-		if (sock)
-			sock_release(sock);
-		return 0;
-	}
-
-	pcache_info("secondary: handshake complete, entering recv loop\n");
+	pcache_info("secondary: handshake complete (%s), entering recv loop\n",
+		    initiator ? "initiator" : "responder");
 
 	/* Phase 2 Step 5+8: exchange P_SYNC_PARAMS, compute role.
 	 * SYNC_TARGET stays in the recv loop and waits for P_RS_DATA followed
@@ -518,7 +528,7 @@ connect:
 		struct pcache_sync_params_pkt peer_sp = {0};
 		enum pcache_repl_state role;
 		int sp_ret = pcache_exchange_sync_params(peer, sock, &peer_sp,
-							 false);
+							 initiator);
 
 		if (sp_ret) {
 			pcache_err("secondary: sync_params exchange failed: %d\n",
@@ -528,19 +538,63 @@ connect:
 			spin_lock(&peer->sock_lock);
 			peer->sock = NULL;
 			spin_unlock(&peer->sock_lock);
-			goto connect;
+			sock_release(sock);
+			sock = NULL;
+			goto wait_sock;
 		}
 		peer->peer_generation = le64_to_cpu(peer_sp.generation);
 		role = pcache_decide_sync_role(peer, &peer_sp);
 		pcache_info("secondary: decided role = %s\n",
 			    pcache_repl_state_name(role));
+
+		/* Phase 3.5 Step A3 — bilateral bitmap exchange using id-based
+		 * initiator (was hardcoded false in Phase 3). */
+		if (role == PCACHE_R_SYNC_SOURCE ||
+		    role == PCACHE_R_SYNC_TARGET) {
+			int ex_ret;
+
+			pcache_set_repl_state(peer, PCACHE_R_BITMAP_EXCHANGE);
+			ex_ret = pcache_exchange_bitmaps(peer, sock, initiator);
+			if (ex_ret) {
+				pcache_err("secondary: bitmap-exchange failed: %d\n",
+					   ex_ret);
+				peer->state = PCACHE_C_CONNECTING;
+				pcache_set_repl_state(peer, PCACHE_R_OFF);
+				spin_lock(&peer->sock_lock);
+				peer->sock = NULL;
+				spin_unlock(&peer->sock_lock);
+				sock_release(sock);
+				sock = NULL;
+				goto wait_sock;
+			}
+		}
+
 		if (role == PCACHE_R_HALT) {
+			/* Phase 3 Step 12 — split-brain: stay in HALT until
+			 * operator runs dmsetup message resolve-split-brain.
+			 * Do NOT fall through to the recv loop (which would
+			 * accept P_DATA from a peer we've declared diverged). */
+			peer->split_brain = true;
 			pcache_set_repl_state(peer, PCACHE_R_HALT);
+			pcache_dev_err(peer->pcache,
+				"split-brain detected for peer node_id=%d; halted (run dmsetup message resolve-split-brain to recover)\n",
+				peer->node_id);
+			while (!kthread_should_stop()) {
+				set_current_state(TASK_INTERRUPTIBLE);
+				schedule_timeout(HZ);
+			}
+			if (sock) {
+				spin_lock(&peer->sock_lock);
+				peer->sock = NULL;
+				spin_unlock(&peer->sock_lock);
+				sock_release(sock);
+			}
+			return 0;
 		} else if (role == PCACHE_R_SYNC_TARGET) {
 			pcache_set_repl_state(peer, PCACHE_R_SYNC_TARGET);
 			/* Recv loop below handles P_RS_DATA + P_BITMAP_DONE. */
 		} else {
-			pcache_bm_mark_synced(peer->pcache->bitmap,
+			pcache_bm_mark_synced(peer->bm,
 					      peer->peer_generation);
 			pcache_set_repl_state(peer, PCACHE_R_ESTABLISHED);
 		}
@@ -561,7 +615,9 @@ connect:
 			spin_lock(&peer->sock_lock);
 			peer->sock = NULL;
 			spin_unlock(&peer->sock_lock);
-			goto connect;
+			sock_release(sock);
+			sock = NULL;
+			goto wait_sock;
 		}
 
 		switch (le16_to_cpu(hdr.type)) {
@@ -581,10 +637,38 @@ connect:
 		case PCACHE_P_BITMAP_DONE:
 			/* Phase 2 Step 8: Primary finished sending resync.
 			 * Mark synced and transition to ESTABLISHED. */
-			pcache_bm_mark_synced(peer->pcache->bitmap,
+			pcache_bm_mark_synced(peer->bm,
 					      peer->peer_generation);
 			pcache_set_repl_state(peer, PCACHE_R_ESTABLISHED);
 			break;
+		case PCACHE_P_DEMOTE_REQ: {
+			/* Phase 3.5 B1 — peer is about to promote; we should
+			 * demote (already Secondary here, so no-op state-wise)
+			 * and ACK so the promoter can proceed. */
+			struct pcache_demote_pkt body;
+			int rc = pcache_recv_demote_body(sock, &body);
+
+			if (rc) {
+				pcache_err("secondary: DEMOTE_REQ body recv: %d\n", rc);
+				break;
+			}
+			pcache_dev_info(peer->pcache,
+				"DEMOTE_REQ from node_id=%u acknowledged\n",
+				le32_to_cpu(body.initiator_node_id));
+			pcache_send_demote_ack(sock, 0);
+			break;
+		}
+		case PCACHE_P_DEMOTE_ACK: {
+			struct pcache_demote_pkt body;
+			int rc = pcache_recv_demote_body(sock, &body);
+
+			if (rc)
+				break;
+			pcache_dev_info(peer->pcache,
+				"DEMOTE_ACK status=%u\n",
+				le32_to_cpu(body.status));
+			break;
+		}
 		case PCACHE_P_ACK:
 		case PCACHE_P_NACK:
 			/* Phase 1: secondary never sends DATA, so ACK/NACK
@@ -598,8 +682,12 @@ connect:
 		}
 	}
 
-	if (sock)
+	if (sock) {
+		spin_lock(&peer->sock_lock);
+		peer->sock = NULL;
+		spin_unlock(&peer->sock_lock);
 		sock_release(sock);
+	}
 	return 0;
 }
 
