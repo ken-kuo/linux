@@ -8,12 +8,15 @@
 #include "pcache_internal.h"
 
 struct dm_pcache;
+struct pcache_peer;
 
 #define PCACHE_BM_BLOCK_SHIFT		12U			/* 4 KiB / bit */
 #define PCACHE_BM_BLOCK_SIZE		(1U << PCACHE_BM_BLOCK_SHIFT)
 #define PCACHE_BM_SECTORS_PER_BIT	(PCACHE_BM_BLOCK_SIZE >> SECTOR_SHIFT)
 
-#define PCACHE_BM_MAGIC			0x504341434d423102ULL	/* "PCACMB1\2" */
+/* Phase 3.5 bumps magic — on-disk layout breaking change. Old Phase 2/3
+ * PMEM (PCACMB1\2 in slot 0 only) must be zero'd before mounting under 3.5. */
+#define PCACHE_BM_MAGIC			0x504341434d423103ULL	/* "PCACMB1\3" */
 
 /*
  * On-disk per-peer-slot header.  PCACHE_META_INDEX_MAX copies live at the
@@ -36,23 +39,28 @@ struct pcache_bm_header_onmedia {
 #define PCACHE_BM_F_RESYNC_IN_PROGRESS	BIT(1)
 
 /*
- * Phase 2 single dirty bitmap, attached to dm_pcache when distributed
- * networking is enabled. Tracks "this 4 KiB region differs from the peer
- * and needs to be (re-)sent on next reconnect".
+ * Phase 3.5 — Per-peer dirty bitmap.
  *
- * Step 1: pure RAM. Step 2 will add PMEM persistence.
+ * Each pcache_peer owns its own pcache_bitmap instance; the bitmap tracks
+ * regions THIS peer is currently out of sync on. Replaces Phase 2/3's
+ * single shared bitmap on pcache->bitmap.
+ *
+ * Per-peer PMEM persistence: bm->slot_idx is the registry slot index
+ * (0..PCACHE_BM_MAX_PEERS-1), and pmem_base/pmem_data point at this
+ * slot's reserved region on PMEM.
  */
 struct pcache_bitmap {
-	struct dm_pcache	*pcache;
+	struct pcache_peer	*peer;		/* owning peer (back-ref) */
+	struct dm_pcache	*pcache;	/* cached for convenience: peer->pcache */
 	unsigned long		*cache;		/* RAM working copy */
 	u64			nr_bits;
 	u64			nr_words;	/* DIV_ROUND_UP(nr_bits, BITS_PER_LONG) */
 	spinlock_t		lock;
 	atomic64_t		dirty_count;
 
-	/* PMEM mapping (Phase 2 Step 2) */
-	int			slot_idx;	/* which peer slot we occupy */
-	void			*pmem_base;	/* CACHE_DEV_BITMAP_SLOT(...) */
+	/* PMEM mapping — slot decided by registry slot index */
+	int			slot_idx;
+	void			*pmem_base;	/* CACHE_DEV_BITMAP_SLOT(cdev, slot_idx) */
 	void			*pmem_data;	/* pmem_base + DATA_OFF */
 	u32			nr_pages;	/* number of 4 KiB pages in pmem_data */
 
@@ -61,15 +69,17 @@ struct pcache_bitmap {
 	u8			meta_seq;	/* monotonic seq for header double-copy */
 	u8			meta_index;	/* which header copy is current */
 
-	/* Generation state mirrored from on-disk header */
+	/* Per-peer state mirrored to/from on-disk header.
+	 * `generation` is a snapshot of pcache->generation at last header flush
+	 * (replicated across all peers' slots for recovery redundancy). */
 	u64			generation;
 	u64			peer_gen_at_sync;
 	u32			flags;
-	bool			gen_dirty;	/* a new dirty bit was set this session */
 };
 
-int  pcache_bitmap_init(struct dm_pcache *pcache, u64 backing_sectors);
-void pcache_bitmap_exit(struct dm_pcache *pcache);
+int  pcache_peer_bitmap_init(struct pcache_peer *peer, u64 backing_sectors,
+			     int slot_idx);
+void pcache_peer_bitmap_exit(struct pcache_peer *peer);
 
 void pcache_bm_set_range(struct pcache_bitmap *bm, u64 sector, u32 size);
 void pcache_bm_clear_range(struct pcache_bitmap *bm, u64 sector, u32 size);
@@ -89,9 +99,9 @@ bool pcache_bm_find_next_dirty(struct pcache_bitmap *bm, u64 *start_bit,
 /* Phase 2 Step 2 — persistence */
 int  pcache_bm_flush_sync(struct pcache_bitmap *bm);
 
-/* Phase 2 Step 9 — generation bookkeeping
+/* Phase 3.5 — generation bookkeeping (was Phase 2 Step 9).
  * Called on transition into ESTABLISHED to record the peer's gen and
- * reset the "have I dirtied anything this session" flag. */
+ * (if no other peer is still ahead) reset the device-wide gen_dirty flag. */
 void pcache_bm_mark_synced(struct pcache_bitmap *bm, u64 peer_gen);
 
 #endif /* _DM_PCACHE_BITMAP_H */

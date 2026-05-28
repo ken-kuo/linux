@@ -10,6 +10,7 @@
 #include "cache_dev.h"
 #include "dm_pcache.h"
 #include "dm_pcache_bitmap.h"
+#include "dm_pcache_net.h"
 #include "pcache_internal.h"
 
 static void pcache_bm_header_flush(struct pcache_bitmap *bm);
@@ -57,9 +58,11 @@ void pcache_bm_set_range(struct pcache_bitmap *bm, u64 sector, u32 size)
 	u64 start_bit, end_bit, b;
 	long delta = 0;
 	bool bumped_gen = false;
+	struct dm_pcache *pcache;
 
 	if (!bm || !size)
 		return;
+	pcache = bm->pcache;
 
 	pcache_bm_range_to_bits(bm, sector, size, &start_bit, &end_bit);
 
@@ -71,19 +74,24 @@ void pcache_bm_set_range(struct pcache_bitmap *bm, u64 sector, u32 size)
 		}
 	}
 	pcache_bm_mark_range_pages_dirty(bm, start_bit, end_bit);
-
-	/* Phase 2 Step 9 — first new dirty bit since the last clean sync
-	 * means we have writes the peer doesn't know about; bump our
-	 * generation so the next handshake puts us as SYNC_SOURCE. */
-	if (delta && !bm->gen_dirty) {
-		bm->gen_dirty = true;
-		bm->generation++;
-		bumped_gen = true;
-	}
 	spin_unlock(&bm->lock);
 
 	if (delta)
 		atomic64_add(delta, &bm->dirty_count);
+
+	/* Phase 3.5 — device-wide gen bump (was per-bitmap in Phase 2/3).
+	 * First new dirty bit anywhere since last mark_synced bumps gen so
+	 * the next handshake puts us as SYNC_SOURCE for any peer behind. */
+	if (delta && pcache) {
+		spin_lock(&pcache->gen_lock);
+		if (!pcache->gen_dirty) {
+			pcache->gen_dirty = true;
+			pcache->generation++;
+			bumped_gen = true;
+		}
+		bm->generation = pcache->generation;	/* mirror for PMEM persist */
+		spin_unlock(&pcache->gen_lock);
+	}
 
 	if (bumped_gen)
 		pcache_bm_header_flush(bm);
@@ -227,24 +235,39 @@ static void pcache_bm_header_flush(struct pcache_bitmap *bm)
 void pcache_bm_mark_synced(struct pcache_bitmap *bm, u64 peer_gen)
 {
 	bool changed = false;
+	struct dm_pcache *pcache;
 
 	if (!bm)
 		return;
+	pcache = bm->pcache;
 
 	spin_lock(&bm->lock);
 	if (bm->peer_gen_at_sync != peer_gen) {
 		bm->peer_gen_at_sync = peer_gen;
 		changed = true;
 	}
-	if (bm->gen_dirty) {
-		bm->gen_dirty = false;
-		changed = true;
-	}
 	if (bm->flags & PCACHE_BM_F_FULL_SYNC_NEEDED) {
 		bm->flags &= ~PCACHE_BM_F_FULL_SYNC_NEEDED;
 		changed = true;
 	}
+	if (bm->flags & PCACHE_BM_F_RESYNC_IN_PROGRESS) {
+		bm->flags &= ~PCACHE_BM_F_RESYNC_IN_PROGRESS;
+		changed = true;
+	}
 	spin_unlock(&bm->lock);
+
+	/* Phase 3.5 — gen_dirty is device-wide; reset on any peer's sync.
+	 * Other peers behind on generation are still flagged via their
+	 * own peer_gen_at_sync < pcache->generation. */
+	if (pcache) {
+		spin_lock(&pcache->gen_lock);
+		if (pcache->gen_dirty) {
+			pcache->gen_dirty = false;
+			changed = true;
+		}
+		bm->generation = pcache->generation;	/* mirror */
+		spin_unlock(&pcache->gen_lock);
+	}
 
 	if (changed)
 		pcache_bm_header_flush(bm);
@@ -288,11 +311,18 @@ int pcache_bm_flush_sync(struct pcache_bitmap *bm)
 }
 
 /*
- * Phase 2 Step 2: allocate RAM working copy + map PMEM slot + load
- * existing on-disk state (or initialize a fresh one).
+ * Phase 3.5 — Allocate this peer's bitmap on its registry-assigned PMEM
+ * slot. Slot index comes from peer->bm->slot_idx which the caller (Add 4 in
+ * pcache_add_peer) sets before invoking us; we read pmem_base from the
+ * cache_dev region for that slot.
+ *
+ * Loads existing on-disk state if present, else creates a fresh bitmap
+ * with FULL_SYNC_NEEDED flagged.
  */
-int pcache_bitmap_init(struct dm_pcache *pcache, u64 backing_sectors)
+int pcache_peer_bitmap_init(struct pcache_peer *peer, u64 backing_sectors,
+			    int slot_idx)
 {
+	struct dm_pcache *pcache = peer->pcache;
 	struct pcache_cache_dev *cdev = &pcache->cache_dev;
 	struct pcache_bitmap *bm;
 	struct pcache_bm_header_onmedia hdr_buf;
@@ -300,13 +330,22 @@ int pcache_bitmap_init(struct dm_pcache *pcache, u64 backing_sectors)
 	u64 nr_bits, nr_words, cache_bytes;
 	u32 nr_pages;
 	size_t cache_alloc;
-	int slot = 0;	/* Phase 2: peer 0 only */
+	int slot = slot_idx;
 	bool fresh = false;
 
 	if (!backing_sectors) {
-		pcache_dev_err(pcache, "bitmap_init: backing_sectors == 0\n");
+		pcache_dev_err(pcache, "peer_bitmap_init: backing_sectors == 0\n");
 		return -EINVAL;
 	}
+	if (slot < 0 || slot >= PCACHE_BM_MAX_PEERS) {
+		pcache_dev_err(pcache, "peer_bitmap_init: slot %d out of range\n", slot);
+		return -EINVAL;
+	}
+
+	bm = kzalloc(sizeof(*bm), GFP_KERNEL);
+	if (!bm)
+		return -ENOMEM;
+	bm->slot_idx = slot;
 
 	nr_bits     = DIV_ROUND_UP_ULL(backing_sectors, PCACHE_BM_SECTORS_PER_BIT);
 	nr_words    = DIV_ROUND_UP_ULL(nr_bits, BITS_PER_LONG);
@@ -318,12 +357,9 @@ int pcache_bitmap_init(struct dm_pcache *pcache, u64 backing_sectors)
 		pcache_dev_err(pcache,
 			"bitmap: backing too large (%llu bytes) for slot (%lu bytes)\n",
 			cache_bytes, (unsigned long)PCACHE_BITMAP_SLOT_DATA_SIZE);
+		kfree(bm);
 		return -EFBIG;
 	}
-
-	bm = kzalloc(sizeof(*bm), GFP_KERNEL);
-	if (!bm)
-		return -ENOMEM;
 
 	bm->cache = kvmalloc(cache_alloc, GFP_KERNEL | __GFP_ZERO);
 	if (!bm->cache)
@@ -334,53 +370,75 @@ int pcache_bitmap_init(struct dm_pcache *pcache, u64 backing_sectors)
 	if (!bm->dirty_pages)
 		goto err_free_cache;
 
+	bm->peer      = peer;
 	bm->pcache    = pcache;
 	bm->nr_bits   = nr_bits;
 	bm->nr_words  = nr_words;
 	bm->nr_pages  = nr_pages;
-	bm->slot_idx  = slot;
 	bm->pmem_base = CACHE_DEV_BITMAP_SLOT(cdev, slot);
 	bm->pmem_data = (u8 *)bm->pmem_base + PCACHE_BITMAP_SLOT_DATA_OFF;
 	spin_lock_init(&bm->lock);
 	atomic64_set(&bm->dirty_count, 0);
 
-	/* Try to load existing on-disk state */
 	hdr = pcache_bm_header_load(bm, &hdr_buf, NULL);
 	if (hdr && le64_to_cpu(hdr_buf.magic) == PCACHE_BM_MAGIC &&
 	    le64_to_cpu(hdr_buf.bm_nr_bits) == nr_bits &&
 	    le32_to_cpu(hdr_buf.bm_block_shift) == PCACHE_BM_BLOCK_SHIFT) {
-		u64 cnt;
+		u64 cnt, load_gen;
 
-		/* Copy bitmap data from PMEM into RAM working copy */
 		if (copy_mc_to_kernel(bm->cache, bm->pmem_data, cache_bytes)) {
 			pcache_dev_err(pcache,
 				"bitmap: hardware memory error reading PMEM\n");
 			goto err_free_dirty;
 		}
-		bm->generation       = le64_to_cpu(hdr_buf.generation);
+		load_gen             = le64_to_cpu(hdr_buf.generation);
+		bm->generation       = load_gen;
 		bm->peer_gen_at_sync = le64_to_cpu(hdr_buf.peer_gen_at_sync);
 		bm->flags            = le32_to_cpu(hdr_buf.flags);
 		bm->meta_seq         = hdr_buf.header.seq;
 		cnt = bitmap_weight(bm->cache, nr_bits);
 		atomic64_set(&bm->dirty_count, (s64)cnt);
+
+		/* Phase 3.5 Step B2 — RESYNC_IN_PROGRESS sticky on disk means
+		 * last session crashed mid-resync. Force a fresh FULL_SYNC
+		 * to ensure consistency, then clear the in-progress flag. */
+		if (bm->flags & PCACHE_BM_F_RESYNC_IN_PROGRESS) {
+			pcache_dev_info(pcache,
+				"bitmap[slot=%d node_id=%d]: previous resync was interrupted; forcing FULL_SYNC\n",
+				slot, peer->node_id);
+			bm->flags |= PCACHE_BM_F_FULL_SYNC_NEEDED;
+			bm->flags &= ~PCACHE_BM_F_RESYNC_IN_PROGRESS;
+		}
+
+		/* Reconcile device-wide gen across peers: max wins so the
+		 * latest seen across any PMEM slot is what we carry. */
+		spin_lock(&pcache->gen_lock);
+		if (load_gen > pcache->generation)
+			pcache->generation = load_gen;
+		spin_unlock(&pcache->gen_lock);
+
 		pcache_dev_info(pcache,
-			"bitmap: loaded gen=%llu peer_gen=%llu dirty=%llu/%llu\n",
-			bm->generation, bm->peer_gen_at_sync, cnt, nr_bits);
+			"bitmap[slot=%d node_id=%d]: loaded gen=%llu peer_gen=%llu dirty=%llu/%llu\n",
+			slot, peer->node_id, bm->generation,
+			bm->peer_gen_at_sync, cnt, nr_bits);
 	} else {
 		fresh = true;
-		bm->generation       = 1;
+		spin_lock(&pcache->gen_lock);
+		if (pcache->generation == 0)
+			pcache->generation = 1;
+		bm->generation = pcache->generation;
+		spin_unlock(&pcache->gen_lock);
 		bm->peer_gen_at_sync = 0;
 		bm->flags            = PCACHE_BM_F_FULL_SYNC_NEEDED;
 		bm->meta_seq         = 0;
 		pcache_dev_info(pcache,
-			"bitmap: fresh slot — nr_bits=%llu, full sync flagged\n",
-			nr_bits);
+			"bitmap[slot=%d node_id=%d]: fresh — nr_bits=%llu, FULL_SYNC flagged\n",
+			slot, peer->node_id, nr_bits);
 	}
 
-	pcache->bitmap = bm;
+	peer->bm = bm;
 
 	if (fresh) {
-		/* Zero the whole PMEM data area then commit header */
 		cache_dev_zero_range(cdev, bm->pmem_data, PCACHE_BITMAP_SLOT_DATA_SIZE);
 		pcache_bm_header_flush(bm);
 	}
@@ -395,17 +453,19 @@ err_free_bm:
 	return -ENOMEM;
 }
 
-void pcache_bitmap_exit(struct dm_pcache *pcache)
+void pcache_peer_bitmap_exit(struct pcache_peer *peer)
 {
-	struct pcache_bitmap *bm = pcache->bitmap;
+	struct pcache_bitmap *bm;
 
+	if (!peer)
+		return;
+	bm = peer->bm;
 	if (!bm)
 		return;
 
-	/* Make best-effort flush before tearing down (dtr ordering). */
 	pcache_bm_flush_sync(bm);
 
-	pcache->bitmap = NULL;
+	peer->bm = NULL;
 	kvfree(bm->dirty_pages);
 	kvfree(bm->cache);
 	kfree(bm);
