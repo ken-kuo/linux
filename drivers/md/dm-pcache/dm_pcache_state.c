@@ -1383,16 +1383,25 @@ static int pcache_start_primary(struct pcache_peer *peer)
 	return 0;
 }
 
-static int pcache_parse_net_args(struct pcache_network *net,
-				 struct dm_pcache *pcache,
+/*
+ * Phase 3 Step 3+4 — device-level args parser.
+ *
+ * Recognises:
+ *   my_node_id=N    -- this node's id (also accepted as legacy node_id=)
+ *   listen_port=P   -- TCP port to accept inbound peer connections on
+ *   is_primary=B    -- data-role hint (0 or 1); peers added later inherit this
+ *
+ * Per-peer args (peer_addr / per-peer node_id) are no longer accepted in the
+ * dmsetup table line — peers are exclusively added via the runtime
+ * `dmsetup message <dev> add-peer <node_id> <ip:port>` message (Step 4).
+ */
+static int pcache_parse_dev_args(struct dm_pcache *pcache,
 				 unsigned int argc, char **argv,
 				 char **error)
 {
-	struct pcache_peer *peer;
-	int node_id = -1;
-	int is_primary = -1;
-	char *peer_addr = NULL;
+	int my_node_id = -1;
 	int listen_port = 0;
+	int is_primary = -1;
 	unsigned int i;
 
 	for (i = 0; i < argc; i++) {
@@ -1403,9 +1412,10 @@ static int pcache_parse_net_args(struct pcache_network *net,
 			continue;
 		*val++ = '\0';
 
-		if (!strcmp(arg, "node_id")) {
-			if (kstrtoint(val, 10, &node_id) < 0 || node_id < 0) {
-				*error = "invalid node_id";
+		if (!strcmp(arg, "my_node_id") || !strcmp(arg, "node_id")) {
+			if (kstrtoint(val, 10, &my_node_id) < 0 ||
+			    my_node_id < 0) {
+				*error = "invalid my_node_id";
 				return -EINVAL;
 			}
 		} else if (!strcmp(arg, "is_primary")) {
@@ -1414,30 +1424,158 @@ static int pcache_parse_net_args(struct pcache_network *net,
 				*error = "invalid is_primary (0 or 1)";
 				return -EINVAL;
 			}
-		} else if (!strcmp(arg, "peer_addr")) {
-			peer_addr = val;
 		} else if (!strcmp(arg, "listen_port")) {
-			if (kstrtoint(val, 10, &listen_port) < 0 || listen_port <= 0) {
+			if (kstrtoint(val, 10, &listen_port) < 0 ||
+			    listen_port <= 0 || listen_port > 65535) {
 				*error = "invalid listen_port";
 				return -EINVAL;
 			}
+		} else if (!strcmp(arg, "quorum")) {
+			if (!strcmp(val, "off")) {
+				pcache->quorum_min = 1;
+				pcache->quorum_majority = false;
+			} else if (!strcmp(val, "majority")) {
+				pcache->quorum_majority = true;
+				/* quorum_min recomputed dynamically: (active+1)/2 + 1 */
+			} else {
+				unsigned int q;
+
+				if (kstrtouint(val, 10, &q) < 0 || q < 1) {
+					*error = "invalid quorum (off|majority|N>=1)";
+					return -EINVAL;
+				}
+				pcache->quorum_min = q;
+				pcache->quorum_majority = false;
+			}
+		} else if (!strcmp(arg, "peer_addr")) {
+			pcache_dev_info(pcache,
+				"peer_addr= in table line is deprecated; use dmsetup message add-peer\n");
 		}
 	}
 
-	if (node_id < 0 || is_primary < 0)
-		return 0;
+	if (my_node_id < 0 || is_primary < 0)
+		return 0;	/* not distributed mode */
+
+	pcache->my_node_id = (u32)my_node_id;
+	pcache->listen_port = (u32)listen_port;
+	pcache->is_primary = !!is_primary;
+	pcache->node_id = my_node_id;	/* legacy mirror */
+
+	/* Default quorum to "off" (= 1) unless explicitly set above. */
+	if (pcache->quorum_min == 0)
+		pcache->quorum_min = 1;
+	return 1;	/* distributed-mode args present */
+}
+
+/*
+ * Phase 3 Step 3 — accept thread.
+ * Single per-network kthread that owns the listen socket. Accepts inbound
+ * peer connections, completes handshake-recv + handshake-send, looks up the
+ * matching peer slot by handshake.node_id, and hands off the connected
+ * socket to that peer's worker via wait_for_socket.
+ */
+static int pcache_accept_thread(void *arg)
+{
+	struct dm_pcache *pcache = arg;
+	struct pcache_network *net = pcache->net;
+	struct socket *sock;
+	struct pcache_peer *peer;
+	int ret, peer_node_id, slot;
+
+	allow_signal(SIGTERM);
+
+	while (!kthread_should_stop() && !atomic_read(&net->stopping)) {
+		sock = NULL;
+		ret = kernel_accept(net->listen_sock, &sock, 0);
+		if (ret < 0) {
+			if (ret == -EAGAIN || ret == -EINTR)
+				continue;
+			pcache_dev_err(pcache, "accept: %d\n", ret);
+			set_current_state(TASK_INTERRUPTIBLE);
+			schedule_timeout(HZ);
+			continue;
+		}
+
+		pcache_apply_socket_opts(sock);
+
+		peer_node_id = -1;
+		ret = pcache_recv_handshake(sock, &peer_node_id);
+		if (ret) {
+			pcache_dev_err(pcache,
+				"accept: handshake recv failed: %d\n", ret);
+			sock_release(sock);
+			continue;
+		}
+
+		ret = pcache_send_handshake(sock, (int)pcache->my_node_id);
+		if (ret) {
+			pcache_dev_err(pcache,
+				"accept: handshake reply failed: %d\n", ret);
+			sock_release(sock);
+			continue;
+		}
+
+		mutex_lock(&net->peers_lock);
+		peer = NULL;
+		for_each_active_peer(net, peer, slot) {
+			if (peer->node_id == peer_node_id)
+				break;
+			peer = NULL;
+		}
+		if (!peer) {
+			mutex_unlock(&net->peers_lock);
+			pcache_dev_err(pcache,
+				"accept: no peer slot for node_id=%d; drop\n",
+				peer_node_id);
+			sock_release(sock);
+			continue;
+		}
+
+		spin_lock(&peer->sock_lock);
+		if (peer->sock) {
+			/* Race-loser: lower-id outbound got there first. */
+			spin_unlock(&peer->sock_lock);
+			mutex_unlock(&net->peers_lock);
+			pcache_dev_info(pcache,
+				"accept: peer node_id=%d already connected; drop dup\n",
+				peer_node_id);
+			sock_release(sock);
+			continue;
+		}
+		peer->sock = sock;
+		peer->state = PCACHE_C_CONNECTED;
+		spin_unlock(&peer->sock_lock);
+		mutex_unlock(&net->peers_lock);
+
+		pcache_sock_set_timeout(sock, 300 * HZ);
+		wake_up(&peer->wait_for_socket);
+		pcache_dev_info(pcache,
+			"accept: handed inbound sock to slot=%d node_id=%d\n",
+			slot, peer_node_id);
+	}
+	return 0;
+}
+
+/*
+ * Phase 3 Step 4 — allocate and initialise a peer struct.
+ * Caller still needs to install it at net->peers[slot] and start its worker.
+ */
+static struct pcache_peer *
+pcache_alloc_peer(struct dm_pcache *pcache, u32 peer_node_id, const char *addr)
+{
+	struct pcache_peer *peer;
 
 	peer = kzalloc(sizeof(*peer), GFP_KERNEL);
 	if (!peer)
-		return -ENOMEM;
+		return NULL;
 
-	peer->pcache = pcache;
-	peer->node_id = node_id;
-	peer->is_primary = is_primary;
-	peer->state = PCACHE_C_STANDALONE;
-	peer->repl_state = PCACHE_R_OFF;
-	if (peer_addr)
-		strscpy(peer->remote_addr, peer_addr, sizeof(peer->remote_addr));
+	peer->pcache	  = pcache;
+	peer->node_id	  = (int)peer_node_id;
+	peer->is_primary  = pcache->is_primary;
+	peer->state	  = PCACHE_C_STANDALONE;
+	peer->repl_state  = PCACHE_R_OFF;
+	peer->split_brain = false;
+	strscpy(peer->remote_addr, addr, sizeof(peer->remote_addr));
 
 	atomic_set(&peer->pending_cnt, 0);
 	atomic_set(&peer->unsent_cnt, 0);
@@ -1448,28 +1586,8 @@ static int pcache_parse_net_args(struct pcache_network *net,
 	init_waitqueue_head(&peer->wait_for_listen);
 	spin_lock_init(&peer->sock_lock);
 	spin_lock_init(&peer->pending_lock);
-	__module_get(THIS_MODULE);
 
-	if (!peer->is_primary && listen_port > 0) {
-		int err = pcache_create_server_socket(peer, listen_port);
-
-		if (err) {
-			pcache_err("failed to create server socket on port %d: %d\n",
-				   listen_port, err);
-			module_put(THIS_MODULE);
-			kfree(peer);
-			return err;
-		}
-	}
-
-	/* Step 2: legacy dmsetup-table path installs the single peer at
-	 * slot 0. Step 4 will look up a real slot index in the registry. */
-	net->peers[0] = peer;
-	pcache->net = net;
-	pcache->is_primary = peer->is_primary;
-	pcache->node_id = peer->node_id;
-
-	return 0;
+	return peer;
 }
 
 int pcache_net_init(struct dm_pcache *pcache, unsigned int argc, char **argv)
@@ -1485,6 +1603,7 @@ int pcache_net_init(struct dm_pcache *pcache, unsigned int argc, char **argv)
 	if (!net)
 		return -ENOMEM;
 
+	mutex_init(&net->peers_lock);
 	mutex_init(&net->connection_mutex);
 	net->protocol_version = PCACHE_PROTO_VERSION;
 	atomic_set(&net->stopping, 0);
@@ -1504,8 +1623,8 @@ int pcache_net_init(struct dm_pcache *pcache, unsigned int argc, char **argv)
 		return -ENOMEM;
 	}
 
-	ret = pcache_parse_net_args(net, pcache, argc, argv, &error);
-	if (ret) {
+	ret = pcache_parse_dev_args(pcache, argc, argv, &error);
+	if (ret < 0) {
 		if (error)
 			pcache_err("%s\n", error);
 		mempool_destroy(net->req_pool);
@@ -1513,51 +1632,57 @@ int pcache_net_init(struct dm_pcache *pcache, unsigned int argc, char **argv)
 		kfree(net);
 		return ret;
 	}
+	if (ret == 0) {
+		/* No distributed-mode args — tear down the empty net. */
+		mempool_destroy(net->req_pool);
+		kmem_cache_destroy(net->req_cache);
+		kfree(net);
+		return 0;
+	}
 
-	{
-		struct pcache_peer *peer;
-		int slot, started = 0;
-		bool err_seen = false;
+	pcache->net = net;
+	pcache_registry_set_my_node_id(pcache->registry, pcache->my_node_id);
 
-		for_each_active_peer(net, peer, slot) {
-			if (peer->is_primary)
-				ret = pcache_start_primary(peer);
-			else
-				ret = pcache_start_secondary(peer);
-			if (ret) {
-				err_seen = true;
-				break;
-			}
-			started++;
+	/* Start listen socket + accept_thread if a port was configured. Even
+	 * pure-initiator nodes (lowest id in the cluster) keep a no-op listen
+	 * so peers can be added later that connect *to* them. */
+	if (pcache->listen_port) {
+		ret = pcache_create_listen_socket(&net->listen_sock,
+						  (int)pcache->listen_port);
+		if (ret) {
+			pcache_dev_err(pcache,
+				"listen on :%u failed: %d\n",
+				pcache->listen_port, ret);
+			goto fail;
 		}
 
-		if (err_seen) {
-			/* Tear down whatever has already started. */
-			for_each_active_peer(net, peer, slot)
-				pcache_free_peer(peer);
-			mempool_destroy(net->req_pool);
-			kmem_cache_destroy(net->req_cache);
-			kfree(net);
-			return ret;
-		}
-
-		if (started == 0) {
-			/* No peer slot populated — distributed-mode arguments
-			 * were missing or incomplete. Tear down the empty net. */
-			mempool_destroy(net->req_pool);
-			kmem_cache_destroy(net->req_cache);
-			kfree(net);
-			return 0;
-		}
-
-		for_each_active_peer(net, peer, slot) {
-			wake_up(&peer->wait_for_listen);
-			pcache_info("network slot %d up (node_id=%d, is_primary=%d)\n",
-				    slot, peer->node_id, peer->is_primary);
+		net->accept_thread = kthread_run(pcache_accept_thread, pcache,
+				"pcache-accept-%s",
+				pcache->ti->table->md->name);
+		if (IS_ERR(net->accept_thread)) {
+			ret = PTR_ERR(net->accept_thread);
+			net->accept_thread = NULL;
+			pcache_dev_err(pcache,
+				"failed to start accept thread: %d\n", ret);
+			goto fail;
 		}
 	}
 
+	pcache_dev_info(pcache,
+		"network up: my_node_id=%u listen_port=%u is_primary=%d\n",
+		pcache->my_node_id, pcache->listen_port, pcache->is_primary);
 	return 0;
+
+fail:
+	if (net->listen_sock) {
+		sock_release(net->listen_sock);
+		net->listen_sock = NULL;
+	}
+	mempool_destroy(net->req_pool);
+	kmem_cache_destroy(net->req_cache);
+	pcache->net = NULL;
+	kfree(net);
+	return ret;
 }
 
 void pcache_net_stop(struct dm_pcache *pcache)
@@ -1571,17 +1696,28 @@ void pcache_net_stop(struct dm_pcache *pcache)
 
 	atomic_set(&net->stopping, 1);
 
+	/* Stop accept_thread first so no new inbound sockets land on peers
+	 * while we're tearing them down. */
+	if (net->accept_thread) {
+		if (net->listen_sock)
+			kernel_sock_shutdown(net->listen_sock, SHUT_RDWR);
+		kthread_stop(net->accept_thread);
+		net->accept_thread = NULL;
+	}
+	if (net->listen_sock) {
+		sock_release(net->listen_sock);
+		net->listen_sock = NULL;
+	}
+
+	mutex_lock(&net->peers_lock);
 	for_each_active_peer(net, peer, slot) {
 		if (peer->sock)
 			kernel_sock_shutdown(peer->sock, SHUT_RDWR);
-		if (peer->listen_sock)
-			kernel_sock_shutdown(peer->listen_sock, SHUT_RDWR);
 
 		/*
-		 * Each kthread must be stopped by exactly one thread.
-		 * For Primary the sender owns its receiver and stops it in
-		 * its exit path; we only stop the sender here.
-		 * For Secondary there is only the secondary_worker
+		 * Each kthread must be stopped by exactly one thread. For
+		 * Primary the sender owns its receiver and stops it in its
+		 * exit path; for Secondary there is only secondary_worker
 		 * (stored in peer->receiver).
 		 */
 		if (peer->sender) {
@@ -1597,6 +1733,7 @@ void pcache_net_stop(struct dm_pcache *pcache)
 		net->peers[slot] = NULL;
 		module_put(THIS_MODULE);
 	}
+	mutex_unlock(&net->peers_lock);
 
 	if (net->req_pool)
 		mempool_destroy(net->req_pool);
@@ -1626,33 +1763,29 @@ bool pcache_peer_connected(struct dm_pcache *pcache)
 	return false;
 }
 
-/*
- * Phase 2 Step 11 — Operator-driven full resync.
- * Set FULL_SYNC_NEEDED on the local bitmap, bump generation, then drop the
- * current socket to force a reconnect. The next handshake's sync_params
- * exchange will see NEED_FULL and elect Primary as SYNC_SOURCE.
- */
 int pcache_net_force_resync(struct dm_pcache *pcache)
 {
 	struct pcache_peer *peer;
-	struct pcache_bitmap *bm = pcache->bitmap;
 	int slot, kicked = 0;
 
-	if (!pcache->net || !bm)
+	if (!pcache->net)
 		return -ENOTCONN;
 
-	spin_lock(&bm->lock);
-	bm->flags |= PCACHE_BM_F_FULL_SYNC_NEEDED;
-	if (!bm->gen_dirty) {
-		bm->gen_dirty = true;
-		bm->generation++;
+	spin_lock(&pcache->gen_lock);
+	if (!pcache->gen_dirty) {
+		pcache->gen_dirty = true;
+		pcache->generation++;
 	}
-	spin_unlock(&bm->lock);
-	pcache_bm_flush_sync(bm);
+	spin_unlock(&pcache->gen_lock);
 
-	/* Drop every connected peer socket so each connection rebuilds
-	 * with NEED_FULL set on the next handshake. */
+	/* Phase 3.5 — set FULL_SYNC_NEEDED on EVERY peer's bm + drop sockets. */
 	for_each_active_peer(pcache->net, peer, slot) {
+		if (peer->bm) {
+			spin_lock(&peer->bm->lock);
+			peer->bm->flags |= PCACHE_BM_F_FULL_SYNC_NEEDED;
+			spin_unlock(&peer->bm->lock);
+			pcache_bm_flush_sync(peer->bm);
+		}
 		spin_lock(&peer->sock_lock);
 		if (peer->sock) {
 			kernel_sock_shutdown(peer->sock, SHUT_RDWR);
@@ -1661,18 +1794,9 @@ int pcache_net_force_resync(struct dm_pcache *pcache)
 		spin_unlock(&peer->sock_lock);
 	}
 
-	if (!kicked && pcache->net) {
-		/* No connected sockets but we have configured peers — fine,
-		 * they'll pick up NEED_FULL on next reconnect. */
-		pcache_dev_info(pcache,
-			"force-resync: gen=%llu full_sync flagged (no connected peers to kick)\n",
-			bm->generation);
-		return 0;
-	}
-
 	pcache_dev_info(pcache,
-		"force-resync requested: gen=%llu full_sync flagged; %d socket(s) dropped\n",
-		bm->generation, kicked);
+		"force-resync requested: gen=%llu full_sync flagged on all peers; %d socket(s) dropped\n",
+		pcache->generation, kicked);
 	return 0;
 }
 
