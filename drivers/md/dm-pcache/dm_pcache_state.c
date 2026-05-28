@@ -744,6 +744,35 @@ static int pcache_primary_receiver(void *arg)
 		case PCACHE_P_NACK:
 			pcache_handle_ack(peer, &hdr, false);
 			break;
+		case PCACHE_P_DEMOTE_REQ: {
+			/* Phase 3.5 B1 — peer wants to promote; we (currently
+			 * Primary) ACK + flag for operator visibility. Actual
+			 * demote left to operator (split-brain detect will
+			 * catch divergence if it stays both-primary). */
+			struct pcache_demote_pkt body;
+			int rc = pcache_recv_demote_body(sock, &body);
+
+			if (rc) {
+				pcache_err("primary recv: DEMOTE_REQ body: %d\n", rc);
+				break;
+			}
+			pcache_dev_info(peer->pcache,
+				"DEMOTE_REQ from node_id=%u (we are Primary); ACKing — operator should set-role secondary\n",
+				le32_to_cpu(body.initiator_node_id));
+			pcache_send_demote_ack(sock, 0);
+			break;
+		}
+		case PCACHE_P_DEMOTE_ACK: {
+			struct pcache_demote_pkt body;
+			int rc = pcache_recv_demote_body(sock, &body);
+
+			if (rc)
+				break;
+			pcache_dev_info(peer->pcache,
+				"DEMOTE_ACK status=%u\n",
+				le32_to_cpu(body.status));
+			break;
+		}
 		default:
 			pcache_err("primary recv: unexpected packet type: %u\n",
 				   le16_to_cpu(hdr.type));
@@ -801,7 +830,16 @@ static int pcache_do_resync(struct pcache_peer *peer, struct socket *sock,
 			    u64 peer_gen)
 {
 	struct dm_pcache *pcache = peer->pcache;
-	struct pcache_bitmap *bm = pcache->bitmap;
+	struct pcache_bitmap *bm = peer->bm;
+
+	/* Phase 3.5 Step B2 — mark RESYNC_IN_PROGRESS so a crash mid-resync
+	 * is detectable at next bitmap_init load (which forces FULL_SYNC). */
+	if (bm) {
+		spin_lock(&bm->lock);
+		bm->flags |= PCACHE_BM_F_RESYNC_IN_PROGRESS;
+		spin_unlock(&bm->lock);
+		pcache_bm_flush_sync(bm);
+	}
 	struct block_device *backing_bdev;
 	struct page **pages = NULL;
 	u64 cursor = 0;
@@ -964,7 +1002,7 @@ static void pcache_flush_pending(struct pcache_peer *peer, int err)
 
 	list_for_each_entry_safe(req, tmp, &drain, list) {
 		list_del(&req->list);
-		pcache_bm_set_range(peer->pcache->bitmap,
+		pcache_bm_set_range(peer->bm,
 				    req->sector, req->size);
 		pcache_req_put(req->pcache_req, err);
 		pcache_pending_req_free(peer, req);
@@ -974,22 +1012,22 @@ static void pcache_flush_pending(struct pcache_peer *peer, int err)
 /*
  * Primary worker thread.
  *
- * Establishes the TCP connection, performs handshake, spawns the ACK
- * receiver, then loops sending unsent pending requests. On any send error
- * it tears down and reconnects.
+ * Phase 3.5 Step A3 — direction-aware socket acquisition (was always
+ * outbound-connect in Phase 3):
+ *   - If initiator (my_node_id < peer.node_id): connect + handshake.
+ *   - Else: wait for accept_thread to install the socket; handshake done.
  */
 static int pcache_primary_worker(void *arg)
 {
 	struct pcache_peer *peer = arg;
 	struct socket *sock = NULL;
+	bool initiator = pcache_peer_is_initiator(peer);
 	int ret;
 
 	allow_signal(SIGTERM);
 
 connect:
 	while (!kthread_should_stop()) {
-		/* Whenever we re-enter connect:, replication is OFF until the
-		 * next handshake completes. */
 		pcache_set_repl_state(peer, PCACHE_R_OFF);
 
 		if (peer->receiver) {
@@ -1006,44 +1044,62 @@ connect:
 			spin_unlock(&peer->sock_lock);
 		}
 
-		ret = pcache_create_peer_socket(peer);
-		if (ret) {
-			pcache_err("primary: connect failed: %d\n", ret);
-			set_current_state(TASK_INTERRUPTIBLE);
-			schedule_timeout(3 * HZ);
-			continue;
-		}
-		sock = peer->sock;
+		if (initiator) {
+			ret = pcache_create_peer_socket(peer);
+			if (ret) {
+				pcache_err("primary[initiator]: connect failed: %d\n", ret);
+				set_current_state(TASK_INTERRUPTIBLE);
+				schedule_timeout(3 * HZ);
+				continue;
+			}
+			sock = peer->sock;
 
-		ret = pcache_send_handshake(sock, peer->node_id);
-		if (ret) {
-			pcache_err("primary: HANDSHAKE send failed: %d\n", ret);
-			sock_release(sock);
-			sock = NULL;
+			ret = pcache_send_handshake(sock, (int)peer->pcache->my_node_id);
+			if (ret) {
+				pcache_err("primary[initiator]: HANDSHAKE send failed: %d\n", ret);
+				sock_release(sock); sock = NULL;
+				spin_lock(&peer->sock_lock);
+				peer->sock = NULL;
+				peer->state = PCACHE_C_CONNECTING;
+				spin_unlock(&peer->sock_lock);
+				set_current_state(TASK_INTERRUPTIBLE);
+				schedule_timeout(HZ);
+				continue;
+			}
+
+			ret = pcache_recv_handshake(sock, NULL);
+			if (ret) {
+				pcache_err("primary[initiator]: HANDSHAKE reply failed: %d\n", ret);
+				sock_release(sock); sock = NULL;
+				spin_lock(&peer->sock_lock);
+				peer->sock = NULL;
+				peer->state = PCACHE_C_CONNECTING;
+				spin_unlock(&peer->sock_lock);
+				set_current_state(TASK_INTERRUPTIBLE);
+				schedule_timeout(HZ);
+				continue;
+			}
+		} else {
+			/* Wait for accept_thread to deliver socket (it already
+			 * performed the handshake exchange). */
+			wait_event_interruptible(peer->wait_for_socket,
+				(peer->sock && peer->state == PCACHE_C_CONNECTED) ||
+				kthread_should_stop());
+			if (kthread_should_stop())
+				goto exit;
+
 			spin_lock(&peer->sock_lock);
-			peer->sock = NULL;
-			peer->state = PCACHE_C_CONNECTING;
+			sock = peer->sock;
 			spin_unlock(&peer->sock_lock);
-			set_current_state(TASK_INTERRUPTIBLE);
-			schedule_timeout(HZ);
-			continue;
+			if (!sock) {
+				set_current_state(TASK_INTERRUPTIBLE);
+				schedule_timeout(HZ / 4);
+				continue;
+			}
 		}
 
-		ret = pcache_recv_handshake(sock, NULL);
-		if (ret) {
-			pcache_err("primary: HANDSHAKE reply failed: %d\n", ret);
-			sock_release(sock);
-			sock = NULL;
-			spin_lock(&peer->sock_lock);
-			peer->sock = NULL;
-			peer->state = PCACHE_C_CONNECTING;
-			spin_unlock(&peer->sock_lock);
-			set_current_state(TASK_INTERRUPTIBLE);
-			schedule_timeout(HZ);
-			continue;
-		}
-
-		pcache_info("primary: handshake complete\n");
+		pcache_info("primary: handshake complete (%s)\n",
+			    initiator ? "initiator" : "responder");
 
 		/* Phase 2 Step 5: exchange P_SYNC_PARAMS BEFORE spawning the
 		 * receiver, so the SP reply doesn't race with ACK reads.
@@ -1057,7 +1113,7 @@ connect:
 			u64 peer_gen;
 
 			sp_ret = pcache_exchange_sync_params(peer, sock,
-							     &peer_sp, true);
+							     &peer_sp, initiator);
 			if (sp_ret) {
 				pcache_err("primary: sync_params exchange failed: %d\n",
 					   sp_ret);
@@ -1078,13 +1134,46 @@ connect:
 			pcache_info("primary: decided role = %s\n",
 				    pcache_repl_state_name(role));
 			if (role == PCACHE_R_HALT) {
+				/* Phase 3 Step 12 — split-brain marker on this
+				 * pair. Operator recovers via dmsetup message
+				 * resolve-split-brain. */
+				peer->split_brain = true;
 				pcache_set_repl_state(peer, PCACHE_R_HALT);
+				pcache_dev_err(peer->pcache,
+					"split-brain detected for peer node_id=%d; halted\n",
+					peer->node_id);
 				while (!kthread_should_stop()) {
 					set_current_state(TASK_INTERRUPTIBLE);
 					schedule_timeout(HZ);
 				}
 				goto exit;
 			}
+			/* Phase 3 Step 6 — bilateral bitmap exchange BEFORE
+			 * any resync data flows. Both sides OR the peer's
+			 * dirty bitmap into their local one so the SOURCE
+			 * drain covers regions either side marked dirty. */
+			if (role == PCACHE_R_SYNC_SOURCE ||
+			    role == PCACHE_R_SYNC_TARGET) {
+				pcache_set_repl_state(peer,
+						      PCACHE_R_BITMAP_EXCHANGE);
+				sp_ret = pcache_exchange_bitmaps(peer, sock,
+								 initiator);
+				if (sp_ret) {
+					pcache_err("primary: bitmap-exchange failed: %d\n",
+						   sp_ret);
+					sock_release(sock);
+					sock = NULL;
+					spin_lock(&peer->sock_lock);
+					peer->sock = NULL;
+					peer->state = PCACHE_C_CONNECTING;
+					spin_unlock(&peer->sock_lock);
+					pcache_set_repl_state(peer, PCACHE_R_OFF);
+					set_current_state(TASK_INTERRUPTIBLE);
+					schedule_timeout(HZ);
+					continue;
+				}
+			}
+
 			if (role == PCACHE_R_SYNC_SOURCE) {
 				pcache_set_repl_state(peer, PCACHE_R_SYNC_SOURCE);
 				sp_ret = pcache_do_resync(peer, sock, peer_gen);
@@ -1104,7 +1193,7 @@ connect:
 				}
 			} else {
 				/* Clean reconnect — peer says we're already in sync. */
-				pcache_bm_mark_synced(peer->pcache->bitmap,
+				pcache_bm_mark_synced(peer->bm,
 						      peer_gen);
 			}
 			pcache_set_repl_state(peer, PCACHE_R_ESTABLISHED);
@@ -1165,7 +1254,7 @@ connect:
 				atomic_dec(&peer->pending_cnt);
 				/* Step 6: mark dirty before completing so next
 				 * resync covers this range. */
-				pcache_bm_set_range(peer->pcache->bitmap,
+				pcache_bm_set_range(peer->bm,
 						    req->sector, req->size);
 				pcache_req_put(req->pcache_req, -ETIMEDOUT);
 				pcache_pending_req_free(peer, req);
