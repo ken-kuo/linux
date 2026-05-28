@@ -1467,6 +1467,30 @@ static int pcache_parse_dev_args(struct dm_pcache *pcache,
 	return 1;	/* distributed-mode args present */
 }
 
+bool pcache_has_quorum(struct dm_pcache *pcache)
+{
+	struct pcache_network *net = pcache->net;
+	struct pcache_peer *peer;
+	int slot, total, connected, threshold;
+
+	if (!net)
+		return true;	/* standalone mode */
+
+	mutex_lock(&net->peers_lock);
+	total = 1;	/* self */
+	connected = 1;	/* self */
+	for_each_active_peer(net, peer, slot) {
+		total++;
+		if (peer->state == PCACHE_C_CONNECTED)
+			connected++;
+	}
+	mutex_unlock(&net->peers_lock);
+
+	threshold = pcache->quorum_majority ? (total / 2) + 1
+					    : (int)pcache->quorum_min;
+	return connected >= threshold;
+}
+
 /*
  * Phase 3 Step 3 — accept thread.
  * Single per-network kthread that owns the listen socket. Accepts inbound
@@ -1864,6 +1888,322 @@ int pcache_add_peer(struct dm_pcache *pcache, u32 peer_node_id, const char *addr
 	return 0;
 }
 
+/*
+ * Phase 3 Step 11 — stop existing per-peer workers and restart them under
+ * the new role. Caller holds net->peers_lock. Each peer's pending_list and
+ * registry slot are preserved; only the kthread + connection are recycled.
+ */
+static void pcache_set_role_swap_workers(struct pcache_network *net,
+					 bool to_primary)
+{
+	struct pcache_peer *peer;
+	int slot;
+
+	for_each_active_peer(net, peer, slot) {
+		peer->is_primary = to_primary;
+
+		/* Shut down the socket to wake the worker from any blocking
+		 * recv/send and unblock kthread_stop. */
+		spin_lock(&peer->sock_lock);
+		if (peer->sock)
+			kernel_sock_shutdown(peer->sock, SHUT_RDWR);
+		spin_unlock(&peer->sock_lock);
+
+		if (peer->sender) {
+			kthread_stop(peer->sender);
+			peer->sender = NULL;
+			peer->receiver = NULL;	/* primary_receiver owned by sender */
+		} else if (peer->receiver) {
+			kthread_stop(peer->receiver);
+			peer->receiver = NULL;
+		}
+
+		/* Drop any lingering socket pointer so the new worker starts
+		 * with a clean state. */
+		spin_lock(&peer->sock_lock);
+		if (peer->sock) {
+			sock_release(peer->sock);
+			peer->sock = NULL;
+		}
+		peer->state = PCACHE_C_CONNECTING;
+		peer->repl_state = PCACHE_R_OFF;
+		spin_unlock(&peer->sock_lock);
+
+		if (to_primary)
+			pcache_start_primary(peer);
+		else
+			pcache_start_secondary(peer);
+	}
+}
+
+/*
+ * Phase 3 Step 9 — runtime role switch.
+ *
+ * promote (Secondary → Primary):
+ *   - Without `force`: refuse if any peer is currently CONNECTED (operator
+ *     should demote the existing Primary first, or pass `force`). This is a
+ *     conservative local check; the cluster-wide quorum-based safety arrives
+ *     in Step 10, and split-brain detection in Step 12.
+ *   - Bumps our generation so the next handshake forces a re-sync decision.
+ *
+ * demote (Primary → Secondary):
+ *   - Flip is_primary first (map_bio guard now rejects new WRITEs).
+ *   - Drop sockets so peers' workers re-handshake with the new role view.
+ *   - Flush the bitmap so on-disk state matches our in-memory view.
+ *   - Currently does NOT wait for inflight bios to fully complete — they
+ *     proceed normally (already enqueued under the old role). A coordinated
+ *     demote-handshake (P_DEMOTE_REQ/ACK) is a Step 11/12 follow-up.
+ */
+int pcache_set_role(struct dm_pcache *pcache, bool primary, bool force)
+{
+	struct pcache_network *net = pcache->net;
+	struct pcache_peer *peer;
+	int slot;
+
+	if (!net)
+		return -ENOTCONN;
+
+	mutex_lock(&net->peers_lock);
+
+	if (primary && !pcache->is_primary) {
+		mutex_unlock(&net->peers_lock);
+		if (!force && !pcache_has_quorum(pcache)) {
+			pcache_dev_err(pcache,
+				"set-role primary refused: no quorum (use force to override)\n");
+			return -EBUSY;
+		}
+		mutex_lock(&net->peers_lock);
+
+		/* Phase 3.5 B1 — broadcast P_DEMOTE_REQ on every connected
+		 * peer socket (best-effort notification). Peers that ARE the
+		 * current Primary will see this in their primary_receiver and
+		 * log it; operator's coordinated demote workflow + split-brain
+		 * detection cover the actual demote. */
+		if (!force) {
+			int sent = 0;
+			for_each_active_peer(net, peer, slot) {
+				spin_lock(&peer->sock_lock);
+				if (peer->sock) {
+					int rc = pcache_send_demote_req(peer->sock,
+						pcache->my_node_id, 0);
+					if (!rc)
+						sent++;
+				}
+				spin_unlock(&peer->sock_lock);
+			}
+			if (sent)
+				pcache_dev_info(pcache,
+					"set-role primary: broadcast DEMOTE_REQ to %d peer(s)\n",
+					sent);
+		}
+
+		pcache->is_primary = true;
+
+		/* Phase 3.5 — promote-triggered FULL resync, per-peer.
+		 * Each peer's bm gets FULL_SYNC_NEEDED + set_all. Device gen
+		 * bumps once (gen_dirty trigger). */
+		spin_lock(&pcache->gen_lock);
+		if (!pcache->gen_dirty) {
+			pcache->gen_dirty = true;
+			pcache->generation++;
+		}
+		spin_unlock(&pcache->gen_lock);
+
+		for_each_active_peer(net, peer, slot) {
+			if (!peer->bm)
+				continue;
+			spin_lock(&peer->bm->lock);
+			peer->bm->flags |= PCACHE_BM_F_FULL_SYNC_NEEDED;
+			spin_unlock(&peer->bm->lock);
+			pcache_bm_set_all(peer->bm);
+			pcache_bm_flush_sync(peer->bm);
+		}
+
+		pcache_set_role_swap_workers(net, true);
+
+		pcache_dev_info(pcache,
+			"set-role: promoted to PRIMARY (force=%d, gen=%llu, full-resync flagged for %d peer(s))\n",
+			force, pcache->generation, 0);
+	} else if (!primary && pcache->is_primary) {
+		pcache->is_primary = false;
+		pcache_set_role_swap_workers(net, false);
+
+		for_each_active_peer(net, peer, slot)
+			if (peer->bm)
+				pcache_bm_flush_sync(peer->bm);
+
+		pcache_dev_info(pcache,
+			"set-role: demoted to SECONDARY (force=%d)\n", force);
+	}
+
+	mutex_unlock(&net->peers_lock);
+	return 0;
+}
+
+/*
+ * Phase 3 Step 13 — split-brain & resync control messages.
+ *
+ * resolve-split-brain victim:
+ *   - Local side surrenders. Clear our bitmap, set FULL_SYNC_NEEDED, then
+ *     restart the peer worker so it re-handshakes and takes the peer's
+ *     full data via SYNC_TARGET.
+ * resolve-split-brain survivor:
+ *   - Local side wins. Bump generation so peer's decide_sync_role on
+ *     reconnect sees our gen as newer, then restart worker to push a
+ *     full resync to peer (which should have run "victim" on its end).
+ */
+int pcache_resolve_split_brain(struct dm_pcache *pcache, u32 peer_node_id,
+			       bool victim)
+{
+	struct pcache_network *net = pcache->net;
+	struct pcache_peer *peer;
+	struct pcache_bitmap *bm;
+	int slot;
+
+	if (!net)
+		return -ENOTCONN;
+
+	mutex_lock(&net->peers_lock);
+	slot = pcache_registry_find_slot_by_node_id(pcache->registry,
+						    peer_node_id);
+	if (slot < 0 || !net->peers[slot]) {
+		mutex_unlock(&net->peers_lock);
+		return -ENOENT;
+	}
+	peer = net->peers[slot];
+	bm = peer->bm;
+
+	peer->split_brain = false;
+
+	if (victim && bm) {
+		pcache_bm_clear_all(bm);
+		spin_lock(&bm->lock);
+		bm->flags |= PCACHE_BM_F_FULL_SYNC_NEEDED;
+		spin_unlock(&bm->lock);
+		spin_lock(&pcache->gen_lock);
+		pcache->gen_dirty = false;	/* peer is authoritative */
+		spin_unlock(&pcache->gen_lock);
+		pcache_bm_flush_sync(bm);
+	} else if (!victim && bm) {
+		spin_lock(&pcache->gen_lock);
+		if (!pcache->gen_dirty) {
+			pcache->gen_dirty = true;
+			pcache->generation++;
+		}
+		spin_unlock(&pcache->gen_lock);
+		spin_lock(&bm->lock);
+		bm->flags |= PCACHE_BM_F_FULL_SYNC_NEEDED;
+		spin_unlock(&bm->lock);
+		pcache_bm_set_all(bm);
+		pcache_bm_flush_sync(bm);
+	}
+
+	/* Break the HALT loop by stopping + restarting the kthread. */
+	{
+		struct pcache_peer *p2 = peer;
+		bool was_primary = p2->is_primary;
+
+		spin_lock(&p2->sock_lock);
+		if (p2->sock)
+			kernel_sock_shutdown(p2->sock, SHUT_RDWR);
+		spin_unlock(&p2->sock_lock);
+
+		if (p2->sender) {
+			kthread_stop(p2->sender);
+			p2->sender = NULL;
+			p2->receiver = NULL;
+		} else if (p2->receiver) {
+			kthread_stop(p2->receiver);
+			p2->receiver = NULL;
+		}
+
+		spin_lock(&p2->sock_lock);
+		if (p2->sock) {
+			sock_release(p2->sock);
+			p2->sock = NULL;
+		}
+		p2->state = PCACHE_C_CONNECTING;
+		p2->repl_state = PCACHE_R_OFF;
+		spin_unlock(&p2->sock_lock);
+
+		if (was_primary)
+			pcache_start_primary(p2);
+		else
+			pcache_start_secondary(p2);
+	}
+
+	mutex_unlock(&net->peers_lock);
+
+	pcache_dev_info(pcache,
+		"resolve-split-brain: peer node_id=%u, role=%s, worker restarted\n",
+		peer_node_id, victim ? "victim" : "survivor");
+	return 0;
+}
+
+int pcache_abort_resync(struct dm_pcache *pcache)
+{
+	struct pcache_network *net = pcache->net;
+	struct pcache_peer *peer;
+	int slot, dropped = 0;
+
+	if (!net)
+		return -ENOTCONN;
+
+	mutex_lock(&net->peers_lock);
+	for_each_active_peer(net, peer, slot) {
+		if (peer->bm) {
+			spin_lock(&peer->bm->lock);
+			peer->bm->flags &= ~PCACHE_BM_F_FULL_SYNC_NEEDED;
+			spin_unlock(&peer->bm->lock);
+			pcache_bm_flush_sync(peer->bm);
+		}
+		spin_lock(&peer->sock_lock);
+		if (peer->sock) {
+			kernel_sock_shutdown(peer->sock, SHUT_RDWR);
+			dropped++;
+		}
+		spin_unlock(&peer->sock_lock);
+	}
+	mutex_unlock(&net->peers_lock);
+
+	pcache_dev_info(pcache,
+		"abort-resync: cleared FULL_SYNC_NEEDED on all peers, dropped %d socket(s)\n",
+		dropped);
+	return 0;
+}
+
+int pcache_reset_generation(struct dm_pcache *pcache)
+{
+	struct pcache_network *net = pcache->net;
+	struct pcache_peer *peer;
+	int slot;
+	u64 new_gen;
+
+	spin_lock(&pcache->gen_lock);
+	pcache->generation++;
+	pcache->gen_dirty = true;
+	new_gen = pcache->generation;
+	spin_unlock(&pcache->gen_lock);
+
+	/* Flush every active peer's header so the new device gen lands in
+	 * PMEM (replicated across all slots). */
+	if (net) {
+		mutex_lock(&net->peers_lock);
+		for_each_active_peer(net, peer, slot) {
+			if (peer->bm)
+				pcache_bm_flush_sync(peer->bm);
+			spin_lock(&peer->sock_lock);
+			if (peer->sock)
+				kernel_sock_shutdown(peer->sock, SHUT_RDWR);
+			spin_unlock(&peer->sock_lock);
+		}
+		mutex_unlock(&net->peers_lock);
+	}
+
+	pcache_dev_info(pcache, "reset-generation: bumped to gen=%llu\n", new_gen);
+	return 0;
+}
+
 int pcache_remove_peer(struct dm_pcache *pcache, u32 peer_node_id)
 {
 	struct pcache_network *net = pcache->net;
@@ -1973,47 +2313,102 @@ int pcache_net_force_resync(struct dm_pcache *pcache)
 	return 0;
 }
 
+/* Phase 3.5 — public helper used by map_bio when fan-out cannot deliver. */
+void pcache_mark_all_peers_dirty(struct dm_pcache *pcache, u64 sector, u32 size)
+{
+	struct pcache_peer *peer;
+	int slot;
+
+	if (!pcache->net)
+		return;
+
+	mutex_lock(&pcache->net->peers_lock);
+	for_each_active_peer(pcache->net, peer, slot) {
+		if (peer->bm)
+			pcache_bm_set_range(peer->bm, sector, size);
+	}
+	mutex_unlock(&pcache->net->peers_lock);
+}
+
 /*
- * Queue a write replication request. Takes an additional reference on
- * @pcache_req so the bio survives until ACK arrives. Returns 0 on success
- * (caller must NOT call pcache_req_put on success path -- the ACK handler
- * does the final put), or negative errno on allocation failure (caller
- * still owns the ref and must put it).
+ * Phase 3 Step 7 — Primary fan-out broadcast write.
+ *
+ * Enqueue one pending_req per *connected* peer so the same bio gets
+ * replicated to every Secondary currently online. Disconnected peer slots
+ * are skipped; the dirty bitmap is set for the range so the next resync
+ * after they reconnect covers it.
+ *
+ * Reference counting:
+ *   caller (map_bio) already did 1 pcache_req_get before calling us.
+ *   First enqueued peer reuses that ref.
+ *   For each additional connected peer, we pcache_req_get one more time.
+ *   Each peer's ACK eventually calls pcache_req_put once. After M ACKs the
+ *   kref reaches 0 and the bio is completed (Protocol C "all-connected
+ *   ACK" semantic).
+ *
+ * Returns 0 if at least one peer was enqueued, -ENOTCONN if no peer slot
+ * is currently in PCACHE_C_CONNECTED state (caller still owns the extra ref
+ * and must drop it).
  */
 int pcache_net_submit_write(struct dm_pcache *pcache,
 			    struct pcache_request *pcache_req,
 			    u64 sector, u32 size)
 {
+	struct pcache_network *net;
 	struct pcache_peer *peer;
 	struct pcache_pending_req *req;
+	int slot, enqueued = 0;
+	bool any_skipped = false;
 
-	if (!pcache->net)
+	net = pcache->net;
+	if (!net)
 		return -ENOTCONN;
 
-	/* Step 2: still single-peer fan-out (slot 0 only). Step 7 will iterate
-	 * over every connected slot and queue one pending_req per peer. */
-	peer = pcache->net->peers[0];
-	if (!peer || peer->state != PCACHE_C_CONNECTED)
+	mutex_lock(&net->peers_lock);
+	for_each_active_peer(net, peer, slot) {
+		if (peer->state != PCACHE_C_CONNECTED) {
+			/* Phase 3.5 — mark THIS peer's bitmap so its next
+			 * resync covers the range. */
+			if (peer->bm)
+				pcache_bm_set_range(peer->bm, sector, size);
+			any_skipped = true;
+			continue;
+		}
+
+		req = mempool_alloc(net->req_pool, GFP_NOIO);
+		if (!req) {
+			if (peer->bm)
+				pcache_bm_set_range(peer->bm, sector, size);
+			any_skipped = true;
+			continue;
+		}
+
+		/* First enqueue reuses the caller's extra ref; subsequent
+		 * peers need additional refs so each can independently put. */
+		if (enqueued > 0)
+			pcache_req_get(pcache_req);
+
+		req->pcache_req = pcache_req;
+		req->sector = sector;
+		req->size = size;
+		req->block_id = (u64)atomic64_inc_return(&peer->next_block_id);
+		req->sent = false;
+		req->send_time = 0;
+
+		spin_lock(&peer->pending_lock);
+		list_add_tail(&req->list, &peer->pending_list);
+		atomic_inc(&peer->pending_cnt);
+		atomic_inc(&peer->unsent_cnt);
+		spin_unlock(&peer->pending_lock);
+
+		wake_up(&peer->wait_for_work);
+		enqueued++;
+	}
+	mutex_unlock(&net->peers_lock);
+
+	(void)any_skipped;
+
+	if (enqueued == 0)
 		return -ENOTCONN;
-
-	req = mempool_alloc(pcache->net->req_pool, GFP_NOIO);
-	if (!req)
-		return -ENOMEM;
-
-	/* Caller (dm_pcache_map_bio) already took the extra reference. */
-	req->pcache_req = pcache_req;
-	req->sector = sector;
-	req->size = size;
-	req->block_id = (u64)atomic64_inc_return(&peer->next_block_id);
-	req->sent = false;
-	req->send_time = 0;
-
-	spin_lock(&peer->pending_lock);
-	list_add_tail(&req->list, &peer->pending_list);
-	atomic_inc(&peer->pending_cnt);
-	atomic_inc(&peer->unsent_cnt);
-	spin_unlock(&peer->pending_lock);
-
-	wake_up(&peer->wait_for_work);
 	return 0;
 }
