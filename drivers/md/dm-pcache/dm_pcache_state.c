@@ -1763,6 +1763,179 @@ bool pcache_peer_connected(struct dm_pcache *pcache)
 	return false;
 }
 
+/*
+ * Phase 2 Step 11 — Operator-driven full resync.
+ * Set FULL_SYNC_NEEDED on the local bitmap, bump generation, then drop the
+ * current socket to force a reconnect. The next handshake's sync_params
+ * exchange will see NEED_FULL and elect Primary as SYNC_SOURCE.
+ */
+/*
+ * Phase 3 Step 4 — runtime peer add/remove.
+ *
+ * add-peer reserves a slot in the on-PMEM registry, allocates the in-memory
+ * peer struct, installs it at net->peers[slot], and starts a primary or
+ * secondary worker depending on this device's role. Direction of the
+ * actual TCP connection is decided per-pair: lower node_id initiates via
+ * primary_worker's kernel_connect path, higher node_id waits for the
+ * accept_thread to deliver an inbound socket. (For Step 3+4 with Primary
+ * always at the lowest id, the role-based kthread choice naturally aligns
+ * with the id-based direction rule.)
+ */
+int pcache_add_peer(struct dm_pcache *pcache, u32 peer_node_id, const char *addr)
+{
+	struct pcache_network *net = pcache->net;
+	struct pcache_peer *peer;
+	u64 gen;
+	int slot, ret;
+
+	if (!net)
+		return -ENOTCONN;
+	if (peer_node_id == pcache->my_node_id)
+		return -EINVAL;
+	if (!addr || !*addr)
+		return -EINVAL;
+
+	mutex_lock(&net->peers_lock);
+
+	/* Idempotent: if the registry already has this peer (persisted from a
+	 * prior session), reuse its slot. Otherwise allocate a fresh one. */
+	slot = pcache_registry_find_slot_by_node_id(pcache->registry,
+						    peer_node_id);
+	if (slot >= 0) {
+		if (net->peers[slot]) {
+			mutex_unlock(&net->peers_lock);
+			return -EEXIST;	/* already fully alive */
+		}
+		/* registry has slot but no in-memory peer — recreate it */
+	} else {
+		gen = pcache->generation;
+		ret = pcache_registry_add(pcache->registry, peer_node_id, addr,
+					  gen, &slot);
+		if (ret) {
+			mutex_unlock(&net->peers_lock);
+			pcache_dev_err(pcache,
+				"add-peer: registry_add(node_id=%u) failed: %d\n",
+				peer_node_id, ret);
+			return ret;
+		}
+	}
+
+	peer = pcache_alloc_peer(pcache, peer_node_id, addr);
+	if (!peer) {
+		pcache_registry_remove(pcache->registry, peer_node_id);
+		mutex_unlock(&net->peers_lock);
+		return -ENOMEM;
+	}
+
+	/* Phase 3.5 — per-peer bitmap on its registry-assigned slot. */
+	ret = pcache_peer_bitmap_init(peer, pcache->backing_dev.dev_size, slot);
+	if (ret) {
+		pcache_free_peer(peer);
+		pcache_registry_remove(pcache->registry, peer_node_id);
+		mutex_unlock(&net->peers_lock);
+		pcache_dev_err(pcache,
+			"add-peer: peer_bitmap_init failed: %d\n", ret);
+		return ret;
+	}
+
+	__module_get(THIS_MODULE);
+	net->peers[slot] = peer;
+
+	if (peer->is_primary)
+		ret = pcache_start_primary(peer);
+	else
+		ret = pcache_start_secondary(peer);
+	if (ret) {
+		net->peers[slot] = NULL;
+		pcache_peer_bitmap_exit(peer);
+		pcache_free_peer(peer);
+		pcache_registry_remove(pcache->registry, peer_node_id);
+		module_put(THIS_MODULE);
+		mutex_unlock(&net->peers_lock);
+		pcache_dev_err(pcache,
+			"add-peer: worker spawn failed: %d\n", ret);
+		return ret;
+	}
+
+	mutex_unlock(&net->peers_lock);
+	pcache_dev_info(pcache,
+		"add-peer: slot=%d node_id=%u addr=%s is_primary=%d\n",
+		slot, peer_node_id, addr, peer->is_primary);
+	return 0;
+}
+
+int pcache_remove_peer(struct dm_pcache *pcache, u32 peer_node_id)
+{
+	struct pcache_network *net = pcache->net;
+	struct pcache_peer *peer;
+	int slot;
+
+	if (!net)
+		return -ENOTCONN;
+
+	mutex_lock(&net->peers_lock);
+	slot = pcache_registry_find_slot_by_node_id(pcache->registry,
+						    peer_node_id);
+	if (slot < 0) {
+		mutex_unlock(&net->peers_lock);
+		return -ENOENT;
+	}
+	peer = net->peers[slot];
+	if (!peer) {
+		mutex_unlock(&net->peers_lock);
+		return -ENOENT;
+	}
+
+	/* Shut down the socket first to wake any blocking recv/send in the
+	 * worker so kthread_stop returns promptly. */
+	if (peer->sock)
+		kernel_sock_shutdown(peer->sock, SHUT_RDWR);
+
+	if (peer->sender) {
+		kthread_stop(peer->sender);
+		peer->sender = NULL;
+		peer->receiver = NULL;
+	} else if (peer->receiver) {
+		kthread_stop(peer->receiver);
+		peer->receiver = NULL;
+	}
+	pcache_flush_pending(peer, -EIO);
+	pcache_peer_bitmap_exit(peer);
+	pcache_free_peer(peer);
+	net->peers[slot] = NULL;
+	module_put(THIS_MODULE);
+
+	pcache_registry_remove(pcache->registry, peer_node_id);
+	mutex_unlock(&net->peers_lock);
+
+	pcache_dev_info(pcache, "remove-peer: slot=%d node_id=%u removed\n",
+			slot, peer_node_id);
+	return 0;
+}
+
+int pcache_list_peers(struct dm_pcache *pcache, char *buf, size_t buflen)
+{
+	struct pcache_peer *peer;
+	int slot;
+	int sz = 0;
+
+	if (!pcache->net)
+		return scnprintf(buf, buflen, "no network");
+
+	sz += scnprintf(buf + sz, buflen - sz, "my_node_id=%u listen_port=%u\n",
+			pcache->my_node_id, pcache->listen_port);
+	for_each_active_peer(pcache->net, peer, slot) {
+		sz += scnprintf(buf + sz, buflen - sz,
+				"slot=%d node_id=%d addr=%s state=%d repl=%d split_brain=%d\n",
+				slot, peer->node_id, peer->remote_addr,
+				peer->state, peer->repl_state,
+				peer->split_brain ? 1 : 0);
+		if (sz >= (int)buflen)
+			break;
+	}
+	return sz;
+}
+
 int pcache_net_force_resync(struct dm_pcache *pcache)
 {
 	struct pcache_peer *peer;
