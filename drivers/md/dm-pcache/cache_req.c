@@ -790,6 +790,61 @@ err:
 }
 
 /**
+ * pcache_net_write_to_cache - Write received network data into the cache.
+ * Called by the network receiver thread on the Secondary to persist data
+ * received from the Primary.
+ *
+ * This function allocates a cache key and copies data directly from the
+ * provided buffer into the PMEM cache segment, bypassing the bio path.
+ */
+int pcache_net_write_to_cache(struct pcache_cache *cache, u64 sector,
+			      void *data, u32 size)
+{
+	struct pcache_cache_subtree *cache_subtree;
+	struct pcache_cache_key *key;
+	struct pcache_cache_pos *pos;
+	void *dst;
+	u32 io_done = 0;
+	u32 max_in_seg;
+	int ret;
+
+	while (io_done < size) {
+		key = cache_key_alloc(&cache->req_key_tree, GFP_NOIO);
+		if (!key)
+			return -ENOMEM;
+
+		key->off = (sector << SECTOR_SHIFT) + io_done;
+		max_in_seg = PCACHE_CACHE_SUBTREE_SIZE -
+			(key->off & PCACHE_CACHE_SUBTREE_SIZE_MASK);
+		key->len = min(size - io_done, max_in_seg);
+
+		ret = cache_data_alloc(cache, key);
+		if (ret) {
+			cache_key_put(key);
+			return ret;
+		}
+
+		pos = &key->cache_pos;
+		dst = pos->cache_seg->segment.data + pos->seg_off;
+		memcpy_flushcache(dst, data + io_done, key->len);
+
+		cache_subtree = get_subtree(&cache->req_key_tree, key->off);
+		spin_lock(&cache_subtree->tree_lock);
+		cache_key_insert(&cache->req_key_tree, key, true);
+		ret = cache_key_append(cache, key, false);
+		if (ret) {
+			cache_seg_put(key->cache_pos.cache_seg);
+			cache_key_delete(key);
+			spin_unlock(&cache_subtree->tree_lock);
+			return ret;
+		}
+		io_done += key->len;
+		spin_unlock(&cache_subtree->tree_lock);
+	}
+	return 0;
+}
+
+/**
  * pcache_cache_flush - Flush all ksets to persist any pending cache data
  * @cache: Pointer to the cache structure
  *
