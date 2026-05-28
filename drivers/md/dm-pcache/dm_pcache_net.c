@@ -13,6 +13,8 @@
 #include "dm_pcache_bitmap.h"
 #include "dm_pcache_net.h"
 
+void pcache_peer_bitmap_exit(struct pcache_peer *peer);	/* forward decl */
+
 /*
  * Fully transmit @size bytes from @buf over @sock.
  *
@@ -176,7 +178,7 @@ out_release:
 	return err;
 }
 
-int pcache_create_server_socket(struct pcache_peer *peer, int port)
+int pcache_create_listen_socket(struct socket **sock_out, int port)
 {
 	struct sockaddr_in addr;
 	struct socket *sock = NULL;
@@ -201,7 +203,9 @@ int pcache_create_server_socket(struct pcache_peer *peer, int port)
 	if (err)
 		goto out_release;
 
-	err = sock->ops->listen(sock, 1);
+	/* Phase 3 — backlog large enough for N=32 mesh (multiple peers might
+	 * race to connect during a coordinated restart). */
+	err = sock->ops->listen(sock, PCACHE_BM_MAX_PEERS);
 	if (err)
 		goto out_release;
 
@@ -209,10 +213,11 @@ int pcache_create_server_socket(struct pcache_peer *peer, int port)
 	sock_setsockopt(sock, SOL_SOCKET, SO_RCVBUF,
 			KERNEL_SOCKPTR(&bufsz), sizeof(bufsz));
 
-	/* accept() should not time out while waiting for the peer. */
-	sock->sk->sk_rcvtimeo = 60 * HZ;
+	/* Bounded accept timeout so the accept_thread can react to
+	 * kthread_should_stop() without long stalls. */
+	sock->sk->sk_rcvtimeo = 5 * HZ;
 
-	peer->listen_sock = sock;
+	*sock_out = sock;
 	return 0;
 
 out_release:
@@ -350,9 +355,58 @@ int pcache_send_bio_pages(struct socket *sock, struct bio *bio)
 	return 0;
 }
 
+/*
+ * Phase 3.5 B1 — coordinated demote handshake.
+ *
+ * Promoter sends P_DEMOTE_REQ to each connected peer; each peer that is
+ * currently Primary demotes locally then replies P_DEMOTE_ACK with
+ * status=0. Already-Secondary peers ACK immediately (no-op).
+ */
+int pcache_send_demote_req(struct socket *sock, u32 initiator_node_id, u32 flags)
+{
+	struct pcache_packet_header hdr = {
+		.type	= cpu_to_le16(PCACHE_P_DEMOTE_REQ),
+		.length	= cpu_to_le16(PCACHE_DM_PKT_SIZE),
+	};
+	struct pcache_demote_pkt body = {
+		.initiator_node_id = cpu_to_le32(initiator_node_id),
+		.flags             = cpu_to_le32(flags),
+	};
+	u8 buf[sizeof(hdr) + sizeof(body)];
+
+	memcpy(buf, &hdr, sizeof(hdr));
+	memcpy(buf + sizeof(hdr), &body, sizeof(body));
+	return pcache_send_all(sock, buf, sizeof(buf));
+}
+
+int pcache_send_demote_ack(struct socket *sock, u32 status)
+{
+	struct pcache_packet_header hdr = {
+		.type	= cpu_to_le16(PCACHE_P_DEMOTE_ACK),
+		.length	= cpu_to_le16(PCACHE_DM_PKT_SIZE),
+	};
+	struct pcache_demote_pkt body = {
+		.status = cpu_to_le32(status),
+	};
+	u8 buf[sizeof(hdr) + sizeof(body)];
+
+	memcpy(buf, &hdr, sizeof(hdr));
+	memcpy(buf + sizeof(hdr), &body, sizeof(body));
+	return pcache_send_all(sock, buf, sizeof(buf));
+}
+
+int pcache_recv_demote_body(struct socket *sock, struct pcache_demote_pkt *out)
+{
+	return pcache_recv_all(sock, out, sizeof(*out));
+}
+
 void pcache_free_peer(struct pcache_peer *peer)
 {
 	struct pcache_pending_req *req, *tmp;
+
+	/* Phase 3.5 — defensive bitmap release in case the explicit
+	 * pcache_peer_bitmap_exit() in remove-peer / net_stop was skipped. */
+	pcache_peer_bitmap_exit(peer);
 
 	if (peer->sock) {
 		sock_release(peer->sock);

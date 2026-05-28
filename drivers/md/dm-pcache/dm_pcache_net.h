@@ -13,6 +13,7 @@
 
 struct dm_pcache;
 struct pcache_request;
+struct pcache_bitmap;
 
 /*
  * One in-flight write replication request tracked by the Primary.
@@ -57,19 +58,36 @@ struct pcache_peer {
 
 	/* Phase 2 — peer's reported generation at handshake (captured in SP exchange) */
 	u64			peer_generation;
+
+	/* Phase 3 Step 12 — per-pair split-brain marker. Set when
+	 * decide_sync_role returns HALT for this pair; cleared by
+	 * dmsetup message resolve-split-brain. Just for status visibility. */
+	bool			split_brain;
+
+	/* Phase 3.5 — per-peer dirty bitmap (replaces pcache->bitmap).
+	 * Tracks regions out of sync with THIS specific peer. Owns one slot
+	 * in the PMEM bitmap region (slot_idx = registry slot index). */
+	struct pcache_bitmap	*bm;
 };
 
 struct pcache_network {
 	/* Phase 3 — peer slots indexed 0..PCACHE_BM_MAX_PEERS-1.
-	 * Step 2: only peers[0] is populated by the legacy dmsetup-table
-	 * single-peer path. Step 4 wires dmsetup messages onto the rest
-	 * and starts using the registry to pick slot indices. */
+	 * Slots are populated by dmsetup message add-peer (Step 4) or by the
+	 * legacy dmsetup-table single-peer path (peers[0]). Index in this
+	 * array matches the bitmap slot index in the registry. */
 	struct pcache_peer	*peers[PCACHE_BM_MAX_PEERS];
+	struct mutex		peers_lock;	/* protects add/remove of peers[] */
 	struct mutex		connection_mutex;
 	u32			protocol_version;
 	atomic_t		stopping;
 	struct kmem_cache	*req_cache;
 	mempool_t		*req_pool;
+
+	/* Phase 3 — one listen socket per network (Step 3): accept_thread
+	 * services it and dispatches accepted sockets to the matching peer
+	 * slot via handshake.node_id lookup. */
+	struct socket		*listen_sock;
+	struct task_struct	*accept_thread;
 };
 
 /*
@@ -90,7 +108,7 @@ struct pcache_network {
 int pcache_send_all(struct socket *sock, const void *buf, int size);
 int pcache_recv_all(struct socket *sock, void *buf, int size);
 int pcache_create_peer_socket(struct pcache_peer *peer);
-int pcache_create_server_socket(struct pcache_peer *peer, int port);
+int pcache_create_listen_socket(struct socket **sock_out, int port);
 void pcache_sock_set_timeout(struct socket *sock, unsigned long timeout_jiffies);
 void pcache_apply_socket_opts(struct socket *sock);
 int pcache_send_packet(struct socket *sock, struct pcache_packet_header *hdr);
@@ -101,6 +119,11 @@ int pcache_send_sync_params(struct socket *sock, u64 generation,
 int pcache_recv_sync_params(struct socket *sock,
 			    struct pcache_sync_params_pkt *out);
 int pcache_send_bio_pages(struct socket *sock, struct bio *bio);
+
+/* Phase 3.5 — B1 coordinated demote */
+int pcache_send_demote_req(struct socket *sock, u32 initiator_node_id, u32 flags);
+int pcache_send_demote_ack(struct socket *sock, u32 status);
+int pcache_recv_demote_body(struct socket *sock, struct pcache_demote_pkt *out);
 void pcache_free_peer(struct pcache_peer *peer);
 struct socket *pcache_sock_get(struct pcache_peer *peer);
 void pcache_sock_put(struct pcache_peer *peer);
