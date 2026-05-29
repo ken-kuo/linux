@@ -141,8 +141,8 @@ int pcache_create_listen_socket(struct socket **sock_out, int port);
 void pcache_sock_set_timeout(struct socket *sock, unsigned long timeout_jiffies);
 void pcache_apply_socket_opts(struct socket *sock);
 int pcache_send_packet(struct socket *sock, struct pcache_packet_header *hdr);
-int pcache_send_handshake(struct socket *sock, int node_id);
-int pcache_recv_handshake(struct socket *sock, int *peer_node_id);
+int pcache_send_handshake(struct socket *sock, int node_id, int stream_id);
+int pcache_recv_handshake(struct socket *sock, int *peer_node_id, int *stream_id);
 int pcache_send_sync_params(struct socket *sock, u64 generation,
 			    u64 peer_gen_at_sync, u64 bm_nr_bits, u32 flags);
 int pcache_recv_sync_params(struct socket *sock,

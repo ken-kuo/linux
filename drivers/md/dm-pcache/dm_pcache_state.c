@@ -524,7 +524,7 @@ wait_sock:
 			return 0;
 		sock = peer->streams[0].sock;
 
-		ret = pcache_send_handshake(sock, (int)peer->pcache->my_node_id);
+		ret = pcache_send_handshake(sock, (int)peer->pcache->my_node_id, 0);
 		if (ret) {
 			pcache_err("secondary[initiator]: handshake send failed: %d\n", ret);
 			spin_lock(&peer->streams[0].sock_lock);
@@ -535,7 +535,7 @@ wait_sock:
 			schedule_timeout(HZ);
 			goto wait_sock;
 		}
-		ret = pcache_recv_handshake(sock, NULL);
+		ret = pcache_recv_handshake(sock, NULL, NULL);
 		if (ret) {
 			pcache_err("secondary[initiator]: handshake recv failed: %d\n", ret);
 			spin_lock(&peer->streams[0].sock_lock);
@@ -1097,7 +1097,7 @@ connect:
 			}
 			sock = peer->streams[0].sock;
 
-			ret = pcache_send_handshake(sock, (int)peer->pcache->my_node_id);
+			ret = pcache_send_handshake(sock, (int)peer->pcache->my_node_id, 0);
 			if (ret) {
 				pcache_err("primary[initiator]: HANDSHAKE send failed: %d\n", ret);
 				sock_release(sock); sock = NULL;
@@ -1110,7 +1110,7 @@ connect:
 				continue;
 			}
 
-			ret = pcache_recv_handshake(sock, NULL);
+			ret = pcache_recv_handshake(sock, NULL, NULL);
 			if (ret) {
 				pcache_err("primary[initiator]: HANDSHAKE reply failed: %d\n", ret);
 				sock_release(sock); sock = NULL;
@@ -1550,7 +1550,7 @@ static int pcache_accept_thread(void *arg)
 	struct pcache_network *net = pcache->net;
 	struct socket *sock;
 	struct pcache_peer *peer;
-	int ret, peer_node_id, slot;
+	int ret, peer_node_id, slot, stream_id = 0;
 
 	allow_signal(SIGTERM);
 
@@ -1569,7 +1569,7 @@ static int pcache_accept_thread(void *arg)
 		pcache_apply_socket_opts(sock);
 
 		peer_node_id = -1;
-		ret = pcache_recv_handshake(sock, &peer_node_id);
+		ret = pcache_recv_handshake(sock, &peer_node_id, &stream_id);
 		if (ret) {
 			pcache_dev_err(pcache,
 				"accept: handshake recv failed: %d\n", ret);
@@ -1577,7 +1577,7 @@ static int pcache_accept_thread(void *arg)
 			continue;
 		}
 
-		ret = pcache_send_handshake(sock, (int)pcache->my_node_id);
+		ret = pcache_send_handshake(sock, (int)pcache->my_node_id, stream_id);
 		if (ret) {
 			pcache_dev_err(pcache,
 				"accept: handshake reply failed: %d\n", ret);
@@ -1600,28 +1600,43 @@ static int pcache_accept_thread(void *arg)
 			sock_release(sock);
 			continue;
 		}
-
-		spin_lock(&peer->streams[0].sock_lock);
-		if (peer->streams[0].sock) {
-			/* Race-loser: lower-id outbound got there first. */
-			spin_unlock(&peer->streams[0].sock_lock);
+		if (stream_id < 0 || stream_id >= peer->nr_streams) {
 			mutex_unlock(&net->peers_lock);
-			pcache_dev_info(pcache,
-				"accept: peer node_id=%d already connected; drop dup\n",
-				peer_node_id);
+			pcache_dev_err(pcache,
+				"accept: bad stream_id=%d (nr_streams=%d) node_id=%d; drop\n",
+				stream_id, peer->nr_streams, peer_node_id);
 			sock_release(sock);
 			continue;
 		}
-		peer->streams[0].sock = sock;
-		peer->state = PCACHE_C_CONNECTED;
-		spin_unlock(&peer->streams[0].sock_lock);
+
+		/*
+		 * Cut C — route the accepted socket to its stream slot. stream 0
+		 * is the control stream and owns peer->state; data streams
+		 * (stream_id > 0) only attach their socket and wake their own
+		 * worker. At nr_streams == 1 this is the legacy path.
+		 */
+		spin_lock(&peer->streams[stream_id].sock_lock);
+		if (peer->streams[stream_id].sock) {
+			/* Race-loser: lower-id outbound got there first. */
+			spin_unlock(&peer->streams[stream_id].sock_lock);
+			mutex_unlock(&net->peers_lock);
+			pcache_dev_info(pcache,
+				"accept: peer node_id=%d stream=%d already connected; drop dup\n",
+				peer_node_id, stream_id);
+			sock_release(sock);
+			continue;
+		}
+		peer->streams[stream_id].sock = sock;
+		if (stream_id == 0)
+			peer->state = PCACHE_C_CONNECTED;
+		spin_unlock(&peer->streams[stream_id].sock_lock);
 		mutex_unlock(&net->peers_lock);
 
 		pcache_sock_set_timeout(sock, 300 * HZ);
-		wake_up(&peer->streams[0].wait_for_socket);
+		wake_up(&peer->streams[stream_id].wait_for_socket);
 		pcache_dev_info(pcache,
-			"accept: handed inbound sock to slot=%d node_id=%d\n",
-			slot, peer_node_id);
+			"accept: handed inbound sock to slot=%d node_id=%d stream=%d\n",
+			slot, peer_node_id, stream_id);
 	}
 	return 0;
 }

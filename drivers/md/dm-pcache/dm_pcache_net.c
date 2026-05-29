@@ -236,7 +236,7 @@ int pcache_send_packet(struct socket *sock, struct pcache_packet_header *hdr)
 	return pcache_send_all(sock, hdr, sizeof(*hdr));
 }
 
-int pcache_send_handshake(struct socket *sock, int node_id)
+int pcache_send_handshake(struct socket *sock, int node_id, int stream_id)
 {
 	struct pcache_packet_header hdr = {
 		.type	= cpu_to_le16(PCACHE_P_HANDSHAKE),
@@ -246,6 +246,7 @@ int pcache_send_handshake(struct socket *sock, int node_id)
 	struct pcache_handshake_pkt hs = {
 		.protocol_version	= cpu_to_le16(PCACHE_PROTO_VERSION),
 		.node_id		= cpu_to_le16(node_id),
+		.stream_id		= cpu_to_le32(stream_id),
 	};
 	u8 buf[sizeof(hdr) + sizeof(hs)];
 
@@ -254,7 +255,7 @@ int pcache_send_handshake(struct socket *sock, int node_id)
 	return pcache_send_all(sock, buf, sizeof(buf));
 }
 
-int pcache_recv_handshake(struct socket *sock, int *peer_node_id)
+int pcache_recv_handshake(struct socket *sock, int *peer_node_id, int *stream_id)
 {
 	struct pcache_packet_header hdr;
 	struct pcache_handshake_pkt hs;
@@ -276,6 +277,8 @@ int pcache_recv_handshake(struct socket *sock, int *peer_node_id)
 
 	if (peer_node_id)
 		*peer_node_id = le16_to_cpu(hs.node_id);
+	if (stream_id)
+		*stream_id = le32_to_cpu(hs.stream_id);
 	return 0;
 }
 

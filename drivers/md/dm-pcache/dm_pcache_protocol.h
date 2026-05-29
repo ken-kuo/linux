@@ -86,7 +86,7 @@ struct pcache_packet_header {
 struct pcache_handshake_pkt {
 	__le16	protocol_version;
 	__le16	node_id;
-	__le32	reserved;
+	__le32	stream_id;	/* Cut C: 0 = control stream, 1.. = data-only */
 } __packed;
 
 /* Phase 2 — sent immediately after handshake to negotiate resync direction */
