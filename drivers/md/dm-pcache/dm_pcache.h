@@ -50,6 +50,10 @@ struct dm_pcache {
 	u32				quorum_min;
 	bool				quorum_majority;	/* recompute on add/remove */
 
+	/* Cut C — number of parallel TCP streams per peer (default 1 = legacy
+	 * single-connection behavior). Set by the streams=N table arg. */
+	int				nr_streams;
+
 	/* Phase 3.5 — device-wide generation (was bm->generation).
 	 * Each per-peer bitmap mirrors this for PMEM persistence.
 	 * gen_dirty is set on first new dirty bit since last mark_synced

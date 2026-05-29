@@ -1493,6 +1493,15 @@ static int pcache_parse_dev_args(struct dm_pcache *pcache,
 				pcache->quorum_min = q;
 				pcache->quorum_majority = false;
 			}
+		} else if (!strcmp(arg, "streams")) {
+			int n;
+
+			if (kstrtoint(val, 10, &n) < 0 ||
+			    n < 1 || n > PCACHE_MAX_STREAMS) {
+				*error = "invalid streams (1..PCACHE_MAX_STREAMS)";
+				return -EINVAL;
+			}
+			pcache->nr_streams = n;
 		} else if (!strcmp(arg, "peer_addr")) {
 			pcache_dev_info(pcache,
 				"peer_addr= in table line is deprecated; use dmsetup message add-peer\n");
@@ -1641,6 +1650,25 @@ static int pcache_accept_thread(void *arg)
 	return 0;
 }
 
+/* Cut C — initialise one stream slot. */
+static void pcache_stream_init(struct pcache_stream *st,
+			       struct pcache_peer *peer, int stream_id)
+{
+	st->peer	= peer;
+	st->stream_id	= stream_id;
+	st->sock	= NULL;
+	st->sender	= NULL;
+	st->receiver	= NULL;
+	atomic_set(&st->pending_cnt, 0);
+	atomic_set(&st->unsent_cnt, 0);
+	atomic64_set(&st->next_block_id, 1);
+	INIT_LIST_HEAD(&st->pending_list);
+	init_waitqueue_head(&st->wait_for_work);
+	init_waitqueue_head(&st->wait_for_socket);
+	spin_lock_init(&st->sock_lock);
+	spin_lock_init(&st->pending_lock);
+}
+
 /*
  * Phase 3 Step 4 — allocate and initialise a peer struct.
  * Caller still needs to install it at net->peers[slot] and start its worker.
@@ -1649,6 +1677,7 @@ static struct pcache_peer *
 pcache_alloc_peer(struct dm_pcache *pcache, u32 peer_node_id, const char *addr)
 {
 	struct pcache_peer *peer;
+	int i;
 
 	peer = kzalloc(sizeof(*peer), GFP_KERNEL);
 	if (!peer)
@@ -1662,20 +1691,11 @@ pcache_alloc_peer(struct dm_pcache *pcache, u32 peer_node_id, const char *addr)
 	peer->split_brain = false;
 	strscpy(peer->remote_addr, addr, sizeof(peer->remote_addr));
 
-	/* Cut C — single control stream by default (legacy behavior). */
-	peer->nr_streams = 1;
-	peer->streams[0].peer = peer;
-	peer->streams[0].stream_id = 0;
-
-	atomic_set(&peer->streams[0].pending_cnt, 0);
-	atomic_set(&peer->streams[0].unsent_cnt, 0);
-	atomic64_set(&peer->streams[0].next_block_id, 1);
-	INIT_LIST_HEAD(&peer->streams[0].pending_list);
-	init_waitqueue_head(&peer->streams[0].wait_for_work);
-	init_waitqueue_head(&peer->streams[0].wait_for_socket);
+	/* Cut C — N parallel streams (default 1 = legacy single connection). */
+	peer->nr_streams = pcache->nr_streams >= 1 ? pcache->nr_streams : 1;
+	for (i = 0; i < peer->nr_streams; i++)
+		pcache_stream_init(&peer->streams[i], peer, i);
 	init_waitqueue_head(&peer->wait_for_listen);
-	spin_lock_init(&peer->streams[0].sock_lock);
-	spin_lock_init(&peer->streams[0].pending_lock);
 
 	return peer;
 }
