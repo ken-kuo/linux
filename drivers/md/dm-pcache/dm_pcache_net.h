@@ -15,6 +15,12 @@ struct dm_pcache;
 struct pcache_request;
 struct pcache_bitmap;
 
+/* Latency instrumentation toggle — canonical definition in dm_pcache.h.
+ * Guarded so this header is self-contained even if included first. */
+#ifndef PCACHE_LAT_TRACE
+#define PCACHE_LAT_TRACE 1
+#endif
+
 /*
  * One in-flight write replication request tracked by the Primary.
  * The pending_req borrows a reference on the original pcache_request, so the
@@ -28,6 +34,10 @@ struct pcache_pending_req {
 	u64			block_id;	/* unique id echoed by peer in ACK */
 	bool			sent;
 	unsigned long		send_time;
+#if PCACHE_LAT_TRACE
+	u64			t_enqueue;	/* ns when pending_req created */
+	u64			t_send_start;	/* ns before header send */
+#endif
 };
 
 struct pcache_peer {

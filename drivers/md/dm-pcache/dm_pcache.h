@@ -75,6 +75,17 @@ static inline bool pcache_is_stopping(struct dm_pcache *pcache)
 #define pcache_dev_debug(pcache, fmt, ...)							\
 	pcache_debug("%s " fmt, pcache->ti->table->md->name, ##__VA_ARGS__)
 
+/*
+ * Temporary latency instrumentation — see SESSION_LOG 2026-05-29 (evening).
+ * Decomposes the replicated-write round trip into named segments to locate
+ * the ~750us per-IO gap vs DRBD+bcache on 128K seq writes. ktime_get_ns()
+ * captures at each boundary; one trace_printk() line per IO on each side.
+ * Read via /sys/kernel/tracing/trace. Set to 0 (and rebuild) to remove.
+ */
+#ifndef PCACHE_LAT_TRACE
+#define PCACHE_LAT_TRACE 1
+#endif
+
 struct pcache_request {
 	struct dm_pcache	*pcache;
 	struct bio		*bio;
@@ -86,6 +97,9 @@ struct pcache_request {
 	int			ret;
 
 	struct list_head	list_node;
+#if PCACHE_LAT_TRACE
+	u64			t_map;		/* ns at dm_pcache_map_bio entry */
+#endif
 };
 
 void pcache_req_get(struct pcache_request *pcache_req);

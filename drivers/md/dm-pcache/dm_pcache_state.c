@@ -4,6 +4,7 @@
 #include <linux/bio.h>
 #include <linux/wait.h>
 #include <linux/sched/signal.h>
+#include <linux/timekeeping.h>
 #include <net/tcp.h>
 #include "dm_pcache.h"
 #include "dm_pcache_bitmap.h"
@@ -329,6 +330,25 @@ static void pcache_handle_ack(struct pcache_peer *peer,
 		pcache_bm_set_range(peer->bm,
 				    found->sector, found->size);
 
+#if PCACHE_LAT_TRACE
+	/* Decompose the primary-side per-IO latency. All fields read here are
+	 * written before the data send (t_map/t_enqueue/t_send_start), so they
+	 * are stable by the time this ACK arrives — no race with the sender.
+	 * sendack folds in send-push + wire RTT + secondary commit + ack RTT;
+	 * subtract the secondary trace's total to isolate the wire/sched cost. */
+	if (success && found->t_send_start && found->pcache_req) {
+		u64 t_ack = ktime_get_ns();
+		u64 t_map = found->pcache_req->t_map;
+
+		trace_printk("P blk=%llu sz=%u local=%llu qwait=%llu sendack=%llu total=%llu\n",
+			     found->block_id, found->size,
+			     found->t_enqueue - t_map,
+			     found->t_send_start - found->t_enqueue,
+			     t_ack - found->t_send_start,
+			     t_ack - t_map);
+	}
+#endif
+
 	pcache_req_put(found->pcache_req, success ? 0 : -EIO);
 	pcache_pending_req_free(peer, found);
 }
@@ -408,10 +428,16 @@ static int pcache_handle_data_recv(struct pcache_peer *peer,
 	struct pcache_packet_header reply;
 	void *data;
 	int ret;
+#if PCACHE_LAT_TRACE
+	u64 t0, t_data, t_commit;
+#endif
 
 	if (!size)
 		return 0;
 
+#if PCACHE_LAT_TRACE
+	t0 = ktime_get_ns();		/* entry; recv segment includes kvmalloc */
+#endif
 	data = kvmalloc(size, GFP_NOIO);
 	if (!data)
 		return -ENOMEM;
@@ -419,11 +445,17 @@ static int pcache_handle_data_recv(struct pcache_peer *peer,
 	ret = pcache_recv_all(peer->sock, data, size);
 	if (ret)
 		goto free_data;
+#if PCACHE_LAT_TRACE
+	t_data = ktime_get_ns();
+#endif
 
 	ret = pcache_net_write_to_cache(&pcache->cache, sector, data, size);
 	if (ret)
 		pcache_err("write to cache failed: %d (sector=%llu size=%u)\n",
 			   ret, sector, size);
+#if PCACHE_LAT_TRACE
+	t_commit = ktime_get_ns();
+#endif
 
 	if (flags & PCACHE_F_ACK) {
 		memset(&reply, 0, sizeof(reply));
@@ -435,6 +467,17 @@ static int pcache_handle_data_recv(struct pcache_peer *peer,
 		if (ret)
 			pcache_err("secondary: ACK/NACK send failed: %d\n", ret);
 	}
+
+#if PCACHE_LAT_TRACE
+	{
+		u64 t_ack = ktime_get_ns();
+
+		trace_printk("S blk=%llu sz=%u recv=%llu commit=%llu acksend=%llu total=%llu\n",
+			     le64_to_cpu(hdr->block_id), size,
+			     t_data - t0, t_commit - t_data,
+			     t_ack - t_commit, t_ack - t0);
+	}
+#endif
 
 free_data:
 	kvfree(data);
@@ -1307,6 +1350,9 @@ connect:
 			phdr.size	= cpu_to_le32(req->size);
 			phdr.flags	= cpu_to_le32(PCACHE_F_ACK);
 
+#if PCACHE_LAT_TRACE
+			req->t_send_start = ktime_get_ns();
+#endif
 			ret = pcache_send_packet(sock, &phdr);
 			if (ret) {
 				pcache_err("primary: send header failed: %d\n", ret);
@@ -2394,6 +2440,10 @@ int pcache_net_submit_write(struct dm_pcache *pcache,
 		req->block_id = (u64)atomic64_inc_return(&peer->next_block_id);
 		req->sent = false;
 		req->send_time = 0;
+#if PCACHE_LAT_TRACE
+		req->t_enqueue = ktime_get_ns();
+		req->t_send_start = 0;
+#endif
 
 		spin_lock(&peer->pending_lock);
 		list_add_tail(&req->list, &peer->pending_list);

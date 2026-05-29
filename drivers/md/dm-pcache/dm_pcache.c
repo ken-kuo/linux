@@ -2,6 +2,7 @@
 #include <linux/module.h>
 #include <linux/blkdev.h>
 #include <linux/bio.h>
+#include <linux/timekeeping.h>
 
 #include "../dm-core.h"
 #include "cache_dev.h"
@@ -451,6 +452,9 @@ static int dm_pcache_map_bio(struct dm_target *ti, struct bio *bio)
 		return DM_MAPIO_SUBMITTED;
 	}
 
+#if PCACHE_LAT_TRACE
+	pcache_req->t_map = ktime_get_ns();
+#endif
 	pcache_req->pcache = pcache;
 	kref_init(&pcache_req->ref);
 	pcache_req->ret = 0;
