@@ -166,11 +166,11 @@ int pcache_create_peer_socket(struct pcache_peer *peer)
 	 * Publish the connected socket under sock_lock so concurrent
 	 * pcache_sock_get() callers observe a stable pointer.
 	 */
-	spin_lock(&peer->sock_lock);
-	peer->sock = sock;
+	spin_lock(&peer->streams[0].sock_lock);
+	peer->streams[0].sock = sock;
 	peer->state = PCACHE_C_CONNECTED;
-	spin_unlock(&peer->sock_lock);
-	wake_up(&peer->wait_for_socket);
+	spin_unlock(&peer->streams[0].sock_lock);
+	wake_up(&peer->streams[0].wait_for_socket);
 	return 0;
 
 out_release:
@@ -408,16 +408,16 @@ void pcache_free_peer(struct pcache_peer *peer)
 	 * pcache_peer_bitmap_exit() in remove-peer / net_stop was skipped. */
 	pcache_peer_bitmap_exit(peer);
 
-	if (peer->sock) {
-		sock_release(peer->sock);
-		peer->sock = NULL;
+	if (peer->streams[0].sock) {
+		sock_release(peer->streams[0].sock);
+		peer->streams[0].sock = NULL;
 	}
 	if (peer->listen_sock) {
 		sock_release(peer->listen_sock);
 		peer->listen_sock = NULL;
 	}
 
-	list_for_each_entry_safe(req, tmp, &peer->pending_list, list) {
+	list_for_each_entry_safe(req, tmp, &peer->streams[0].pending_list, list) {
 		list_del(&req->list);
 		if (peer->pcache->net && peer->pcache->net->req_pool)
 			mempool_free(req, peer->pcache->net->req_pool);
@@ -433,15 +433,15 @@ void pcache_free_peer(struct pcache_peer *peer)
  *
  * No additional reference is taken on the socket; the lock just makes the
  * read atomic with respect to writers swapping the pointer (connect /
- * disconnect). Lifetime is managed by the worker that owns @peer->sock.
+ * disconnect). Lifetime is managed by the worker that owns @peer->streams[0].sock.
  */
 struct socket *pcache_sock_get(struct pcache_peer *peer)
 {
 	struct socket *sock;
 
-	spin_lock(&peer->sock_lock);
-	sock = peer->sock;
-	spin_unlock(&peer->sock_lock);
+	spin_lock(&peer->streams[0].sock_lock);
+	sock = peer->streams[0].sock;
+	spin_unlock(&peer->streams[0].sock_lock);
 
 	return sock;
 }

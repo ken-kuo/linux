@@ -40,12 +40,20 @@ struct pcache_pending_req {
 #endif
 };
 
-struct pcache_peer {
-	struct dm_pcache	*pcache;
+/*
+ * Cut C — one TCP connection (stream) of a peer. streams[0] is the control
+ * stream (carries handshake / sync-params / resync as well as its own data
+ * shard); streams[1..nr_streams-1] are data-only. Writes are demuxed across
+ * streams by hash(sector) so a given region always uses the same stream
+ * (preserves per-region ordering). At nr_streams == 1 this reproduces the
+ * legacy single-connection behavior byte-for-byte.
+ */
+#define PCACHE_MAX_STREAMS	4
+
+struct pcache_stream {
+	struct pcache_peer	*peer;		/* owning peer */
+	int			stream_id;	/* 0 = control, 1.. = data-only */
 	struct socket		*sock;
-	struct socket		*listen_sock;
-	enum pcache_conn_state	state;
-	enum pcache_repl_state	repl_state;	/* Phase 2 — data sync sub-state */
 	struct task_struct	*sender;
 	struct task_struct	*receiver;
 
@@ -56,10 +64,21 @@ struct pcache_peer {
 	struct list_head	pending_list;
 	atomic_t		pending_cnt;	/* in-flight (queued + sent, not yet acked) */
 	atomic_t		unsent_cnt;	/* queued but not yet pushed to socket */
-	atomic64_t		next_block_id;
+	atomic64_t		next_block_id;	/* per-stream; ACK returns on same stream */
 	wait_queue_head_t	wait_for_work;
-	wait_queue_head_t	wait_for_listen;
 	wait_queue_head_t	wait_for_socket;
+};
+
+struct pcache_peer {
+	struct dm_pcache	*pcache;
+	struct socket		*listen_sock;
+	enum pcache_conn_state	state;
+	enum pcache_repl_state	repl_state;	/* Phase 2 — data sync sub-state */
+
+	int			nr_streams;
+	struct pcache_stream	streams[PCACHE_MAX_STREAMS];
+
+	wait_queue_head_t	wait_for_listen;
 
 	char			remote_addr[64];
 	int			node_id;
