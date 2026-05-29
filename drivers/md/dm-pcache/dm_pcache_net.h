@@ -137,6 +137,7 @@ struct pcache_network {
 int pcache_send_all(struct socket *sock, const void *buf, int size);
 int pcache_recv_all(struct socket *sock, void *buf, int size);
 int pcache_create_peer_socket(struct pcache_peer *peer);
+int pcache_connect_data_stream(struct pcache_stream *st);
 int pcache_create_listen_socket(struct socket **sock_out, int port);
 void pcache_sock_set_timeout(struct socket *sock, unsigned long timeout_jiffies);
 void pcache_apply_socket_opts(struct socket *sock);

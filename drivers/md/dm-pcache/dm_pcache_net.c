@@ -178,6 +178,55 @@ out_release:
 	return err;
 }
 
+/*
+ * Cut C — connect one extra data stream (stream_id > 0) to the peer and run
+ * the handshake carrying its stream_id. Stores the socket in st->sock; unlike
+ * the control stream it does not touch peer->state. Initiator side only.
+ */
+int pcache_connect_data_stream(struct pcache_stream *st)
+{
+	struct pcache_peer *peer = st->peer;
+	struct sockaddr_in addr;
+	struct socket *sock = NULL;
+	int err;
+
+	err = sock_create_kern(&init_net, PF_INET, SOCK_STREAM, IPPROTO_TCP, &sock);
+	if (err)
+		return err;
+
+	err = pcache_set_sockaddr(&addr, peer->remote_addr, 0);
+	if (err)
+		goto out_release;
+
+	sock->sk->sk_rcvtimeo = 10 * HZ;
+	sock->sk->sk_sndtimeo = 10 * HZ;
+
+	err = kernel_connect(sock, (struct sockaddr_unsized *)&addr, sizeof(addr), 0);
+	if (err)
+		goto out_release;
+
+	pcache_apply_socket_opts(sock);
+
+	err = pcache_send_handshake(sock, (int)peer->pcache->my_node_id,
+				    st->stream_id);
+	if (err)
+		goto out_release;
+	err = pcache_recv_handshake(sock, NULL, NULL);
+	if (err)
+		goto out_release;
+
+	pcache_sock_set_timeout(sock, 300 * HZ);
+
+	spin_lock(&st->sock_lock);
+	st->sock = sock;
+	spin_unlock(&st->sock_lock);
+	return 0;
+
+out_release:
+	sock_release(sock);
+	return err;
+}
+
 int pcache_create_listen_socket(struct socket **sock_out, int port)
 {
 	struct sockaddr_in addr;
