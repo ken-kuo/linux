@@ -157,6 +157,7 @@ static int cache_init(struct dm_pcache *pcache)
 	atomic_set(&cache->gc_errors, 0);
 	spin_lock_init(&cache->seg_map_lock);
 	spin_lock_init(&cache->key_head_lock);
+	init_waitqueue_head(&cache->seg_wait_wq);
 
 	mutex_init(&cache->cache_info_lock);
 	mutex_init(&cache->key_tail_lock);

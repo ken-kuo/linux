@@ -252,6 +252,14 @@ again:
 		}
 		cache->cache_full = true;
 		spin_unlock(&cache->seg_map_lock);
+		/*
+		 * Cache exhausted.  Kick GC and writeback immediately so
+		 * segments become reclaimable as fast as the workload is
+		 * draining them - waiting for the periodic 100 ms wakeups
+		 * is enough to throttle qd > 1 throughput hard.
+		 */
+		mod_delayed_work(cache_get_wq(cache), &cache->writeback_work, 0);
+		mod_delayed_work(cache_get_wq(cache), &cache->gc_work, 0);
 		return NULL;
 	}
 
@@ -296,6 +304,14 @@ static void cache_seg_invalidate(struct pcache_cache_segment *cache_seg)
 	__clear_bit(cache_seg->cache_seg_id, cache->seg_map);
 	spin_unlock(&cache->seg_map_lock);
 
+	/*
+	 * Wake any net-recv path blocked in pcache_net_write_to_cache()
+	 * waiting for a segment to drop.  pcache_defer_reqs_kick below
+	 * does the same for the local bio path via defered_req_work, but
+	 * the net path uses its own waitqueue because the recv thread
+	 * cannot drive bio-based deferral.
+	 */
+	wake_up_all(&cache->seg_wait_wq);
 	pcache_defer_reqs_kick(CACHE_TO_PCACHE(cache));
 	/* clean_work will clean the bad key in key_tree*/
 	queue_work(cache_get_wq(cache), &cache->clean_work);

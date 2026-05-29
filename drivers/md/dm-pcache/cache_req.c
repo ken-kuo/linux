@@ -797,6 +797,25 @@ err:
  * This function allocates a cache key and copies data directly from the
  * provided buffer into the PMEM cache segment, bypassing the bio path.
  */
+/* Wait for a cache segment to be freed before the network write path
+ * proceeds. Local to cache_req.c (no header decl). */
+static int pcache_wait_seg(struct pcache_cache *cache,
+			   struct pcache_cache_key *key)
+{
+	struct dm_pcache *pcache = CACHE_TO_PCACHE(cache);
+	int ret;
+
+	while ((ret = cache_data_alloc(cache, key)) == -EBUSY) {
+		if (pcache_is_stopping(pcache))
+			return -EIO;
+		wait_event_interruptible_timeout(
+			cache->seg_wait_wq,
+			!cache->cache_full || pcache_is_stopping(pcache),
+			HZ / 10);
+	}
+	return ret;
+}
+
 int pcache_net_write_to_cache(struct pcache_cache *cache, u64 sector,
 			      void *data, u32 size)
 {
@@ -818,7 +837,7 @@ int pcache_net_write_to_cache(struct pcache_cache *cache, u64 sector,
 			(key->off & PCACHE_CACHE_SUBTREE_SIZE_MASK);
 		key->len = min(size - io_done, max_in_seg);
 
-		ret = cache_data_alloc(cache, key);
+		ret = pcache_wait_seg(cache, key);
 		if (ret) {
 			cache_key_put(key);
 			return ret;

@@ -177,6 +177,17 @@ again:
 out:
 	spin_unlock(&cache->key_head_lock);
 
+	/*
+	 * A fresh kset is on PMEM and visible to the writeback worker.
+	 * If the worker has parked itself with the long "clean" delay
+	 * (PCACHE_CACHE_WRITEBACK_INTERVAL), bring it forward so it
+	 * doesn't sit idle while the cache fills up underneath it.
+	 * mod_delayed_work is a no-op if the work is already pending sooner.
+	 */
+	if (!ret)
+		mod_delayed_work(cache_get_wq(cache),
+				 &cache->writeback_work, 0);
+
 	return ret;
 }
 

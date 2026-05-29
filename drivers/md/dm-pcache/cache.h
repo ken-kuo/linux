@@ -23,8 +23,8 @@
 #define PCACHE_CLEAN_KEYS_MAX             10
 
 /* Writeback and garbage collection intervals in jiffies */
-#define PCACHE_CACHE_WRITEBACK_INTERVAL   (5 * HZ)
-#define PCACHE_CACHE_GC_INTERVAL          (5 * HZ)
+#define PCACHE_CACHE_WRITEBACK_INTERVAL   (HZ / 10)
+#define PCACHE_CACHE_GC_INTERVAL          (HZ / 10)
 
 /* Macro to get the cache key structure from an rb_node pointer */
 #define CACHE_KEY(node)                (container_of(node, struct pcache_cache_key, rb_node))
@@ -195,6 +195,14 @@ struct pcache_cache {
 	u32			last_cache_seg;
 	bool			cache_full;
 	spinlock_t		seg_map_lock;
+	/*
+	 * Waked when a segment is freed back to seg_map (see
+	 * cache_seg_invalidate()).  Network write path
+	 * (pcache_net_write_to_cache) waits on this when cache_full so the
+	 * Secondary back-pressures the Primary instead of returning EBUSY
+	 * upstream as a NACK.
+	 */
+	wait_queue_head_t	seg_wait_wq;
 	struct pcache_cache_segment *segments;
 };
 
