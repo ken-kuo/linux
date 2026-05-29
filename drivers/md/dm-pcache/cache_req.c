@@ -736,19 +736,38 @@ out:
 	return ret;
 }
 
-static int cache_write(struct pcache_cache *cache, struct pcache_request *pcache_req)
+/* Free reserved-but-not-committed keys (segment ref + key ref). */
+static void cache_write_keys_free(struct list_head *keys)
 {
-	struct pcache_cache_subtree *cache_subtree;
+	struct pcache_cache_key *key, *tmp;
+
+	list_for_each_entry_safe(key, tmp, keys, list_node) {
+		list_del_init(&key->list_node);
+		cache_seg_put(key->cache_pos.cache_seg);
+		cache_key_put(key);
+	}
+}
+
+/**
+ * pcache_cache_write_reserve - Phase 1 of a write: reserve cache space.
+ *
+ * Allocate a cache key (and its backing segment space) for the whole request,
+ * collecting the keys on @keys via key->list_node. This is the only step that
+ * can return -EBUSY (cache full -> caller defers). It copies no data and sends
+ * nothing on the network, so the caller may safely kick replication only after
+ * this succeeds, knowing the local commit can no longer hit -EBUSY.
+ */
+int pcache_cache_write_reserve(struct pcache_cache *cache,
+			       struct pcache_request *pcache_req,
+			       struct list_head *keys)
+{
 	struct pcache_cache_key *key;
 	u64 offset = pcache_req->off;
 	u32 length = pcache_req->data_len;
 	u32 io_done = 0;
 	int ret;
 
-	while (true) {
-		if (io_done >= length)
-			break;
-
+	while (io_done < length) {
 		key = cache_key_alloc(&cache->req_key_tree, GFP_NOIO);
 		key->off = offset + io_done;
 		key->len = length - io_done;
@@ -758,10 +777,39 @@ static int cache_write(struct pcache_cache *cache, struct pcache_request *pcache
 		ret = cache_data_alloc(cache, key);
 		if (ret) {
 			cache_key_put(key);
-			goto err;
+			cache_write_keys_free(keys);
+			return ret;
 		}
 
-		ret = cache_copy_from_req_bio(cache, key, pcache_req, io_done);
+		list_add_tail(&key->list_node, keys);
+		io_done += key->len;
+	}
+
+	return 0;
+}
+
+/**
+ * pcache_cache_write_commit - Phase 2 of a write: copy data and publish keys.
+ *
+ * For each key reserved by pcache_cache_write_reserve(), copy the bio data into
+ * the reserved PMEM segment and insert/append the key into the cache tree. May
+ * run concurrently with the network sender (both only read the bio via private
+ * iterators). Returns -EIO only (the segment was already reserved in phase 1).
+ */
+int pcache_cache_write_commit(struct pcache_cache *cache,
+			      struct pcache_request *pcache_req,
+			      struct list_head *keys)
+{
+	struct pcache_cache_subtree *cache_subtree;
+	struct pcache_cache_key *key, *tmp;
+	u32 bio_off;
+	int ret;
+
+	list_for_each_entry_safe(key, tmp, keys, list_node) {
+		list_del_init(&key->list_node);
+
+		bio_off = key->off - pcache_req->off;
+		ret = cache_copy_from_req_bio(cache, key, pcache_req, bio_off);
 		if (ret) {
 			cache_seg_put(key->cache_pos.cache_seg);
 			cache_key_put(key);
@@ -775,18 +823,28 @@ static int cache_write(struct pcache_cache *cache, struct pcache_request *pcache
 		if (ret) {
 			cache_seg_put(key->cache_pos.cache_seg);
 			cache_key_delete(key);
-			goto unlock;
+			spin_unlock(&cache_subtree->tree_lock);
+			goto err;
 		}
-
-		io_done += key->len;
 		spin_unlock(&cache_subtree->tree_lock);
 	}
 
 	return 0;
-unlock:
-	spin_unlock(&cache_subtree->tree_lock);
 err:
+	cache_write_keys_free(keys);
 	return ret;
+}
+
+static int cache_write(struct pcache_cache *cache, struct pcache_request *pcache_req)
+{
+	LIST_HEAD(keys);
+	int ret;
+
+	ret = pcache_cache_write_reserve(cache, pcache_req, &keys);
+	if (ret)
+		return ret;
+
+	return pcache_cache_write_commit(cache, pcache_req, &keys);
 }
 
 /**

@@ -464,6 +464,57 @@ static int dm_pcache_map_bio(struct dm_target *ti, struct bio *bio)
 	INIT_LIST_HEAD(&pcache_req->list_node);
 	atomic_inc(&pcache->inflight_reqs);
 
+	/*
+	 * Primary replicated-write fast path -- overlap the local cache write
+	 * with the network send (DRBD-style send-and-write-local-in-parallel).
+	 *
+	 * Reserve cache space first: cache_data_alloc is the only step that can
+	 * return -EBUSY, so once reservation succeeds the local commit can no
+	 * longer defer. That lets us kick replication BEFORE copying the data
+	 * while preserving the "reserve local space before replicating"
+	 * ordering -- a peer can never commit data the primary fails to even
+	 * reserve. The sender and the local copy then run concurrently; both
+	 * only read the bio through private iterators.
+	 *
+	 * Empty bios (REQ_PREFLUSH, barrier-only) are excluded by bi_size > 0:
+	 * their peer-flush semantics are covered by the per-write path that
+	 * already persists data before ACKing.
+	 */
+	if (pcache->is_primary && bio_data_dir(bio) == WRITE &&
+	    bio->bi_iter.bi_size > 0 && pcache_peer_connected(pcache)) {
+		LIST_HEAD(keys);
+		int net_ret;
+
+		ret = pcache_cache_write_reserve(&pcache->cache, pcache_req, &keys);
+		if (ret == -EBUSY) {
+			defer_req(pcache_req);
+			return DM_MAPIO_SUBMITTED;
+		}
+		if (ret)
+			goto put;
+
+		/*
+		 * Local space reserved -- mirror to the peer. Hold an extra ref
+		 * across the network ACK; the ACK/NACK handler performs that put.
+		 */
+		pcache_req_get(pcache_req);
+		net_ret = pcache_net_submit_write(pcache, pcache_req,
+				bio->bi_iter.bi_sector,
+				bio->bi_iter.bi_size);
+		if (net_ret) {
+			/* Enqueue failed: mark all peers' bitmaps dirty so
+			 * their next resync covers this region. */
+			pcache_mark_all_peers_dirty(pcache,
+				bio->bi_iter.bi_sector,
+				bio->bi_iter.bi_size);
+			pcache_req_put(pcache_req, net_ret);
+		}
+
+		/* Copy + publish locally, concurrently with the sender. */
+		ret = pcache_cache_write_commit(&pcache->cache, pcache_req, &keys);
+		goto put;
+	}
+
 	ret = pcache_cache_handle_req(&pcache->cache, pcache_req);
 	if (ret == -EBUSY) {
 		defer_req(pcache_req);
@@ -471,44 +522,18 @@ static int dm_pcache_map_bio(struct dm_target *ti, struct bio *bio)
 	}
 
 	/*
-	 * Local write succeeded -- mirror to the peer if we're Primary.
-	 * Hold an extra reference on pcache_req across the network ACK so
-	 * the bio survives the unconditional put below; the ACK/NACK
-	 * handler performs the final put which triggers bio_endio.
+	 * Local write succeeded but no peer is connected (the connected case is
+	 * handled by the fast path above): mark every active peer's per-peer
+	 * bitmap so each catches up when it reconnects.
 	 */
 	if (ret == 0 && pcache->is_primary && bio_data_dir(bio) == WRITE &&
 	    bio->bi_iter.bi_size > 0) {
-		/* Phase 3.5 C1 — skip replication for empty bios (REQ_PREFLUSH,
-		 * barrier-only). Previously these went through the full fan-out
-		 * path including 30 s ACK timeout, which manifested as
-		 * "fsync failed: Connection timed out" even on healthy clusters.
-		 * The flush semantics on peers are covered by per-write
-		 * pcache_net_write_to_cache calls, which already persist data
-		 * before ACKing. */
-		if (pcache_peer_connected(pcache)) {
-			int net_ret;
-
-			pcache_req_get(pcache_req);
-			net_ret = pcache_net_submit_write(pcache, pcache_req,
-					bio->bi_iter.bi_sector,
-					bio->bi_iter.bi_size);
-			if (net_ret) {
-				/* Enqueue failed: mark all peers' bitmaps dirty
-				 * so their next resync covers this region. */
-				pcache_mark_all_peers_dirty(pcache,
-					bio->bi_iter.bi_sector,
-					bio->bi_iter.bi_size);
-				pcache_req_put(pcache_req, net_ret);
-			}
-		} else {
-			/* No peer connected: mark every active peer's per-peer
-			 * bitmap so each catches up when it reconnects. */
-			pcache_mark_all_peers_dirty(pcache,
-				bio->bi_iter.bi_sector,
-				bio->bi_iter.bi_size);
-		}
+		pcache_mark_all_peers_dirty(pcache,
+			bio->bi_iter.bi_sector,
+			bio->bi_iter.bi_size);
 	}
 
+put:
 	pcache_req_put(pcache_req, ret);
 	return DM_MAPIO_SUBMITTED;
 }
