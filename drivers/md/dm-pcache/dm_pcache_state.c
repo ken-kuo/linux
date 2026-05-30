@@ -1547,11 +1547,8 @@ connect:
 		break;
 	}
 
-	if (kthread_should_stop()) {
-		pcache_conn_put(conn);
-		pcache_conn_drop(cst);
-		return 0;
-	}
+	if (kthread_should_stop())
+		goto exit;	/* exit: stops the receiver we just spawned */
 
 	/* Cut C — control stream is up; bring up the extra data streams. */
 	pcache_data_streams_up(peer);
