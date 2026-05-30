@@ -365,6 +365,7 @@ static void pcache_handle_ack(struct pcache_stream *stream,
  * persists the payload via the cache layer, and replies with P_RS_ACK.
  */
 static int pcache_handle_rs_data_recv(struct pcache_peer *peer,
+				      struct socket *sock,
 				      struct pcache_packet_header *hdr)
 {
 	struct dm_pcache *pcache = peer->pcache;
@@ -374,7 +375,7 @@ static int pcache_handle_rs_data_recv(struct pcache_peer *peer,
 	void *data;
 	int ret;
 
-	ret = pcache_recv_all(peer->streams[0].sock, &rs, sizeof(rs));
+	ret = pcache_recv_all(sock, &rs, sizeof(rs));
 	if (ret)
 		return ret;
 
@@ -387,7 +388,7 @@ static int pcache_handle_rs_data_recv(struct pcache_peer *peer,
 	if (!data)
 		return -ENOMEM;
 
-	ret = pcache_recv_all(peer->streams[0].sock, data, size);
+	ret = pcache_recv_all(sock, data, size);
 	if (ret)
 		goto free_data;
 
@@ -410,7 +411,7 @@ static int pcache_handle_rs_data_recv(struct pcache_peer *peer,
 		ack.sector   = hdr->sector;
 		ack.block_id = hdr->block_id;
 		ack.size     = rs.size;
-		ret = pcache_send_packet(peer->streams[0].sock, &ack);
+		ret = pcache_send_packet(sock, &ack);
 		if (ret)
 			pcache_err("secondary: RS_ACK send failed: %d\n", ret);
 	}
@@ -425,6 +426,7 @@ free_data:
  * cache layer, then reply with an ACK or NACK.
  */
 static int pcache_handle_data_recv(struct pcache_stream *stream,
+				   struct socket *sock,
 				   struct pcache_packet_header *hdr)
 {
 	struct pcache_peer *peer = stream->peer;
@@ -449,7 +451,7 @@ static int pcache_handle_data_recv(struct pcache_stream *stream,
 	if (!data)
 		return -ENOMEM;
 
-	ret = pcache_recv_all(stream->sock, data, size);
+	ret = pcache_recv_all(sock, data, size);
 	if (ret)
 		goto free_data;
 #if PCACHE_LAT_TRACE
@@ -470,7 +472,7 @@ static int pcache_handle_data_recv(struct pcache_stream *stream,
 		reply.sector = hdr->sector;
 		reply.block_id = hdr->block_id;
 		reply.size = hdr->size;
-		ret = pcache_send_packet(stream->sock, &reply);
+		ret = pcache_send_packet(sock, &reply);
 		if (ret)
 			pcache_err("secondary: ACK/NACK send failed: %d\n", ret);
 	}
@@ -504,6 +506,8 @@ free_data:
 static int pcache_secondary_worker(void *arg)
 {
 	struct pcache_peer *peer = arg;
+	struct pcache_stream *cst = &peer->streams[0];
+	struct pcache_conn *conn = NULL;
 	struct socket *sock = NULL;
 	struct pcache_packet_header hdr;
 	bool initiator = pcache_peer_is_initiator(peer);
@@ -513,10 +517,11 @@ static int pcache_secondary_worker(void *arg)
 
 wait_sock:
 	pcache_data_streams_down(peer);
-	if (sock) {
-		sock_release(sock);
-		sock = NULL;
-	}
+	/* Drop the control connection (refcounted): detach + shutdown + put. */
+	pcache_conn_put(conn);
+	conn = NULL;
+	sock = NULL;
+	pcache_conn_drop(cst);
 
 	if (initiator) {
 		/* outbound connect retry loop */
@@ -530,15 +535,15 @@ wait_sock:
 		}
 		if (kthread_should_stop())
 			return 0;
-		sock = peer->streams[0].sock;
+		conn = pcache_conn_get(cst);
+		if (!conn)
+			goto wait_sock;
+		sock = conn->sock;
 
 		ret = pcache_send_handshake(sock, (int)peer->pcache->my_node_id, 0);
 		if (ret) {
 			pcache_err("secondary[initiator]: handshake send failed: %d\n", ret);
-			spin_lock(&peer->streams[0].sock_lock);
-			peer->streams[0].sock = NULL;
 			peer->state = PCACHE_C_CONNECTING;
-			spin_unlock(&peer->streams[0].sock_lock);
 			set_current_state(TASK_INTERRUPTIBLE);
 			schedule_timeout(HZ);
 			goto wait_sock;
@@ -546,26 +551,22 @@ wait_sock:
 		ret = pcache_recv_handshake(sock, NULL, NULL);
 		if (ret) {
 			pcache_err("secondary[initiator]: handshake recv failed: %d\n", ret);
-			spin_lock(&peer->streams[0].sock_lock);
-			peer->streams[0].sock = NULL;
 			peer->state = PCACHE_C_CONNECTING;
-			spin_unlock(&peer->streams[0].sock_lock);
 			set_current_state(TASK_INTERRUPTIBLE);
 			schedule_timeout(HZ);
 			goto wait_sock;
 		}
 	} else {
-		wait_event_interruptible(peer->streams[0].wait_for_socket,
-			(peer->streams[0].sock && peer->state == PCACHE_C_CONNECTED) ||
+		wait_event_interruptible(cst->wait_for_socket,
+			(pcache_stream_has_conn(cst) && peer->state == PCACHE_C_CONNECTED) ||
 			kthread_should_stop());
 		if (kthread_should_stop())
 			return 0;
 
-		spin_lock(&peer->streams[0].sock_lock);
-		sock = peer->streams[0].sock;
-		spin_unlock(&peer->streams[0].sock_lock);
-		if (!sock)
+		conn = pcache_conn_get(cst);
+		if (!conn)
 			goto wait_sock;
+		sock = conn->sock;
 	}
 
 	pcache_info("secondary: handshake complete (%s), entering recv loop\n",
@@ -586,11 +587,6 @@ wait_sock:
 				   sp_ret);
 			peer->state = PCACHE_C_CONNECTING;
 			pcache_set_repl_state(peer, PCACHE_R_OFF);
-			spin_lock(&peer->streams[0].sock_lock);
-			peer->streams[0].sock = NULL;
-			spin_unlock(&peer->streams[0].sock_lock);
-			sock_release(sock);
-			sock = NULL;
 			goto wait_sock;
 		}
 		peer->peer_generation = le64_to_cpu(peer_sp.generation);
@@ -611,11 +607,6 @@ wait_sock:
 					   ex_ret);
 				peer->state = PCACHE_C_CONNECTING;
 				pcache_set_repl_state(peer, PCACHE_R_OFF);
-				spin_lock(&peer->streams[0].sock_lock);
-				peer->streams[0].sock = NULL;
-				spin_unlock(&peer->streams[0].sock_lock);
-				sock_release(sock);
-				sock = NULL;
 				goto wait_sock;
 			}
 		}
@@ -634,12 +625,8 @@ wait_sock:
 				set_current_state(TASK_INTERRUPTIBLE);
 				schedule_timeout(HZ);
 			}
-			if (sock) {
-				spin_lock(&peer->streams[0].sock_lock);
-				peer->streams[0].sock = NULL;
-				spin_unlock(&peer->streams[0].sock_lock);
-				sock_release(sock);
-			}
+		pcache_conn_drop(cst);
+		pcache_conn_put(conn);
 			return 0;
 		} else if (role == PCACHE_R_SYNC_TARGET) {
 			pcache_set_repl_state(peer, PCACHE_R_SYNC_TARGET);
@@ -666,11 +653,6 @@ wait_sock:
 			pcache_err("secondary: connection lost: %d\n", ret);
 			peer->state = PCACHE_C_CONNECTING;
 			pcache_set_repl_state(peer, PCACHE_R_OFF);
-			spin_lock(&peer->streams[0].sock_lock);
-			peer->streams[0].sock = NULL;
-			spin_unlock(&peer->streams[0].sock_lock);
-			sock_release(sock);
-			sock = NULL;
 			goto wait_sock;
 		}
 
@@ -679,12 +661,12 @@ wait_sock:
 			/* re-handshake on an active stream is unexpected */
 			break;
 		case PCACHE_P_DATA:
-			ret = pcache_handle_data_recv(&peer->streams[0], &hdr);
+			ret = pcache_handle_data_recv(&peer->streams[0], sock, &hdr);
 			if (ret)
 				pcache_err("secondary: data recv failed: %d\n", ret);
 			break;
 		case PCACHE_P_RS_DATA:
-			ret = pcache_handle_rs_data_recv(peer, &hdr);
+			ret = pcache_handle_rs_data_recv(peer, sock, &hdr);
 			if (ret)
 				pcache_err("secondary: RS_DATA recv failed: %d\n", ret);
 			break;
@@ -737,12 +719,8 @@ wait_sock:
 	}
 
 	pcache_data_streams_down(peer);
-	if (sock) {
-		spin_lock(&peer->streams[0].sock_lock);
-		peer->streams[0].sock = NULL;
-		spin_unlock(&peer->streams[0].sock_lock);
-		sock_release(sock);
-	}
+		pcache_conn_drop(cst);
+		pcache_conn_put(conn);
 	return 0;
 }
 
@@ -759,12 +737,15 @@ static int pcache_primary_receiver(void *arg)
 	allow_signal(SIGTERM);
 
 	while (!kthread_should_stop()) {
-		struct socket *sock = pcache_sock_get(peer);
+		struct pcache_conn *conn = pcache_conn_get(&peer->streams[0]);
+		struct socket *sock = conn ? conn->sock : NULL;
 
 		if (!sock || peer->state != PCACHE_C_CONNECTED) {
+			pcache_conn_put(conn);
 			set_current_state(TASK_INTERRUPTIBLE);
 			schedule_timeout(HZ / 10);
 			__set_current_state(TASK_RUNNING);
+			pcache_conn_put(conn);
 			continue;
 		}
 
@@ -798,6 +779,7 @@ static int pcache_primary_receiver(void *arg)
 			set_current_state(TASK_INTERRUPTIBLE);
 			schedule_timeout(HZ / 10);
 			__set_current_state(TASK_RUNNING);
+			pcache_conn_put(conn);
 			continue;
 		}
 
@@ -1113,12 +1095,16 @@ static int pcache_data_sender(void *arg)
 	struct pcache_stream *st = arg;
 	struct pcache_peer *peer = st->peer;
 	struct pcache_pending_req *req;
+	struct pcache_conn *conn = NULL;
+	struct socket *sock;
 	bool found_unsent;
 	int ret;
 
 	allow_signal(SIGTERM);
 
 	while (!kthread_should_stop()) {
+		conn = pcache_conn_get(st);
+		sock = conn ? conn->sock : NULL;
 		do {
 			struct pcache_packet_header phdr;
 
@@ -1138,7 +1124,7 @@ static int pcache_data_sender(void *arg)
 			if (!found_unsent)
 				break;
 
-			if (!st->sock || peer->state != PCACHE_C_CONNECTED)
+			if (!sock || peer->state != PCACHE_C_CONNECTED)
 				goto fault;
 
 			memset(&phdr, 0, sizeof(phdr));
@@ -1148,16 +1134,19 @@ static int pcache_data_sender(void *arg)
 			phdr.size	= cpu_to_le32(req->size);
 			phdr.flags	= cpu_to_le32(PCACHE_F_ACK);
 
-			ret = pcache_send_packet(st->sock, &phdr);
+			ret = pcache_send_packet(sock, &phdr);
 			if (ret)
 				goto fault;
 			if (req->pcache_req && req->pcache_req->bio) {
-				ret = pcache_send_bio_pages(st->sock,
+				ret = pcache_send_bio_pages(sock,
 							    req->pcache_req->bio);
 				if (ret)
 					goto fault;
 			}
 		} while (!kthread_should_stop());
+
+		pcache_conn_put(conn);
+		conn = NULL;
 
 		wait_event_interruptible_timeout(st->wait_for_work,
 			atomic_read(&st->unsent_cnt) > 0 ||
@@ -1171,6 +1160,7 @@ static int pcache_data_sender(void *arg)
 	}
 	return 0;
 fault:
+	pcache_conn_put(conn);
 	pcache_stream_fault(st);
 	wait_event_interruptible(st->wait_for_work, kthread_should_stop());
 	return 0;
@@ -1187,13 +1177,18 @@ static int pcache_data_receiver(void *arg)
 	allow_signal(SIGTERM);
 
 	while (!kthread_should_stop()) {
-		if (!st->sock || peer->state != PCACHE_C_CONNECTED) {
+		struct pcache_conn *conn = pcache_conn_get(st);
+		struct socket *sock = conn ? conn->sock : NULL;
+
+		if (!sock || peer->state != PCACHE_C_CONNECTED) {
+			pcache_conn_put(conn);
 			set_current_state(TASK_INTERRUPTIBLE);
 			schedule_timeout(HZ / 10);
 			__set_current_state(TASK_RUNNING);
 			continue;
 		}
-		ret = pcache_recv_all(st->sock, &hdr, sizeof(hdr));
+		ret = pcache_recv_all(sock, &hdr, sizeof(hdr));
+		pcache_conn_put(conn);
 		if (ret) {
 			if (ret == -EAGAIN || ret == -EINTR)
 				continue;
@@ -1228,14 +1223,19 @@ static int pcache_data_secondary(void *arg)
 	allow_signal(SIGTERM);
 
 	while (!kthread_should_stop()) {
-		if (!st->sock || peer->state != PCACHE_C_CONNECTED) {
+		struct pcache_conn *conn = pcache_conn_get(st);
+		struct socket *sock = conn ? conn->sock : NULL;
+
+		if (!sock || peer->state != PCACHE_C_CONNECTED) {
+			pcache_conn_put(conn);
 			set_current_state(TASK_INTERRUPTIBLE);
 			schedule_timeout(HZ / 10);
 			__set_current_state(TASK_RUNNING);
 			continue;
 		}
-		ret = pcache_recv_all(st->sock, &hdr, sizeof(hdr));
+		ret = pcache_recv_all(sock, &hdr, sizeof(hdr));
 		if (ret) {
+			pcache_conn_put(conn);
 			if (ret == -EAGAIN || ret == -EINTR)
 				continue;
 			if (!kthread_should_stop())
@@ -1243,8 +1243,9 @@ static int pcache_data_secondary(void *arg)
 			break;
 		}
 		if (le16_to_cpu(hdr.type) == PCACHE_P_DATA) {
-			ret = pcache_handle_data_recv(st, &hdr);
+			ret = pcache_handle_data_recv(st, sock, &hdr);
 			if (ret) {
+				pcache_conn_put(conn);
 				if (!kthread_should_stop())
 					pcache_stream_fault(st);
 				break;
@@ -1253,6 +1254,7 @@ static int pcache_data_secondary(void *arg)
 			pcache_err("data secondary: unexpected pkt type %u\n",
 				   le16_to_cpu(hdr.type));
 		}
+		pcache_conn_put(conn);
 	}
 	return 0;
 }
@@ -1292,13 +1294,8 @@ static int pcache_data_stream_start(struct pcache_stream *st)
 /* Stop a data stream's worker(s), release its socket, flush its pending list. */
 static void pcache_data_stream_stop(struct pcache_stream *st)
 {
-	struct socket *sock;
-
-	spin_lock(&st->sock_lock);
-	sock = st->sock;
-	spin_unlock(&st->sock_lock);
-	if (sock)
-		kernel_sock_shutdown(sock, SHUT_RDWR);
+	/* Wake any blocked recv/send so the threads can exit. */
+	pcache_conn_shutdown(st);
 
 	if (st->sender) {
 		kthread_stop(st->sender);
@@ -1309,13 +1306,8 @@ static void pcache_data_stream_stop(struct pcache_stream *st)
 		st->receiver = NULL;
 	}
 
-	spin_lock(&st->sock_lock);
-	sock = st->sock;
-	st->sock = NULL;
-	spin_unlock(&st->sock_lock);
-	if (sock)
-		sock_release(sock);
-
+	/* Detach + drop the install ref (refcount frees the socket). */
+	pcache_conn_drop(st);
 	pcache_flush_stream(st, -EIO);
 }
 
@@ -1337,7 +1329,7 @@ static void pcache_data_streams_up(struct pcache_peer *peer)
 	for (i = 1; i < peer->nr_streams; i++) {
 		struct pcache_stream *st = &peer->streams[i];
 
-		if (st->sock)
+		if (pcache_stream_has_conn(st))
 			continue;
 		ret = pcache_connect_data_stream(st);
 		if (ret) {
@@ -1346,11 +1338,7 @@ static void pcache_data_streams_up(struct pcache_peer *peer)
 		}
 		ret = pcache_data_stream_start(st);
 		if (ret) {
-			struct socket *s = st->sock;
-
-			st->sock = NULL;
-			if (s)
-				sock_release(s);
+			pcache_conn_drop(st);
 			pcache_err("data stream %d start failed: %d\n", i, ret);
 		}
 	}
@@ -1375,6 +1363,8 @@ static void pcache_data_streams_down(struct pcache_peer *peer)
 static int pcache_primary_worker(void *arg)
 {
 	struct pcache_peer *peer = arg;
+	struct pcache_stream *cst = &peer->streams[0];
+	struct pcache_conn *conn = NULL;
 	struct socket *sock = NULL;
 	bool initiator = pcache_peer_is_initiator(peer);
 	int ret;
@@ -1387,18 +1377,14 @@ connect:
 		pcache_data_streams_down(peer);
 
 		if (peer->streams[0].receiver) {
-			if (sock)
-				kernel_sock_shutdown(sock, SHUT_RDWR);
+			pcache_conn_shutdown(cst);
 			kthread_stop(peer->streams[0].receiver);
 			peer->streams[0].receiver = NULL;
 		}
-		if (sock) {
-			sock_release(sock);
-			sock = NULL;
-			spin_lock(&peer->streams[0].sock_lock);
-			peer->streams[0].sock = NULL;
-			spin_unlock(&peer->streams[0].sock_lock);
-		}
+		pcache_conn_put(conn);
+		conn = NULL;
+		sock = NULL;
+		pcache_conn_drop(cst);
 
 		if (initiator) {
 			ret = pcache_create_peer_socket(peer);
@@ -1408,16 +1394,15 @@ connect:
 				schedule_timeout(3 * HZ);
 				continue;
 			}
-			sock = peer->streams[0].sock;
+			conn = pcache_conn_get(cst);
+			if (!conn)
+				continue;
+			sock = conn->sock;
 
 			ret = pcache_send_handshake(sock, (int)peer->pcache->my_node_id, 0);
 			if (ret) {
 				pcache_err("primary[initiator]: HANDSHAKE send failed: %d\n", ret);
-				sock_release(sock); sock = NULL;
-				spin_lock(&peer->streams[0].sock_lock);
-				peer->streams[0].sock = NULL;
 				peer->state = PCACHE_C_CONNECTING;
-				spin_unlock(&peer->streams[0].sock_lock);
 				set_current_state(TASK_INTERRUPTIBLE);
 				schedule_timeout(HZ);
 				continue;
@@ -1426,11 +1411,7 @@ connect:
 			ret = pcache_recv_handshake(sock, NULL, NULL);
 			if (ret) {
 				pcache_err("primary[initiator]: HANDSHAKE reply failed: %d\n", ret);
-				sock_release(sock); sock = NULL;
-				spin_lock(&peer->streams[0].sock_lock);
-				peer->streams[0].sock = NULL;
 				peer->state = PCACHE_C_CONNECTING;
-				spin_unlock(&peer->streams[0].sock_lock);
 				set_current_state(TASK_INTERRUPTIBLE);
 				schedule_timeout(HZ);
 				continue;
@@ -1439,14 +1420,13 @@ connect:
 			/* Wait for accept_thread to deliver socket (it already
 			 * performed the handshake exchange). */
 			wait_event_interruptible(peer->streams[0].wait_for_socket,
-				(peer->streams[0].sock && peer->state == PCACHE_C_CONNECTED) ||
+				(pcache_stream_has_conn(cst) && peer->state == PCACHE_C_CONNECTED) ||
 				kthread_should_stop());
 			if (kthread_should_stop())
 				goto exit;
 
-			spin_lock(&peer->streams[0].sock_lock);
-			sock = peer->streams[0].sock;
-			spin_unlock(&peer->streams[0].sock_lock);
+			conn = pcache_conn_get(cst);
+			sock = conn ? conn->sock : NULL;
 			if (!sock) {
 				set_current_state(TASK_INTERRUPTIBLE);
 				schedule_timeout(HZ / 4);
@@ -1473,12 +1453,7 @@ connect:
 			if (sp_ret) {
 				pcache_err("primary: sync_params exchange failed: %d\n",
 					   sp_ret);
-				sock_release(sock);
-				sock = NULL;
-				spin_lock(&peer->streams[0].sock_lock);
-				peer->streams[0].sock = NULL;
 				peer->state = PCACHE_C_CONNECTING;
-				spin_unlock(&peer->streams[0].sock_lock);
 				pcache_set_repl_state(peer, PCACHE_R_OFF);
 				set_current_state(TASK_INTERRUPTIBLE);
 				schedule_timeout(HZ);
@@ -1517,12 +1492,7 @@ connect:
 				if (sp_ret) {
 					pcache_err("primary: bitmap-exchange failed: %d\n",
 						   sp_ret);
-					sock_release(sock);
-					sock = NULL;
-					spin_lock(&peer->streams[0].sock_lock);
-					peer->streams[0].sock = NULL;
 					peer->state = PCACHE_C_CONNECTING;
-					spin_unlock(&peer->streams[0].sock_lock);
 					pcache_set_repl_state(peer, PCACHE_R_OFF);
 					set_current_state(TASK_INTERRUPTIBLE);
 					schedule_timeout(HZ);
@@ -1536,12 +1506,7 @@ connect:
 				if (sp_ret) {
 					pcache_err("primary: resync failed: %d, reconnecting\n",
 						   sp_ret);
-					sock_release(sock);
-					sock = NULL;
-					spin_lock(&peer->streams[0].sock_lock);
-					peer->streams[0].sock = NULL;
 					peer->state = PCACHE_C_CONNECTING;
-					spin_unlock(&peer->streams[0].sock_lock);
 					pcache_set_repl_state(peer, PCACHE_R_OFF);
 					set_current_state(TASK_INTERRUPTIBLE);
 					schedule_timeout(HZ);
@@ -1583,8 +1548,8 @@ connect:
 	}
 
 	if (kthread_should_stop()) {
-		if (sock)
-			sock_release(sock);
+		pcache_conn_put(conn);
+		pcache_conn_drop(cst);
 		return 0;
 	}
 
@@ -1629,10 +1594,8 @@ connect:
 		 * flips state to CONNECTING and sends us back to connect:.
 		 */
 		if (any_timed_out) {
-			struct socket *bad = pcache_sock_get(peer);
 			pcache_err("primary: ACK timeout — forcing reconnect\n");
-			if (bad)
-				kernel_sock_shutdown(bad, SHUT_RDWR);
+			pcache_conn_shutdown(cst);
 		}
 
 		/* Send all currently-unsent requests. */
@@ -1655,8 +1618,7 @@ connect:
 			if (!found_unsent)
 				break;
 
-			sock = pcache_sock_get(peer);
-			if (!sock || peer->state != PCACHE_C_CONNECTED)
+			if (peer->state != PCACHE_C_CONNECTED)
 				goto connect;
 
 			memset(&phdr, 0, sizeof(phdr));
@@ -1707,17 +1669,14 @@ connect:
 exit:
 	pcache_data_streams_down(peer);
 	if (peer->streams[0].receiver) {
-		if (sock)
-			kernel_sock_shutdown(sock, SHUT_RDWR);
+		pcache_conn_shutdown(cst);
 		kthread_stop(peer->streams[0].receiver);
 		peer->streams[0].receiver = NULL;
 	}
-	if (sock) {
-		sock_release(sock);
-		spin_lock(&peer->streams[0].sock_lock);
-		peer->streams[0].sock = NULL;
-		spin_unlock(&peer->streams[0].sock_lock);
-	}
+	pcache_conn_put(conn);
+	conn = NULL;
+	sock = NULL;
+	pcache_conn_drop(cst);
 	pcache_flush_pending(peer, -EIO);
 	return 0;
 }
@@ -1941,10 +1900,8 @@ static int pcache_accept_thread(void *arg)
 		 * (stream_id > 0) only attach their socket and wake their own
 		 * worker. At nr_streams == 1 this is the legacy path.
 		 */
-		spin_lock(&peer->streams[stream_id].sock_lock);
-		if (peer->streams[stream_id].sock) {
+		if (pcache_stream_has_conn(&peer->streams[stream_id])) {
 			/* Race-loser: lower-id outbound got there first. */
-			spin_unlock(&peer->streams[stream_id].sock_lock);
 			mutex_unlock(&net->peers_lock);
 			pcache_dev_info(pcache,
 				"accept: peer node_id=%d stream=%d already connected; drop dup\n",
@@ -1952,13 +1909,16 @@ static int pcache_accept_thread(void *arg)
 			sock_release(sock);
 			continue;
 		}
-		peer->streams[stream_id].sock = sock;
+		pcache_sock_set_timeout(sock, 300 * HZ);
+		if (pcache_conn_install(&peer->streams[stream_id], sock)) {
+			mutex_unlock(&net->peers_lock);
+			sock_release(sock);
+			continue;
+		}
 		if (stream_id == 0)
 			peer->state = PCACHE_C_CONNECTED;
-		spin_unlock(&peer->streams[stream_id].sock_lock);
 		mutex_unlock(&net->peers_lock);
 
-		pcache_sock_set_timeout(sock, 300 * HZ);
 		if (stream_id == 0) {
 			/* Control stream: the per-peer worker drives it. */
 			wake_up(&peer->streams[stream_id].wait_for_socket);
@@ -1970,10 +1930,7 @@ static int pcache_accept_thread(void *arg)
 				pcache_dev_err(pcache,
 					"accept: data stream %d start failed: %d\n",
 					stream_id, ret);
-				spin_lock(&peer->streams[stream_id].sock_lock);
-				peer->streams[stream_id].sock = NULL;
-				spin_unlock(&peer->streams[stream_id].sock_lock);
-				sock_release(sock);
+				pcache_conn_drop(&peer->streams[stream_id]);
 				continue;
 			}
 		}
@@ -1990,7 +1947,7 @@ static void pcache_stream_init(struct pcache_stream *st,
 {
 	st->peer	= peer;
 	st->stream_id	= stream_id;
-	st->sock	= NULL;
+	st->conn	= NULL;
 	st->sender	= NULL;
 	st->receiver	= NULL;
 	atomic_set(&st->pending_cnt, 0);
@@ -2155,8 +2112,7 @@ void pcache_net_stop(struct dm_pcache *pcache)
 
 	mutex_lock(&net->peers_lock);
 	for_each_active_peer(net, peer, slot) {
-		if (peer->streams[0].sock)
-			kernel_sock_shutdown(peer->streams[0].sock, SHUT_RDWR);
+		pcache_conn_shutdown(&peer->streams[0]);
 
 		/*
 		 * Each kthread must be stopped by exactly one thread. For
@@ -2332,8 +2288,7 @@ static void pcache_set_role_swap_workers(struct pcache_network *net,
 		/* Shut down the socket to wake the worker from any blocking
 		 * recv/send and unblock kthread_stop. */
 		spin_lock(&peer->streams[0].sock_lock);
-		if (peer->streams[0].sock)
-			kernel_sock_shutdown(peer->streams[0].sock, SHUT_RDWR);
+		pcache_conn_shutdown(&peer->streams[0]);
 		spin_unlock(&peer->streams[0].sock_lock);
 
 		if (peer->streams[0].sender) {
@@ -2348,10 +2303,7 @@ static void pcache_set_role_swap_workers(struct pcache_network *net,
 		/* Drop any lingering socket pointer so the new worker starts
 		 * with a clean state. */
 		spin_lock(&peer->streams[0].sock_lock);
-		if (peer->streams[0].sock) {
-			sock_release(peer->streams[0].sock);
-			peer->streams[0].sock = NULL;
-		}
+		pcache_conn_drop(&peer->streams[0]);
 		peer->state = PCACHE_C_CONNECTING;
 		peer->repl_state = PCACHE_R_OFF;
 		spin_unlock(&peer->streams[0].sock_lock);
@@ -2409,14 +2361,15 @@ int pcache_set_role(struct dm_pcache *pcache, bool primary, bool force)
 		if (!force) {
 			int sent = 0;
 			for_each_active_peer(net, peer, slot) {
-				spin_lock(&peer->streams[0].sock_lock);
-				if (peer->streams[0].sock) {
-					int rc = pcache_send_demote_req(peer->streams[0].sock,
+				struct pcache_conn *c = pcache_conn_get(&peer->streams[0]);
+
+				if (c) {
+					int rc = pcache_send_demote_req(c->sock,
 						pcache->my_node_id, 0);
 					if (!rc)
 						sent++;
+					pcache_conn_put(c);
 				}
-				spin_unlock(&peer->streams[0].sock_lock);
 			}
 			if (sent)
 				pcache_dev_info(pcache,
@@ -2531,8 +2484,7 @@ int pcache_resolve_split_brain(struct dm_pcache *pcache, u32 peer_node_id,
 		bool was_primary = p2->is_primary;
 
 		spin_lock(&p2->streams[0].sock_lock);
-		if (p2->streams[0].sock)
-			kernel_sock_shutdown(p2->streams[0].sock, SHUT_RDWR);
+		pcache_conn_shutdown(&p2->streams[0]);
 		spin_unlock(&p2->streams[0].sock_lock);
 
 		if (p2->streams[0].sender) {
@@ -2545,10 +2497,7 @@ int pcache_resolve_split_brain(struct dm_pcache *pcache, u32 peer_node_id,
 		}
 
 		spin_lock(&p2->streams[0].sock_lock);
-		if (p2->streams[0].sock) {
-			sock_release(p2->streams[0].sock);
-			p2->streams[0].sock = NULL;
-		}
+		pcache_conn_drop(&p2->streams[0]);
 		p2->state = PCACHE_C_CONNECTING;
 		p2->repl_state = PCACHE_R_OFF;
 		spin_unlock(&p2->streams[0].sock_lock);
@@ -2584,12 +2533,10 @@ int pcache_abort_resync(struct dm_pcache *pcache)
 			spin_unlock(&peer->bm->lock);
 			pcache_bm_flush_sync(peer->bm);
 		}
-		spin_lock(&peer->streams[0].sock_lock);
-		if (peer->streams[0].sock) {
-			kernel_sock_shutdown(peer->streams[0].sock, SHUT_RDWR);
+		if (pcache_stream_has_conn(&peer->streams[0])) {
+			pcache_conn_shutdown(&peer->streams[0]);
 			dropped++;
 		}
-		spin_unlock(&peer->streams[0].sock_lock);
 	}
 	mutex_unlock(&net->peers_lock);
 
@@ -2620,8 +2567,7 @@ int pcache_reset_generation(struct dm_pcache *pcache)
 			if (peer->bm)
 				pcache_bm_flush_sync(peer->bm);
 			spin_lock(&peer->streams[0].sock_lock);
-			if (peer->streams[0].sock)
-				kernel_sock_shutdown(peer->streams[0].sock, SHUT_RDWR);
+			pcache_conn_shutdown(&peer->streams[0]);
 			spin_unlock(&peer->streams[0].sock_lock);
 		}
 		mutex_unlock(&net->peers_lock);
@@ -2655,8 +2601,7 @@ int pcache_remove_peer(struct dm_pcache *pcache, u32 peer_node_id)
 
 	/* Shut down the socket first to wake any blocking recv/send in the
 	 * worker so kthread_stop returns promptly. */
-	if (peer->streams[0].sock)
-		kernel_sock_shutdown(peer->streams[0].sock, SHUT_RDWR);
+	pcache_conn_shutdown(&peer->streams[0]);
 
 	if (peer->streams[0].sender) {
 		kthread_stop(peer->streams[0].sender);
@@ -2726,12 +2671,10 @@ int pcache_net_force_resync(struct dm_pcache *pcache)
 			spin_unlock(&peer->bm->lock);
 			pcache_bm_flush_sync(peer->bm);
 		}
-		spin_lock(&peer->streams[0].sock_lock);
-		if (peer->streams[0].sock) {
-			kernel_sock_shutdown(peer->streams[0].sock, SHUT_RDWR);
+		if (pcache_stream_has_conn(&peer->streams[0])) {
+			pcache_conn_shutdown(&peer->streams[0]);
 			kicked++;
 		}
-		spin_unlock(&peer->streams[0].sock_lock);
 	}
 
 	pcache_dev_info(pcache,
@@ -2828,7 +2771,7 @@ int pcache_net_submit_write(struct dm_pcache *pcache,
 			 * (same sector -> same stream -> per-region ordering).
 			 */
 			s = (u32)(hash_64(sector, 32) % (u32)peer->nr_streams);
-			if (s && !peer->streams[s].sock)
+			if (s && !READ_ONCE(peer->streams[s].conn))
 				s = 0;
 		}
 		st = &peer->streams[s];

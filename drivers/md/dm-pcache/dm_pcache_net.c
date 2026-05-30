@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include <linux/kref.h>
+#include <linux/slab.h>
 #include <linux/net.h>
 #include <linux/in.h>
 #include <linux/inet.h>
@@ -162,14 +164,11 @@ int pcache_create_peer_socket(struct pcache_peer *peer)
 
 	pcache_apply_socket_opts(sock);
 
-	/*
-	 * Publish the connected socket under sock_lock so concurrent
-	 * pcache_sock_get() callers observe a stable pointer.
-	 */
-	spin_lock(&peer->streams[0].sock_lock);
-	peer->streams[0].sock = sock;
+	/* Publish the connected socket as a refcounted conn. */
+	err = pcache_conn_install(&peer->streams[0], sock);
+	if (err)
+		goto out_release;
 	peer->state = PCACHE_C_CONNECTED;
-	spin_unlock(&peer->streams[0].sock_lock);
 	wake_up(&peer->streams[0].wait_for_socket);
 	return 0;
 
@@ -217,9 +216,9 @@ int pcache_connect_data_stream(struct pcache_stream *st)
 
 	pcache_sock_set_timeout(sock, 300 * HZ);
 
-	spin_lock(&st->sock_lock);
-	st->sock = sock;
-	spin_unlock(&st->sock_lock);
+	err = pcache_conn_install(st, sock);
+	if (err)
+		goto out_release;
 	return 0;
 
 out_release:
@@ -460,9 +459,12 @@ void pcache_free_peer(struct pcache_peer *peer)
 	 * pcache_peer_bitmap_exit() in remove-peer / net_stop was skipped. */
 	pcache_peer_bitmap_exit(peer);
 
-	if (peer->streams[0].sock) {
-		sock_release(peer->streams[0].sock);
-		peer->streams[0].sock = NULL;
+	/* Defensively drop any conn still attached to any stream. */
+	{
+		int i;
+
+		for (i = 0; i < peer->nr_streams; i++)
+			pcache_conn_drop(&peer->streams[i]);
 	}
 	if (peer->listen_sock) {
 		sock_release(peer->listen_sock);
@@ -480,24 +482,101 @@ void pcache_free_peer(struct pcache_peer *peer)
 	kfree(peer);
 }
 
-/**
- * pcache_sock_get - Snapshot the peer socket pointer under sock_lock.
+/*
+ * Cut C — refcounted per-stream socket lifetime.
  *
- * No additional reference is taken on the socket; the lock just makes the
- * read atomic with respect to writers swapping the pointer (connect /
- * disconnect). Lifetime is managed by the worker that owns @peer->streams[0].sock.
+ * The whole class of teardown use-after-frees came from threads holding a raw
+ * socket pointer across a blocking recv/send while another thread freed it.
+ * Now a user takes a reference for the duration of its I/O; the socket is
+ * released only when the last reference is dropped.
  */
-struct socket *pcache_sock_get(struct pcache_peer *peer)
+static void pcache_conn_release(struct kref *kref)
 {
-	struct socket *sock;
+	struct pcache_conn *c = container_of(kref, struct pcache_conn, ref);
 
-	spin_lock(&peer->streams[0].sock_lock);
-	sock = peer->streams[0].sock;
-	spin_unlock(&peer->streams[0].sock_lock);
-
-	return sock;
+	sock_release(c->sock);
+	kfree(c);
 }
 
-void pcache_sock_put(struct pcache_peer *peer)
+/* Take a reference on the stream's current connection (or NULL if none). */
+struct pcache_conn *pcache_conn_get(struct pcache_stream *st)
 {
+	struct pcache_conn *c;
+
+	spin_lock(&st->sock_lock);
+	c = st->conn;
+	if (c)
+		kref_get(&c->ref);
+	spin_unlock(&st->sock_lock);
+
+	return c;
+}
+
+void pcache_conn_put(struct pcache_conn *c)
+{
+	if (c)
+		kref_put(&c->ref, pcache_conn_release);
+}
+
+/*
+ * Install a freshly connected socket on the stream. The conn starts with one
+ * reference (the "installed" ref, held by the stream until pcache_conn_drop).
+ * On -ENOMEM the caller still owns @sock and must release it.
+ */
+int pcache_conn_install(struct pcache_stream *st, struct socket *sock)
+{
+	struct pcache_conn *c;
+
+	c = kzalloc(sizeof(*c), GFP_KERNEL);
+	if (!c)
+		return -ENOMEM;
+	kref_init(&c->ref);	/* install ref */
+	c->sock = sock;
+
+	spin_lock(&st->sock_lock);
+	st->conn = c;
+	spin_unlock(&st->sock_lock);
+	return 0;
+}
+
+/*
+ * Detach the current connection from the stream, shut its socket down to wake
+ * any blocked recv/send, and drop the install reference. Threads currently
+ * using the socket hold their own references, so it survives until they put.
+ */
+void pcache_conn_drop(struct pcache_stream *st)
+{
+	struct pcache_conn *c;
+
+	spin_lock(&st->sock_lock);
+	c = st->conn;
+	st->conn = NULL;
+	spin_unlock(&st->sock_lock);
+
+	if (c) {
+		kernel_sock_shutdown(c->sock, SHUT_RDWR);
+		pcache_conn_put(c);	/* drop install ref */
+	}
+}
+
+/* Shut the current connection's socket down without detaching it. */
+void pcache_conn_shutdown(struct pcache_stream *st)
+{
+	struct pcache_conn *c = pcache_conn_get(st);
+
+	if (c) {
+		kernel_sock_shutdown(c->sock, SHUT_RDWR);
+		pcache_conn_put(c);
+	}
+}
+
+bool pcache_stream_has_conn(struct pcache_stream *st)
+{
+	bool has;
+
+	spin_lock(&st->sock_lock);
+	has = st->conn != NULL;
+	spin_unlock(&st->sock_lock);
+
+	return has;
 }

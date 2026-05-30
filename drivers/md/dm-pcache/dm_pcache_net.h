@@ -50,14 +50,27 @@ struct pcache_pending_req {
  */
 #define PCACHE_MAX_STREAMS	4
 
+/*
+ * Cut C — refcounted socket holder. A thread that wants to use a stream's
+ * socket takes a reference (pcache_conn_get) for the duration of its blocking
+ * recv/send; teardown (pcache_conn_drop) detaches the conn from the stream,
+ * shuts the socket down to wake blocked users, and drops the install ref. The
+ * socket is released only when the last reference is put, so no thread can ever
+ * touch a freed socket.
+ */
+struct pcache_conn {
+	struct kref		ref;
+	struct socket		*sock;
+};
+
 struct pcache_stream {
 	struct pcache_peer	*peer;		/* owning peer */
 	int			stream_id;	/* 0 = control, 1.. = data-only */
-	struct socket		*sock;
+	struct pcache_conn	*conn;		/* current connection (refcounted) */
 	struct task_struct	*sender;
 	struct task_struct	*receiver;
 
-	/* Protects sock pointer + state during receiver handoff */
+	/* Protects the conn pointer during install/drop/get */
 	spinlock_t		sock_lock;
 	/* Protects pending_list and pending_cnt */
 	spinlock_t		pending_lock;
@@ -155,7 +168,13 @@ int pcache_send_demote_req(struct socket *sock, u32 initiator_node_id, u32 flags
 int pcache_send_demote_ack(struct socket *sock, u32 status);
 int pcache_recv_demote_body(struct socket *sock, struct pcache_demote_pkt *out);
 void pcache_free_peer(struct pcache_peer *peer);
-struct socket *pcache_sock_get(struct pcache_peer *peer);
-void pcache_sock_put(struct pcache_peer *peer);
+
+/* Cut C — refcounted per-stream socket lifetime. */
+struct pcache_conn *pcache_conn_get(struct pcache_stream *st);
+void pcache_conn_put(struct pcache_conn *c);
+int pcache_conn_install(struct pcache_stream *st, struct socket *sock);
+void pcache_conn_drop(struct pcache_stream *st);
+void pcache_conn_shutdown(struct pcache_stream *st);
+bool pcache_stream_has_conn(struct pcache_stream *st);
 
 #endif /* _DM_PCACHE_NET_H */
