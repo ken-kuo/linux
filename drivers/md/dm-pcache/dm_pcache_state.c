@@ -18,6 +18,7 @@ static int pcache_primary_worker(void *arg);
 static int pcache_primary_receiver(void *arg);
 static int pcache_secondary_worker(void *arg);
 static void pcache_flush_pending(struct pcache_peer *peer, int err);
+static void pcache_flush_stream(struct pcache_stream *st, int err);
 static void pcache_data_streams_up(struct pcache_peer *peer);
 static void pcache_data_streams_down(struct pcache_peer *peer);
 static int pcache_data_stream_start(struct pcache_stream *st);
@@ -782,7 +783,16 @@ static int pcache_primary_receiver(void *arg)
 				 * runs from inside the main send loop, which we
 				 * left as soon as the sender saw state change.
 				 */
-				pcache_flush_pending(peer, 0);
+				/*
+				 * Flush ONLY the control stream here. The data
+				 * streams' pending lists are still being touched
+				 * by their live data threads; flushing them from
+				 * this thread races (list corruption / double
+				 * free). They are flushed safely in
+				 * pcache_data_stream_stop() once the control
+				 * worker's reconnect has stopped those threads.
+				 */
+				pcache_flush_stream(&peer->streams[0], 0);
 				wake_up(&peer->streams[0].wait_for_work);
 			}
 			set_current_state(TASK_INTERRUPTIBLE);
@@ -1085,14 +1095,15 @@ static void pcache_flush_pending(struct pcache_peer *peer, int err)
 static void pcache_stream_fault(struct pcache_stream *st)
 {
 	struct pcache_peer *peer = st->peer;
-	struct socket *ctrl;
 
-	spin_lock(&peer->streams[0].sock_lock);
-	peer->state = PCACHE_C_CONNECTING;
-	ctrl = peer->streams[0].sock;
-	spin_unlock(&peer->streams[0].sock_lock);
-	if (ctrl)
-		kernel_sock_shutdown(ctrl, SHUT_RDWR);
+	/*
+	 * Flag the connection down and kick the control worker; it owns the
+	 * control socket and will shut it down + reconnect (which tears every
+	 * stream down). A data thread must NOT touch streams[0].sock itself:
+	 * the control worker can free that socket concurrently, and shutting
+	 * down a stale pointer is a use-after-free (NULL ->ops deref).
+	 */
+	WRITE_ONCE(peer->state, PCACHE_C_CONNECTING);
 	wake_up(&peer->streams[0].wait_for_work);
 }
 
@@ -2161,6 +2172,13 @@ void pcache_net_stop(struct dm_pcache *pcache)
 			kthread_stop(peer->streams[0].receiver);
 			peer->streams[0].receiver = NULL;
 		}
+		/*
+		 * Cut C — the control worker's exit tears down the data streams,
+		 * but make it explicit so no data kthread can outlive the peer
+		 * into pcache_free_peer(). Idempotent: pcache_data_stream_stop
+		 * skips slots already stopped (sender/receiver NULL).
+		 */
+		pcache_data_streams_down(peer);
 		pcache_flush_pending(peer, -EIO);
 		pcache_free_peer(peer);
 		net->peers[slot] = NULL;
