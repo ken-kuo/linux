@@ -2283,10 +2283,9 @@ static void pcache_set_role_swap_workers(struct pcache_network *net,
 		peer->is_primary = to_primary;
 
 		/* Shut down the socket to wake the worker from any blocking
-		 * recv/send and unblock kthread_stop. */
-		spin_lock(&peer->streams[0].sock_lock);
+		 * recv/send and unblock kthread_stop. (conn helpers lock
+		 * internally -- must NOT hold sock_lock here.) */
 		pcache_conn_shutdown(&peer->streams[0]);
-		spin_unlock(&peer->streams[0].sock_lock);
 
 		if (peer->streams[0].sender) {
 			kthread_stop(peer->streams[0].sender);
@@ -2297,13 +2296,10 @@ static void pcache_set_role_swap_workers(struct pcache_network *net,
 			peer->streams[0].receiver = NULL;
 		}
 
-		/* Drop any lingering socket pointer so the new worker starts
-		 * with a clean state. */
-		spin_lock(&peer->streams[0].sock_lock);
+		/* Drop any lingering connection so the new worker starts clean. */
 		pcache_conn_drop(&peer->streams[0]);
 		peer->state = PCACHE_C_CONNECTING;
 		peer->repl_state = PCACHE_R_OFF;
-		spin_unlock(&peer->streams[0].sock_lock);
 
 		if (to_primary)
 			pcache_start_primary(peer);
@@ -2480,9 +2476,7 @@ int pcache_resolve_split_brain(struct dm_pcache *pcache, u32 peer_node_id,
 		struct pcache_peer *p2 = peer;
 		bool was_primary = p2->is_primary;
 
-		spin_lock(&p2->streams[0].sock_lock);
 		pcache_conn_shutdown(&p2->streams[0]);
-		spin_unlock(&p2->streams[0].sock_lock);
 
 		if (p2->streams[0].sender) {
 			kthread_stop(p2->streams[0].sender);
@@ -2493,11 +2487,9 @@ int pcache_resolve_split_brain(struct dm_pcache *pcache, u32 peer_node_id,
 			p2->streams[0].receiver = NULL;
 		}
 
-		spin_lock(&p2->streams[0].sock_lock);
 		pcache_conn_drop(&p2->streams[0]);
 		p2->state = PCACHE_C_CONNECTING;
 		p2->repl_state = PCACHE_R_OFF;
-		spin_unlock(&p2->streams[0].sock_lock);
 
 		if (was_primary)
 			pcache_start_primary(p2);
@@ -2563,9 +2555,7 @@ int pcache_reset_generation(struct dm_pcache *pcache)
 		for_each_active_peer(net, peer, slot) {
 			if (peer->bm)
 				pcache_bm_flush_sync(peer->bm);
-			spin_lock(&peer->streams[0].sock_lock);
 			pcache_conn_shutdown(&peer->streams[0]);
-			spin_unlock(&peer->streams[0].sock_lock);
 		}
 		mutex_unlock(&net->peers_lock);
 	}
