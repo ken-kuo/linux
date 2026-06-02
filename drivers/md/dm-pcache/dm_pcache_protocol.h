@@ -70,6 +70,7 @@ struct pcache_demote_pkt {
 #define PCACHE_F_ACK		BIT(0)
 #define PCACHE_F_HANDSHAKE	BIT(1)
 #define PCACHE_F_FLUSH		BIT(2)	/* size=0 barrier: peer flushes its cache, then ACKs */
+#define PCACHE_F_FUA		BIT(3)	/* FUA write: peer force-closes the kset (metadata durable before ACK) */
 
 /*
  * Wire format: all multi-byte fields are little-endian on the wire.

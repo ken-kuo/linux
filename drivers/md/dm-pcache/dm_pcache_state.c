@@ -392,7 +392,7 @@ static int pcache_handle_rs_data_recv(struct pcache_peer *peer,
 	if (ret)
 		goto free_data;
 
-	ret = pcache_net_write_to_cache(&pcache->cache, sector, data, size);
+	ret = pcache_net_write_to_cache(&pcache->cache, sector, data, size, false);
 	if (ret)
 		pcache_err("secondary: RS_DATA write_to_cache failed: %d\n", ret);
 
@@ -480,7 +480,8 @@ static int pcache_handle_data_recv(struct pcache_stream *stream,
 	t_data = ktime_get_ns();
 #endif
 
-	ret = pcache_net_write_to_cache(&pcache->cache, sector, data, size);
+	ret = pcache_net_write_to_cache(&pcache->cache, sector, data, size,
+					!!(flags & PCACHE_F_FUA));
 	if (ret)
 		pcache_err("write to cache failed: %d (sector=%llu size=%u)\n",
 			   ret, sector, size);
@@ -1154,7 +1155,8 @@ static int pcache_data_sender(void *arg)
 			phdr.sector	= cpu_to_le64(req->sector);
 			phdr.block_id	= cpu_to_le64(req->block_id);
 			phdr.size	= cpu_to_le32(req->size);
-			phdr.flags	= cpu_to_le32(PCACHE_F_ACK);
+			phdr.flags	= cpu_to_le32(PCACHE_F_ACK |
+					(req->fua ? PCACHE_F_FUA : 0));
 
 			ret = pcache_send_packet(sock, &phdr);
 			if (ret)
@@ -1646,7 +1648,8 @@ connect:
 			phdr.block_id	= cpu_to_le64(req->block_id);
 			phdr.size	= cpu_to_le32(req->size);
 			phdr.flags	= cpu_to_le32(PCACHE_F_ACK |
-					(req->is_flush ? PCACHE_F_FLUSH : 0));
+					(req->is_flush ? PCACHE_F_FLUSH : 0) |
+					(req->fua ? PCACHE_F_FUA : 0));
 
 #if PCACHE_LAT_TRACE
 			req->t_send_start = ktime_get_ns();
@@ -2797,6 +2800,8 @@ int pcache_net_submit_write(struct dm_pcache *pcache,
 		req->sector = sector;
 		req->size = size;
 		req->is_flush = false;
+		req->fua = pcache_req->bio &&
+			   (pcache_req->bio->bi_opf & REQ_FUA);
 		req->block_id = (u64)atomic64_inc_return(&st->next_block_id);
 		req->sent = false;
 		req->send_time = 0;
@@ -2867,6 +2872,7 @@ int pcache_net_submit_flush(struct dm_pcache *pcache,
 		req->sector = 0;
 		req->size = 0;
 		req->is_flush = true;
+		req->fua = false;
 		req->block_id = (u64)atomic64_inc_return(&st->next_block_id);
 		req->sent = false;
 		req->send_time = 0;

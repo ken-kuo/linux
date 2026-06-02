@@ -357,7 +357,7 @@ int pcache_cache_write_commit(struct pcache_cache *cache,
 			      struct pcache_request *pcache_req,
 			      struct list_head *keys);
 int pcache_net_write_to_cache(struct pcache_cache *cache, u64 sector,
-			      void *data, u32 size);
+			      void *data, u32 size, bool fua);
 
 /* gc */
 void pcache_cache_gc_fn(struct work_struct *work);

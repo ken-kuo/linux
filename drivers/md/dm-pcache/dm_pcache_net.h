@@ -34,6 +34,7 @@ struct pcache_pending_req {
 	u64			block_id;	/* unique id echoed by peer in ACK */
 	bool			sent;
 	bool			is_flush;	/* REQ_PREFLUSH barrier (size=0, no bio payload) */
+	bool			fua;		/* REQ_FUA: peer must force-close its kset before ACK */
 	unsigned long		send_time;
 #if PCACHE_LAT_TRACE
 	u64			t_enqueue;	/* ns when pending_req created */

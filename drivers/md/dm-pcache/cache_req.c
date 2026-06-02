@@ -875,7 +875,7 @@ static int pcache_wait_seg(struct pcache_cache *cache,
 }
 
 int pcache_net_write_to_cache(struct pcache_cache *cache, u64 sector,
-			      void *data, u32 size)
+			      void *data, u32 size, bool fua)
 {
 	struct pcache_cache_subtree *cache_subtree;
 	struct pcache_cache_key *key;
@@ -908,7 +908,9 @@ int pcache_net_write_to_cache(struct pcache_cache *cache, u64 sector,
 		cache_subtree = get_subtree(&cache->req_key_tree, key->off);
 		spin_lock(&cache_subtree->tree_lock);
 		cache_key_insert(&cache->req_key_tree, key, true);
-		ret = cache_key_append(cache, key, false);
+		/* fua -> force-close the kset now so this write's metadata is
+		 * crash-durable before we ACK (mirrors the primary's FUA path). */
+		ret = cache_key_append(cache, key, fua);
 		if (ret) {
 			cache_seg_put(key->cache_pos.cache_seg);
 			cache_key_delete(key);
