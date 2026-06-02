@@ -69,6 +69,7 @@ struct pcache_demote_pkt {
 
 #define PCACHE_F_ACK		BIT(0)
 #define PCACHE_F_HANDSHAKE	BIT(1)
+#define PCACHE_F_FLUSH		BIT(2)	/* size=0 barrier: peer flushes its cache, then ACKs */
 
 /*
  * Wire format: all multi-byte fields are little-endian on the wire.

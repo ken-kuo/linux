@@ -441,6 +441,28 @@ static int pcache_handle_data_recv(struct pcache_stream *stream,
 	u64 t0, t_data, t_commit;
 #endif
 
+	/*
+	 * Cross-cluster flush barrier (fix B): persist all batched cache ksets
+	 * so previously-replicated writes are crash-recoverable here, then ACK.
+	 * Must run before the size==0 early-return below (which would otherwise
+	 * silently drop the flush and leave the primary waiting for an ACK).
+	 */
+	if (flags & PCACHE_F_FLUSH) {
+		ret = pcache_cache_flush(&pcache->cache);
+		if (ret)
+			pcache_err("secondary: cache flush failed: %d\n", ret);
+		if (flags & PCACHE_F_ACK) {
+			memset(&reply, 0, sizeof(reply));
+			reply.type = cpu_to_le16(ret ? PCACHE_P_NACK : PCACHE_P_ACK);
+			reply.sector = hdr->sector;
+			reply.block_id = hdr->block_id;
+			reply.size = hdr->size;
+			if (pcache_send_packet(sock, &reply))
+				pcache_err("secondary: flush ACK/NACK send failed\n");
+		}
+		return ret;
+	}
+
 	if (!size)
 		return 0;
 
@@ -1623,7 +1645,8 @@ connect:
 			phdr.sector	= cpu_to_le64(req->sector);
 			phdr.block_id	= cpu_to_le64(req->block_id);
 			phdr.size	= cpu_to_le32(req->size);
-			phdr.flags	= cpu_to_le32(PCACHE_F_ACK);
+			phdr.flags	= cpu_to_le32(PCACHE_F_ACK |
+					(req->is_flush ? PCACHE_F_FLUSH : 0));
 
 #if PCACHE_LAT_TRACE
 			req->t_send_start = ktime_get_ns();
@@ -1634,7 +1657,9 @@ connect:
 				goto connect;
 			}
 
-			if (req->pcache_req && req->pcache_req->bio) {
+			/* A flush carries no payload (size=0); only data reqs
+			 * send bio pages. */
+			if (!req->is_flush && req->pcache_req && req->pcache_req->bio) {
 				ret = pcache_send_bio_pages(sock,
 					req->pcache_req->bio);
 				if (ret) {
@@ -2771,6 +2796,7 @@ int pcache_net_submit_write(struct dm_pcache *pcache,
 		req->pcache_req = pcache_req;
 		req->sector = sector;
 		req->size = size;
+		req->is_flush = false;
 		req->block_id = (u64)atomic64_inc_return(&st->next_block_id);
 		req->sent = false;
 		req->send_time = 0;
@@ -2791,6 +2817,74 @@ int pcache_net_submit_write(struct dm_pcache *pcache,
 	mutex_unlock(&net->peers_lock);
 
 	(void)any_skipped;
+
+	if (enqueued == 0)
+		return -ENOTCONN;
+	return 0;
+}
+
+/*
+ * Replicate a REQ_PREFLUSH barrier to connected peers (fix B: cross-cluster
+ * flush). A size=0 P_DATA with PCACHE_F_FLUSH is enqueued on each connected
+ * peer's CONTROL stream[0] -- a single flush there makes the secondary persist
+ * ALL of its batched cache ksets (pcache_cache_flush flushes every kset
+ * regardless of which stream wrote the keys), so prior replicated writes become
+ * crash-recoverable on the peer. The flush bio completes (Protocol C) once every
+ * connected peer ACKs. Disconnected peers are skipped -- they already have their
+ * bitmap marked dirty for the affected ranges and resync on reconnect.
+ *
+ * Refcount mirrors pcache_net_submit_write: the caller takes one extra ref
+ * before calling; the first enqueue reuses it and subsequent peers each take
+ * their own, so one ACK per peer drives the bio to completion.
+ */
+int pcache_net_submit_flush(struct dm_pcache *pcache,
+			    struct pcache_request *pcache_req)
+{
+	struct pcache_network *net;
+	struct pcache_peer *peer;
+	struct pcache_pending_req *req;
+	int slot, enqueued = 0;
+
+	net = pcache->net;
+	if (!net)
+		return -ENOTCONN;
+
+	mutex_lock(&net->peers_lock);
+	for_each_active_peer(net, peer, slot) {
+		struct pcache_stream *st = &peer->streams[0];
+
+		if (peer->state != PCACHE_C_CONNECTED)
+			continue;	/* will resync from its dirty bitmap */
+
+		req = mempool_alloc(net->req_pool, GFP_NOIO);
+		if (!req)
+			continue;
+
+		if (enqueued > 0)
+			pcache_req_get(pcache_req);
+
+		req->pcache_req = pcache_req;
+		req->sector = 0;
+		req->size = 0;
+		req->is_flush = true;
+		req->block_id = (u64)atomic64_inc_return(&st->next_block_id);
+		req->sent = false;
+		req->send_time = 0;
+#if PCACHE_LAT_TRACE
+		req->t_enqueue = ktime_get_ns();
+		req->t_send_start = 0;
+#endif
+
+		spin_lock(&st->pending_lock);
+		list_add_tail(&req->list, &st->pending_list);
+		atomic_inc(&st->pending_cnt);
+		atomic_inc(&st->unsent_cnt);
+		spin_unlock(&st->pending_lock);
+
+		wake_up(&st->wait_for_work);
+		enqueued++;
+	}
+	mutex_unlock(&net->peers_lock);
 
 	if (enqueued == 0)
 		return -ENOTCONN;

@@ -105,6 +105,22 @@ static int pcache_submit_req(struct dm_pcache *pcache,
 			bio->bi_iter.bi_size);
 	}
 
+	/*
+	 * fix B -- a REQ_PREFLUSH is a cross-cluster durability barrier. After
+	 * the local cache flush (done above by pcache_cache_handle_req),
+	 * replicate the flush so connected peers persist their batched cache
+	 * metadata too. Without this a write the user fsync'd is data-durable
+	 * but not metadata-durable on the secondary (its keys sit in an
+	 * unflushed kset) and could be lost if that secondary crashes. The bio
+	 * completes once every connected peer ACKs the flush (Protocol C).
+	 */
+	if ((bio->bi_opf & REQ_PREFLUSH) && pcache->is_primary &&
+	    pcache_peer_connected(pcache)) {
+		pcache_req_get(pcache_req);
+		if (pcache_net_submit_flush(pcache, pcache_req))
+			pcache_req_put(pcache_req, 0);	/* nothing enqueued; local flush already durable */
+	}
+
 	return 0;
 }
 

@@ -33,6 +33,7 @@ struct pcache_pending_req {
 	u32			size;
 	u64			block_id;	/* unique id echoed by peer in ACK */
 	bool			sent;
+	bool			is_flush;	/* REQ_PREFLUSH barrier (size=0, no bio payload) */
 	unsigned long		send_time;
 #if PCACHE_LAT_TRACE
 	u64			t_enqueue;	/* ns when pending_req created */

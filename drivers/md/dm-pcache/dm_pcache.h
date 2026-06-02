@@ -118,6 +118,8 @@ bool pcache_peer_connected(struct dm_pcache *pcache);
 int pcache_net_submit_write(struct dm_pcache *pcache,
 			    struct pcache_request *pcache_req,
 			    u64 sector, u32 size);
+int pcache_net_submit_flush(struct dm_pcache *pcache,
+			    struct pcache_request *pcache_req);
 int pcache_net_force_resync(struct dm_pcache *pcache);
 
 /* Phase 3 — runtime peer management (dmsetup message add-peer / remove-peer /
