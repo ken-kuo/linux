@@ -240,6 +240,23 @@ void cache_writeback_fn(struct work_struct *work)
 		goto queue_work;
 	}
 
+	/*
+	 * Lazy-writeback watermark: while the cache is below writeback_percent
+	 * full, defer draining so write bursts are absorbed/coalesced and
+	 * writeback's PMEM reads stay off the hot write path. Self-regulating:
+	 * deferred dirty data keeps segs_used rising until it crosses the
+	 * watermark, then we drain. 0 = eager (default).
+	 */
+	if (cache->writeback_percent) {
+		u32 segs_used = bitmap_weight(cache->seg_map, cache->n_segs);
+		u32 wb_threshold = cache->n_segs * cache->writeback_percent / 100;
+
+		if (segs_used < wb_threshold) {
+			delay = PCACHE_CACHE_WRITEBACK_INTERVAL;
+			goto queue_work;
+		}
+	}
+
 	if (kset_onmedia->flags & PCACHE_KSET_FLAGS_LAST) {
 		last_kset_writeback(cache, kset_onmedia);
 		delay = 0;

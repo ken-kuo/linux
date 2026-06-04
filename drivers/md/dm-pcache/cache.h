@@ -194,6 +194,15 @@ struct pcache_cache {
 	unsigned long		*seg_map;
 	u32			last_cache_seg;
 	bool			cache_full;
+	/*
+	 * Lazy-writeback watermark (% of segments used). 0 = eager (drain
+	 * dirty data ASAP, the default). When >0, writeback defers while
+	 * segs_used < watermark, letting the cache absorb/coalesce write
+	 * bursts so writeback's PMEM reads stay off the hot write path
+	 * (bcache writeback_percent equivalent). Runtime: dmsetup message
+	 * <dev> 0 writeback_percent <0-90>.
+	 */
+	u8			writeback_percent;
 	spinlock_t		seg_map_lock;
 	/*
 	 * Waked when a segment is freed back to seg_map (see

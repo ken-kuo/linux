@@ -640,6 +640,14 @@ static int dm_pcache_message(struct dm_target *ti, unsigned int argc,
 		return pcache_cache_set_gc_percent(&pcache->cache, val);
 	}
 
+	/* Lazy-writeback watermark (% segs used; 0 = eager). See cache.h. */
+	if (argc == 2 && !strcasecmp(argv[0], "writeback_percent")) {
+		if (kstrtoul(argv[1], 10, &val) || val > 90)
+			goto err;
+		pcache->cache.writeback_percent = (u8)val;
+		return 0;
+	}
+
 	/* Phase 3.5 — bitmap-status now lists per-peer rows. */
 	if (argc == 1 && !strcasecmp(argv[0], "bitmap-status")) {
 		struct pcache_peer *_p;
