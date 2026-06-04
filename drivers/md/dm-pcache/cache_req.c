@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <linux/timekeeping.h>
+
 #include "cache.h"
 #include "backing_dev.h"
 #include "cache_dev.h"
@@ -884,8 +886,19 @@ int pcache_net_write_to_cache(struct pcache_cache *cache, u64 sector,
 	u32 io_done = 0;
 	u32 max_in_seg;
 	int ret;
+#if PCACHE_LAT_TRACE
+	/* Per-stage breakdown of the commit (the "56us" on the secondary):
+	 * reserve = key alloc + segment reservation; copy = memcpy_flushcache
+	 * of the data to PMEM; insert = subtree lock + rbtree insert;
+	 * append = in-memory kset append (PMEM kset persist is async unless the
+	 * kset fills or fua). */
+	u64 t_reserve = 0, t_copy = 0, t_insert = 0, t_append = 0, a, b;
+#endif
 
 	while (io_done < size) {
+#if PCACHE_LAT_TRACE
+		a = ktime_get_ns();
+#endif
 		key = cache_key_alloc(&cache->req_key_tree, GFP_NOIO);
 		if (!key)
 			return -ENOMEM;
@@ -903,11 +916,20 @@ int pcache_net_write_to_cache(struct pcache_cache *cache, u64 sector,
 
 		pos = &key->cache_pos;
 		dst = pos->cache_seg->segment.data + pos->seg_off;
+#if PCACHE_LAT_TRACE
+		b = ktime_get_ns(); t_reserve += b - a; a = b;
+#endif
 		memcpy_flushcache(dst, data + io_done, key->len);
+#if PCACHE_LAT_TRACE
+		b = ktime_get_ns(); t_copy += b - a; a = b;
+#endif
 
 		cache_subtree = get_subtree(&cache->req_key_tree, key->off);
 		spin_lock(&cache_subtree->tree_lock);
 		cache_key_insert(&cache->req_key_tree, key, true);
+#if PCACHE_LAT_TRACE
+		b = ktime_get_ns(); t_insert += b - a; a = b;
+#endif
 		/* fua -> force-close the kset now so this write's metadata is
 		 * crash-durable before we ACK (mirrors the primary's FUA path). */
 		ret = cache_key_append(cache, key, fua);
@@ -917,9 +939,16 @@ int pcache_net_write_to_cache(struct pcache_cache *cache, u64 sector,
 			spin_unlock(&cache_subtree->tree_lock);
 			return ret;
 		}
+#if PCACHE_LAT_TRACE
+		b = ktime_get_ns(); t_append += b - a;
+#endif
 		io_done += key->len;
 		spin_unlock(&cache_subtree->tree_lock);
 	}
+#if PCACHE_LAT_TRACE
+	trace_printk("Wcommit sz=%u reserve=%llu copy=%llu insert=%llu append=%llu\n",
+		     size, t_reserve, t_copy, t_insert, t_append);
+#endif
 	return 0;
 }
 
