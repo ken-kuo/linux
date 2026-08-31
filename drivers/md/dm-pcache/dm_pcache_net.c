@@ -454,26 +454,56 @@ int pcache_recv_demote_body(struct socket *sock, struct pcache_demote_pkt *out)
 void pcache_free_peer(struct pcache_peer *peer)
 {
 	struct pcache_pending_req *req, *tmp;
+	int i, leaked = 0;
+
+	/*
+	 * Last-resort drain. Every caller is supposed to have run
+	 * pcache_flush_pending() after stopping this peer's threads, so these
+	 * lists are normally empty -- but if one ever is not, the reqs each
+	 * hold a reference on a pcache_request, and freeing them without
+	 * putting it strands the bio (never completed, inflight_reqs never
+	 * decremented, so dtr then hangs on inflight_wq).
+	 *
+	 * Done before pcache_peer_bitmap_exit() so the range can still be
+	 * marked dirty, and across every stream -- the old code only walked
+	 * streams[0], leaking the data streams' lists outright at nr_streams > 1.
+	 *
+	 * Status 0, not -EIO, for the same reason as the flush paths in
+	 * dm_pcache_state.c: the payload is already committed to the local
+	 * cache and the range is marked dirty, so the resync carries it.
+	 */
+	for (i = 0; i < peer->nr_streams; i++) {
+		struct pcache_stream *st = &peer->streams[i];
+		LIST_HEAD(drain);
+
+		spin_lock(&st->pending_lock);
+		list_splice_init(&st->pending_list, &drain);
+		atomic_set(&st->pending_cnt, 0);
+		atomic_set(&st->unsent_cnt, 0);
+		spin_unlock(&st->pending_lock);
+
+		list_for_each_entry_safe(req, tmp, &drain, list) {
+			list_del(&req->list);
+			pcache_bm_set_range(peer->bm, req->sector, req->size);
+			pcache_req_put(req->pcache_req, 0);
+			if (peer->pcache->net && peer->pcache->net->req_pool)
+				mempool_free(req, peer->pcache->net->req_pool);
+			else
+				kfree(req);
+			leaked++;
+		}
+	}
+	if (leaked)
+		pcache_err("free_peer: drained %d pending req(s) the caller should have flushed\n",
+			   leaked);
 
 	/* Phase 3.5 — defensive bitmap release in case the explicit
 	 * pcache_peer_bitmap_exit() in remove-peer / net_stop was skipped. */
 	pcache_peer_bitmap_exit(peer);
 
 	/* Defensively drop any conn still attached to any stream. */
-	{
-		int i;
-
-		for (i = 0; i < peer->nr_streams; i++)
-			pcache_conn_drop(&peer->streams[i]);
-	}
-
-	list_for_each_entry_safe(req, tmp, &peer->streams[0].pending_list, list) {
-		list_del(&req->list);
-		if (peer->pcache->net && peer->pcache->net->req_pool)
-			mempool_free(req, peer->pcache->net->req_pool);
-		else
-			kfree(req);
-	}
+	for (i = 0; i < peer->nr_streams; i++)
+		pcache_conn_drop(&peer->streams[i]);
 
 	kfree(peer);
 }
