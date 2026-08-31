@@ -77,12 +77,27 @@ static int pcache_submit_req(struct dm_pcache *pcache,
 				bio->bi_iter.bi_sector,
 				bio->bi_iter.bi_size);
 		if (net_ret) {
-			/* Enqueue failed: mark all peers' bitmaps dirty so
-			 * their next resync covers this region. */
+			/*
+			 * Enqueue failed -- the last peer dropped between the
+			 * pcache_peer_connected() probe above and the fan-out.
+			 * Mark all peers' bitmaps dirty so their next resync
+			 * covers this region.
+			 *
+			 * Do NOT fail the bio for that: the write is committed
+			 * locally and every peer is flagged for resync, which
+			 * is exactly the state the no-peer-connected slow path
+			 * below treats as success (and which the flush path
+			 * already handles by putting 0). Propagating the error
+			 * would turn an ordinary link drop into EIO to the
+			 * filesystem. The exception is a configured quorum
+			 * fence: once quorum is lost, refusing the write IS
+			 * the intended behaviour.
+			 */
 			pcache_mark_all_peers_dirty(pcache,
 				bio->bi_iter.bi_sector,
 				bio->bi_iter.bi_size);
-			pcache_req_put(pcache_req, net_ret);
+			pcache_req_put(pcache_req,
+				       pcache_has_quorum(pcache) ? 0 : net_ret);
 		}
 
 		/* Copy + publish locally, concurrently with the sender. */
@@ -601,6 +616,7 @@ static void dm_pcache_status(struct dm_target *ti, status_type_t type,
 			struct pcache_peer *_p;
 			int _slot;
 
+			percpu_down_read(&pcache->net->peers_lock);
 			for_each_active_peer(pcache->net, _p, _slot) {
 				if (_p->bm) {
 					total_dirty += pcache_bm_dirty_count(_p->bm);
@@ -608,6 +624,7 @@ static void dm_pcache_status(struct dm_target *ti, status_type_t type,
 						max_bits = _p->bm->nr_bits;
 				}
 			}
+			percpu_up_read(&pcache->net->peers_lock);
 			DMEMIT(" bm_gen=%llu bm_dirty=%llu/%llu",
 			       pcache->generation, total_dirty, max_bits);
 		}
@@ -659,6 +676,7 @@ static int dm_pcache_message(struct dm_target *ti, unsigned int argc,
 		}
 		DMEMIT("device gen=%llu gen_dirty=%d", pcache->generation,
 		       pcache->gen_dirty ? 1 : 0);
+		percpu_down_read(&pcache->net->peers_lock);
 		for_each_active_peer(pcache->net, _p, _slot) {
 			if (_p->bm) {
 				DMEMIT("; peer[%d node_id=%d] peer_gen_at_sync=%llu dirty=%llu/%llu flags=0x%x",
@@ -668,6 +686,7 @@ static int dm_pcache_message(struct dm_target *ti, unsigned int argc,
 				       _p->bm->nr_bits, _p->bm->flags);
 			}
 		}
+		percpu_up_read(&pcache->net->peers_lock);
 		return 0;
 	}
 

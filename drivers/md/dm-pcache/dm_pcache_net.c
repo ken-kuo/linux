@@ -466,10 +466,6 @@ void pcache_free_peer(struct pcache_peer *peer)
 		for (i = 0; i < peer->nr_streams; i++)
 			pcache_conn_drop(&peer->streams[i]);
 	}
-	if (peer->listen_sock) {
-		sock_release(peer->listen_sock);
-		peer->listen_sock = NULL;
-	}
 
 	list_for_each_entry_safe(req, tmp, &peer->streams[0].pending_list, list) {
 		list_del(&req->list);

@@ -1832,7 +1832,16 @@ bool pcache_has_quorum(struct dm_pcache *pcache)
 	if (!net)
 		return true;	/* standalone mode */
 
-	mutex_lock(&net->peers_lock);
+	/*
+	 * Fence disabled (the default, quorum=off => quorum_min == 1): the
+	 * count below starts at 1 for ourselves, so the result is always true.
+	 * Return early rather than make every write walk peers[] under the
+	 * lock for a foregone conclusion.
+	 */
+	if (!pcache->quorum_majority && pcache->quorum_min <= 1)
+		return true;
+
+	percpu_down_read(&net->peers_lock);
 	total = 1;	/* self */
 	connected = 1;	/* self */
 	for_each_active_peer(net, peer, slot) {
@@ -1840,7 +1849,7 @@ bool pcache_has_quorum(struct dm_pcache *pcache)
 		if (peer->state == PCACHE_C_CONNECTED)
 			connected++;
 	}
-	mutex_unlock(&net->peers_lock);
+	percpu_up_read(&net->peers_lock);
 
 	threshold = pcache->quorum_majority ? (total / 2) + 1
 					    : (int)pcache->quorum_min;
@@ -1895,7 +1904,7 @@ static int pcache_accept_thread(void *arg)
 			continue;
 		}
 
-		mutex_lock(&net->peers_lock);
+		percpu_down_write(&net->peers_lock);
 		peer = NULL;
 		for_each_active_peer(net, peer, slot) {
 			if (peer->node_id == peer_node_id)
@@ -1903,7 +1912,7 @@ static int pcache_accept_thread(void *arg)
 			peer = NULL;
 		}
 		if (!peer) {
-			mutex_unlock(&net->peers_lock);
+			percpu_up_write(&net->peers_lock);
 			pcache_dev_err(pcache,
 				"accept: no peer slot for node_id=%d; drop\n",
 				peer_node_id);
@@ -1911,7 +1920,7 @@ static int pcache_accept_thread(void *arg)
 			continue;
 		}
 		if (stream_id < 0 || stream_id >= peer->nr_streams) {
-			mutex_unlock(&net->peers_lock);
+			percpu_up_write(&net->peers_lock);
 			pcache_dev_err(pcache,
 				"accept: bad stream_id=%d (nr_streams=%d) node_id=%d; drop\n",
 				stream_id, peer->nr_streams, peer_node_id);
@@ -1927,7 +1936,7 @@ static int pcache_accept_thread(void *arg)
 		 */
 		if (pcache_stream_has_conn(&peer->streams[stream_id])) {
 			/* Race-loser: lower-id outbound got there first. */
-			mutex_unlock(&net->peers_lock);
+			percpu_up_write(&net->peers_lock);
 			pcache_dev_info(pcache,
 				"accept: peer node_id=%d stream=%d already connected; drop dup\n",
 				peer_node_id, stream_id);
@@ -1936,13 +1945,13 @@ static int pcache_accept_thread(void *arg)
 		}
 		pcache_sock_set_timeout(sock, 300 * HZ);
 		if (pcache_conn_install(&peer->streams[stream_id], sock)) {
-			mutex_unlock(&net->peers_lock);
+			percpu_up_write(&net->peers_lock);
 			sock_release(sock);
 			continue;
 		}
 		if (stream_id == 0)
 			peer->state = PCACHE_C_CONNECTED;
-		mutex_unlock(&net->peers_lock);
+		percpu_up_write(&net->peers_lock);
 
 		if (stream_id == 0) {
 			/* Control stream: the per-peer worker drives it. */
@@ -2011,7 +2020,6 @@ pcache_alloc_peer(struct dm_pcache *pcache, u32 peer_node_id, const char *addr)
 	peer->nr_streams = pcache->nr_streams >= 1 ? pcache->nr_streams : 1;
 	for (i = 0; i < peer->nr_streams; i++)
 		pcache_stream_init(&peer->streams[i], peer, i);
-	init_waitqueue_head(&peer->wait_for_listen);
 
 	return peer;
 }
@@ -2029,8 +2037,6 @@ int pcache_net_init(struct dm_pcache *pcache, unsigned int argc, char **argv)
 	if (!net)
 		return -ENOMEM;
 
-	mutex_init(&net->peers_lock);
-	mutex_init(&net->connection_mutex);
 	net->protocol_version = PCACHE_PROTO_VERSION;
 	atomic_set(&net->stopping, 0);
 
@@ -2064,6 +2070,19 @@ int pcache_net_init(struct dm_pcache *pcache, unsigned int argc, char **argv)
 		kmem_cache_destroy(net->req_cache);
 		kfree(net);
 		return 0;
+	}
+
+	/*
+	 * Distributed mode confirmed — bring up peers_lock. Initialising it
+	 * here (rather than right after the kzalloc) keeps the standalone and
+	 * early-failure exits above free of percpu_free_rwsem() cleanup.
+	 */
+	ret = percpu_init_rwsem(&net->peers_lock);
+	if (ret) {
+		mempool_destroy(net->req_pool);
+		kmem_cache_destroy(net->req_cache);
+		kfree(net);
+		return ret;
 	}
 
 	pcache->net = net;
@@ -2104,6 +2123,7 @@ fail:
 		sock_release(net->listen_sock);
 		net->listen_sock = NULL;
 	}
+	percpu_free_rwsem(&net->peers_lock);
 	mempool_destroy(net->req_pool);
 	kmem_cache_destroy(net->req_cache);
 	pcache->net = NULL;
@@ -2135,7 +2155,7 @@ void pcache_net_stop(struct dm_pcache *pcache)
 		net->listen_sock = NULL;
 	}
 
-	mutex_lock(&net->peers_lock);
+	percpu_down_write(&net->peers_lock);
 	for_each_active_peer(net, peer, slot) {
 		pcache_conn_shutdown(&peer->streams[0]);
 
@@ -2161,12 +2181,15 @@ void pcache_net_stop(struct dm_pcache *pcache)
 		 */
 		pcache_data_streams_down(peer);
 		pcache_flush_pending(peer, -EIO);
-		pcache_free_peer(peer);
+		/* Unpublish before freeing so the slot is never left pointing
+		 * at freed memory, even transiently. */
 		net->peers[slot] = NULL;
+		pcache_free_peer(peer);
 		module_put(THIS_MODULE);
 	}
-	mutex_unlock(&net->peers_lock);
+	percpu_up_write(&net->peers_lock);
 
+	percpu_free_rwsem(&net->peers_lock);
 	if (net->req_pool)
 		mempool_destroy(net->req_pool);
 	if (net->req_cache)
@@ -2178,21 +2201,31 @@ void pcache_net_stop(struct dm_pcache *pcache)
 
 bool pcache_peer_connected(struct dm_pcache *pcache)
 {
+	struct pcache_network *net = pcache->net;
 	struct pcache_peer *peer;
+	bool connected = false;
 	int slot;
 
-	if (!pcache->net)
+	if (!net)
 		return false;
 
 	/* Step 2: "connected" means at least one populated peer slot is
 	 * currently connected. This already matches the multi-peer fan-out
 	 * semantic (we only suppress the offline-bitmap-dirty branch when
-	 * we have somebody to replicate to). */
-	for_each_active_peer(pcache->net, peer, slot) {
-		if (peer->state == PCACHE_C_CONNECTED)
-			return true;
+	 * we have somebody to replicate to).
+	 *
+	 * The read side is what keeps a concurrent remove-peer from freeing
+	 * the peer between the slot load and the peer->state read. */
+	percpu_down_read(&net->peers_lock);
+	for_each_active_peer(net, peer, slot) {
+		if (peer->state == PCACHE_C_CONNECTED) {
+			connected = true;
+			break;
+		}
 	}
-	return false;
+	percpu_up_read(&net->peers_lock);
+
+	return connected;
 }
 
 /*
@@ -2227,7 +2260,7 @@ int pcache_add_peer(struct dm_pcache *pcache, u32 peer_node_id, const char *addr
 	if (!addr || !*addr)
 		return -EINVAL;
 
-	mutex_lock(&net->peers_lock);
+	percpu_down_write(&net->peers_lock);
 
 	/* Idempotent: if the registry already has this peer (persisted from a
 	 * prior session), reuse its slot. Otherwise allocate a fresh one. */
@@ -2235,7 +2268,7 @@ int pcache_add_peer(struct dm_pcache *pcache, u32 peer_node_id, const char *addr
 						    peer_node_id);
 	if (slot >= 0) {
 		if (net->peers[slot]) {
-			mutex_unlock(&net->peers_lock);
+			percpu_up_write(&net->peers_lock);
 			return -EEXIST;	/* already fully alive */
 		}
 		/* registry has slot but no in-memory peer — recreate it */
@@ -2244,7 +2277,7 @@ int pcache_add_peer(struct dm_pcache *pcache, u32 peer_node_id, const char *addr
 		ret = pcache_registry_add(pcache->registry, peer_node_id, addr,
 					  gen, &slot);
 		if (ret) {
-			mutex_unlock(&net->peers_lock);
+			percpu_up_write(&net->peers_lock);
 			pcache_dev_err(pcache,
 				"add-peer: registry_add(node_id=%u) failed: %d\n",
 				peer_node_id, ret);
@@ -2255,7 +2288,7 @@ int pcache_add_peer(struct dm_pcache *pcache, u32 peer_node_id, const char *addr
 	peer = pcache_alloc_peer(pcache, peer_node_id, addr);
 	if (!peer) {
 		pcache_registry_remove(pcache->registry, peer_node_id);
-		mutex_unlock(&net->peers_lock);
+		percpu_up_write(&net->peers_lock);
 		return -ENOMEM;
 	}
 
@@ -2264,7 +2297,7 @@ int pcache_add_peer(struct dm_pcache *pcache, u32 peer_node_id, const char *addr
 	if (ret) {
 		pcache_free_peer(peer);
 		pcache_registry_remove(pcache->registry, peer_node_id);
-		mutex_unlock(&net->peers_lock);
+		percpu_up_write(&net->peers_lock);
 		pcache_dev_err(pcache,
 			"add-peer: peer_bitmap_init failed: %d\n", ret);
 		return ret;
@@ -2283,13 +2316,13 @@ int pcache_add_peer(struct dm_pcache *pcache, u32 peer_node_id, const char *addr
 		pcache_free_peer(peer);
 		pcache_registry_remove(pcache->registry, peer_node_id);
 		module_put(THIS_MODULE);
-		mutex_unlock(&net->peers_lock);
+		percpu_up_write(&net->peers_lock);
 		pcache_dev_err(pcache,
 			"add-peer: worker spawn failed: %d\n", ret);
 		return ret;
 	}
 
-	mutex_unlock(&net->peers_lock);
+	percpu_up_write(&net->peers_lock);
 	pcache_dev_info(pcache,
 		"add-peer: slot=%d node_id=%u addr=%s is_primary=%d\n",
 		slot, peer_node_id, addr, peer->is_primary);
@@ -2363,16 +2396,16 @@ int pcache_set_role(struct dm_pcache *pcache, bool primary, bool force)
 	if (!net)
 		return -ENOTCONN;
 
-	mutex_lock(&net->peers_lock);
+	percpu_down_write(&net->peers_lock);
 
 	if (primary && !pcache->is_primary) {
-		mutex_unlock(&net->peers_lock);
+		percpu_up_write(&net->peers_lock);
 		if (!force && !pcache_has_quorum(pcache)) {
 			pcache_dev_err(pcache,
 				"set-role primary refused: no quorum (use force to override)\n");
 			return -EBUSY;
 		}
-		mutex_lock(&net->peers_lock);
+		percpu_down_write(&net->peers_lock);
 
 		/* Phase 3.5 B1 — broadcast P_DEMOTE_REQ on every connected
 		 * peer socket (best-effort notification). Peers that ARE the
@@ -2437,7 +2470,7 @@ int pcache_set_role(struct dm_pcache *pcache, bool primary, bool force)
 			"set-role: demoted to SECONDARY (force=%d)\n", force);
 	}
 
-	mutex_unlock(&net->peers_lock);
+	percpu_up_write(&net->peers_lock);
 	return 0;
 }
 
@@ -2464,11 +2497,11 @@ int pcache_resolve_split_brain(struct dm_pcache *pcache, u32 peer_node_id,
 	if (!net)
 		return -ENOTCONN;
 
-	mutex_lock(&net->peers_lock);
+	percpu_down_write(&net->peers_lock);
 	slot = pcache_registry_find_slot_by_node_id(pcache->registry,
 						    peer_node_id);
 	if (slot < 0 || !net->peers[slot]) {
-		mutex_unlock(&net->peers_lock);
+		percpu_up_write(&net->peers_lock);
 		return -ENOENT;
 	}
 	peer = net->peers[slot];
@@ -2525,7 +2558,7 @@ int pcache_resolve_split_brain(struct dm_pcache *pcache, u32 peer_node_id,
 			pcache_start_secondary(p2);
 	}
 
-	mutex_unlock(&net->peers_lock);
+	percpu_up_write(&net->peers_lock);
 
 	pcache_dev_info(pcache,
 		"resolve-split-brain: peer node_id=%u, role=%s, worker restarted\n",
@@ -2542,7 +2575,7 @@ int pcache_abort_resync(struct dm_pcache *pcache)
 	if (!net)
 		return -ENOTCONN;
 
-	mutex_lock(&net->peers_lock);
+	percpu_down_write(&net->peers_lock);
 	for_each_active_peer(net, peer, slot) {
 		if (peer->bm) {
 			spin_lock(&peer->bm->lock);
@@ -2555,7 +2588,7 @@ int pcache_abort_resync(struct dm_pcache *pcache)
 			dropped++;
 		}
 	}
-	mutex_unlock(&net->peers_lock);
+	percpu_up_write(&net->peers_lock);
 
 	pcache_dev_info(pcache,
 		"abort-resync: cleared FULL_SYNC_NEEDED on all peers, dropped %d socket(s)\n",
@@ -2579,13 +2612,13 @@ int pcache_reset_generation(struct dm_pcache *pcache)
 	/* Flush every active peer's header so the new device gen lands in
 	 * PMEM (replicated across all slots). */
 	if (net) {
-		mutex_lock(&net->peers_lock);
+		percpu_down_write(&net->peers_lock);
 		for_each_active_peer(net, peer, slot) {
 			if (peer->bm)
 				pcache_bm_flush_sync(peer->bm);
 			pcache_conn_shutdown(&peer->streams[0]);
 		}
-		mutex_unlock(&net->peers_lock);
+		percpu_up_write(&net->peers_lock);
 	}
 
 	pcache_dev_info(pcache, "reset-generation: bumped to gen=%llu\n", new_gen);
@@ -2601,16 +2634,16 @@ int pcache_remove_peer(struct dm_pcache *pcache, u32 peer_node_id)
 	if (!net)
 		return -ENOTCONN;
 
-	mutex_lock(&net->peers_lock);
+	percpu_down_write(&net->peers_lock);
 	slot = pcache_registry_find_slot_by_node_id(pcache->registry,
 						    peer_node_id);
 	if (slot < 0) {
-		mutex_unlock(&net->peers_lock);
+		percpu_up_write(&net->peers_lock);
 		return -ENOENT;
 	}
 	peer = net->peers[slot];
 	if (!peer) {
-		mutex_unlock(&net->peers_lock);
+		percpu_up_write(&net->peers_lock);
 		return -ENOENT;
 	}
 
@@ -2628,12 +2661,13 @@ int pcache_remove_peer(struct dm_pcache *pcache, u32 peer_node_id)
 	}
 	pcache_flush_pending(peer, -EIO);
 	pcache_peer_bitmap_exit(peer);
-	pcache_free_peer(peer);
+	/* Unpublish before freeing (see pcache_net_stop). */
 	net->peers[slot] = NULL;
+	pcache_free_peer(peer);
 	module_put(THIS_MODULE);
 
 	pcache_registry_remove(pcache->registry, peer_node_id);
-	mutex_unlock(&net->peers_lock);
+	percpu_up_write(&net->peers_lock);
 
 	pcache_dev_info(pcache, "remove-peer: slot=%d node_id=%u removed\n",
 			slot, peer_node_id);
@@ -2651,6 +2685,7 @@ int pcache_list_peers(struct dm_pcache *pcache, char *buf, size_t buflen)
 
 	sz += scnprintf(buf + sz, buflen - sz, "my_node_id=%u listen_port=%u\n",
 			pcache->my_node_id, pcache->listen_port);
+	percpu_down_read(&pcache->net->peers_lock);
 	for_each_active_peer(pcache->net, peer, slot) {
 		sz += scnprintf(buf + sz, buflen - sz,
 				"slot=%d node_id=%d addr=%s state=%d repl=%d split_brain=%d\n",
@@ -2660,15 +2695,17 @@ int pcache_list_peers(struct dm_pcache *pcache, char *buf, size_t buflen)
 		if (sz >= (int)buflen)
 			break;
 	}
+	percpu_up_read(&pcache->net->peers_lock);
 	return sz;
 }
 
 int pcache_net_force_resync(struct dm_pcache *pcache)
 {
+	struct pcache_network *net = pcache->net;
 	struct pcache_peer *peer;
 	int slot, kicked = 0;
 
-	if (!pcache->net)
+	if (!net)
 		return -ENOTCONN;
 
 	spin_lock(&pcache->gen_lock);
@@ -2678,8 +2715,11 @@ int pcache_net_force_resync(struct dm_pcache *pcache)
 	}
 	spin_unlock(&pcache->gen_lock);
 
-	/* Phase 3.5 — set FULL_SYNC_NEEDED on EVERY peer's bm + drop sockets. */
-	for_each_active_peer(pcache->net, peer, slot) {
+	/* Phase 3.5 — set FULL_SYNC_NEEDED on EVERY peer's bm + drop sockets.
+	 * Write side: this mutates peer state and tears down sockets, so it
+	 * must exclude the fan-out readers as well as add/remove-peer. */
+	percpu_down_write(&net->peers_lock);
+	for_each_active_peer(net, peer, slot) {
 		if (peer->bm) {
 			spin_lock(&peer->bm->lock);
 			peer->bm->flags |= PCACHE_BM_F_FULL_SYNC_NEEDED;
@@ -2691,6 +2731,7 @@ int pcache_net_force_resync(struct dm_pcache *pcache)
 			kicked++;
 		}
 	}
+	percpu_up_write(&net->peers_lock);
 
 	pcache_dev_info(pcache,
 		"force-resync requested: gen=%llu full_sync flagged on all peers; %d socket(s) dropped\n",
@@ -2707,12 +2748,12 @@ void pcache_mark_all_peers_dirty(struct dm_pcache *pcache, u64 sector, u32 size)
 	if (!pcache->net)
 		return;
 
-	mutex_lock(&pcache->net->peers_lock);
+	percpu_down_read(&pcache->net->peers_lock);
 	for_each_active_peer(pcache->net, peer, slot) {
 		if (peer->bm)
 			pcache_bm_set_range(peer->bm, sector, size);
 	}
-	mutex_unlock(&pcache->net->peers_lock);
+	percpu_up_read(&pcache->net->peers_lock);
 }
 
 /*
@@ -2749,7 +2790,7 @@ int pcache_net_submit_write(struct dm_pcache *pcache,
 	if (!net)
 		return -ENOTCONN;
 
-	mutex_lock(&net->peers_lock);
+	percpu_down_read(&net->peers_lock);
 	for_each_active_peer(net, peer, slot) {
 		struct pcache_stream *st;
 		u32 s;
@@ -2763,7 +2804,17 @@ int pcache_net_submit_write(struct dm_pcache *pcache,
 			continue;
 		}
 
-		req = mempool_alloc(net->req_pool, GFP_NOIO);
+		/*
+		 * GFP_NOWAIT, not GFP_NOIO: this runs under peers_lock on the
+		 * write hot path, and a blocking mempool_alloc() would pin the
+		 * device-wide lock until an ACK returns an element, stalling
+		 * add/remove-peer and every other replicated write behind one
+		 * memory-starved bio. mempool still hands out its reserve for a
+		 * non-blocking request and only fails once that is exhausted --
+		 * at which point skipping this peer (bitmap marked dirty, next
+		 * resync covers the range) beats sleeping here.
+		 */
+		req = mempool_alloc(net->req_pool, GFP_NOWAIT);
 		if (!req) {
 			if (peer->bm)
 				pcache_bm_set_range(peer->bm, sector, size);
@@ -2819,7 +2870,7 @@ int pcache_net_submit_write(struct dm_pcache *pcache,
 		wake_up(&st->wait_for_work);
 		enqueued++;
 	}
-	mutex_unlock(&net->peers_lock);
+	percpu_up_read(&net->peers_lock);
 
 	(void)any_skipped;
 
@@ -2854,13 +2905,20 @@ int pcache_net_submit_flush(struct dm_pcache *pcache,
 	if (!net)
 		return -ENOTCONN;
 
-	mutex_lock(&net->peers_lock);
+	percpu_down_read(&net->peers_lock);
 	for_each_active_peer(net, peer, slot) {
 		struct pcache_stream *st = &peer->streams[0];
 
 		if (peer->state != PCACHE_C_CONNECTED)
 			continue;	/* will resync from its dirty bitmap */
 
+		/*
+		 * Unlike the write fan-out this keeps GFP_NOIO: a skipped
+		 * write is recovered by the dirty bitmap, but a skipped flush
+		 * has no such fallback -- the peer would keep unflushed ksets
+		 * while the user's fsync reported success. Flushes are rare
+		 * enough that blocking here is the cheaper trade.
+		 */
 		req = mempool_alloc(net->req_pool, GFP_NOIO);
 		if (!req)
 			continue;
@@ -2890,7 +2948,7 @@ int pcache_net_submit_flush(struct dm_pcache *pcache,
 		wake_up(&st->wait_for_work);
 		enqueued++;
 	}
-	mutex_unlock(&net->peers_lock);
+	percpu_up_read(&net->peers_lock);
 
 	if (enqueued == 0)
 		return -ENOTCONN;

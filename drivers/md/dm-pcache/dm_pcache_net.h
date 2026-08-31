@@ -7,6 +7,7 @@
 #include <linux/spinlock.h>
 #include <linux/completion.h>
 #include <linux/mempool.h>
+#include <linux/percpu-rwsem.h>
 #include <linux/slab.h>
 #include "cache_dev.h"
 #include "dm_pcache_protocol.h"
@@ -86,14 +87,11 @@ struct pcache_stream {
 
 struct pcache_peer {
 	struct dm_pcache	*pcache;
-	struct socket		*listen_sock;
 	enum pcache_conn_state	state;
 	enum pcache_repl_state	repl_state;	/* Phase 2 — data sync sub-state */
 
 	int			nr_streams;
 	struct pcache_stream	streams[PCACHE_MAX_STREAMS];
-
-	wait_queue_head_t	wait_for_listen;
 
 	char			remote_addr[64];
 	int			node_id;
@@ -120,8 +118,16 @@ struct pcache_network {
 	 * legacy dmsetup-table single-peer path (peers[0]). Index in this
 	 * array matches the bitmap slot index in the registry. */
 	struct pcache_peer	*peers[PCACHE_BM_MAX_PEERS];
-	struct mutex		peers_lock;	/* protects add/remove of peers[] */
-	struct mutex		connection_mutex;
+	/*
+	 * Protects the peers[] slots against add/remove. Read side is taken by
+	 * every replicated write (quorum check + fan-out) as well as by the
+	 * status/message readers, so it must scale; the write side is only
+	 * taken by the rare administrative paths (add/remove-peer, set-role,
+	 * accept dispatch, teardown) which can afford percpu_down_write()'s
+	 * RCU grace period. A peer struct is only freed under the write side,
+	 * so a read-side holder may safely dereference peers[slot].
+	 */
+	struct percpu_rw_semaphore peers_lock;
 	u32			protocol_version;
 	atomic_t		stopping;
 	struct kmem_cache	*req_cache;
@@ -135,9 +141,10 @@ struct pcache_network {
 };
 
 /*
- * Iterate over every populated peer slot. Safe during ctr/dtr or any path
- * that knows no concurrent peer add/remove can occur (Step 2 baseline).
- * Step 4 introduces an RCU-protected variant for runtime add/remove.
+ * Iterate over every populated peer slot. The caller MUST hold net->peers_lock
+ * (read side is enough to keep every visited peer alive; the write side is
+ * required to install or remove a slot). Iterating without it races with
+ * remove-peer freeing the struct out from under the loop.
  */
 #define for_each_active_peer(net, _peer, _slot)				\
 	for ((_slot) = 0; (_slot) < PCACHE_BM_MAX_PEERS; (_slot)++)	\
