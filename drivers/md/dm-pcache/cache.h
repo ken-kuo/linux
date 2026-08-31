@@ -375,6 +375,7 @@ void pcache_cache_gc_fn(struct work_struct *work);
 void cache_writeback_exit(struct pcache_cache *cache);
 int cache_writeback_init(struct pcache_cache *cache);
 void cache_writeback_fn(struct work_struct *work);
+int pcache_cache_writeback_all(struct pcache_cache *cache, unsigned int timeout_ms);
 
 /* inline functions */
 static inline struct pcache_cache_subtree *get_subtree(struct pcache_cache_tree *cache_tree, u64 off)

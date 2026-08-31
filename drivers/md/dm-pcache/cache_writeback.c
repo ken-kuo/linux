@@ -74,6 +74,58 @@ static inline bool is_cache_clean(struct pcache_cache *cache, struct pcache_cach
 	return false;
 }
 
+/*
+ * Drain every dirty key down to the backing device and wait for it.
+ *
+ * pcache_cache_flush() only closes the open ksets, i.e. it persists *metadata*
+ * to PMEM; the data itself stays in the cache until the writeback worker walks
+ * the log from dirty_tail and pushes it to backing. Any caller that intends to
+ * read current content straight off the backing device -- resync is the one
+ * that does -- must wait for that to happen, or it reads stale blocks.
+ *
+ * Kicks the writeback worker and polls until dirty_tail has caught up with
+ * key_head. Returns 0 when the cache is clean, -ETIMEDOUT if it did not settle
+ * in @timeout_ms, or -EIO if the device is being torn down.
+ *
+ * Context: sleeps. Must not be called from the writeback worker itself, and the
+ * caller must hold neither writeback_lock nor dirty_tail_lock.
+ */
+int pcache_cache_writeback_all(struct pcache_cache *cache, unsigned int timeout_ms)
+{
+	struct dm_pcache *pcache = CACHE_TO_PCACHE(cache);
+	struct pcache_cache_pos dirty_tail;
+	unsigned long deadline = jiffies + msecs_to_jiffies(timeout_ms);
+	bool clean;
+
+	for (;;) {
+		if (pcache_is_stopping(pcache))
+			return -EIO;
+
+		/*
+		 * is_cache_clean() parses into cache->wb_kset_onmedia_buf, which
+		 * the writeback worker also uses, so take writeback_lock for the
+		 * check. Same order as cache_writeback_fn (writeback_lock then
+		 * dirty_tail_lock), and released before sleeping so the worker
+		 * can make progress.
+		 */
+		mutex_lock(&cache->writeback_lock);
+		mutex_lock(&cache->dirty_tail_lock);
+		cache_pos_copy(&dirty_tail, &cache->dirty_tail);
+		mutex_unlock(&cache->dirty_tail_lock);
+		clean = is_cache_clean(cache, &dirty_tail);
+		mutex_unlock(&cache->writeback_lock);
+
+		if (clean)
+			return 0;
+
+		if (time_after(jiffies, deadline))
+			return -ETIMEDOUT;
+
+		mod_delayed_work(cache_get_wq(cache), &cache->writeback_work, 0);
+		schedule_timeout_uninterruptible(HZ / 50);
+	}
+}
+
 void cache_writeback_exit(struct pcache_cache *cache)
 {
 	cancel_delayed_work_sync(&cache->writeback_work);

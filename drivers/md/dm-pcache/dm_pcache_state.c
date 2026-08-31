@@ -863,6 +863,12 @@ static int pcache_primary_receiver(void *arg)
 #define PCACHE_RS_BITS_PER_CHUNK	64u	/* 64 bits × 4 KiB = 256 KiB */
 #define PCACHE_RS_CHUNK_SIZE		(PCACHE_RS_BITS_PER_CHUNK * PCACHE_BM_BLOCK_SIZE)
 #define PCACHE_RS_CHUNK_PAGES		(PCACHE_RS_CHUNK_SIZE / PAGE_SIZE)
+/* Upper bound on waiting for writeback to drain before a resync read. Generous:
+ * the drain competes with application writes, and timing out aborts the resync
+ * (which then retries) rather than shipping stale data. */
+#define PCACHE_RS_WRITEBACK_TIMEOUT_MS	30000u
+/* Sweeps over the dirty bitmap before giving up on catching a live writer. */
+#define PCACHE_RS_MAX_PASSES		8u
 
 static int pcache_send_pages_inline(struct socket *sock, struct page **pages,
 				    u32 nr_pages, u32 total_size)
@@ -912,7 +918,9 @@ static int pcache_do_resync(struct pcache_peer *peer, struct socket *sock,
 	struct block_device *backing_bdev;
 	struct page **pages = NULL;
 	u64 cursor = 0;
+	u64 dirty_prev = 0;
 	u32 nr_bits;
+	u32 pass;
 	int ret = 0;
 	u32 i;
 
@@ -929,11 +937,24 @@ static int pcache_do_resync(struct pcache_peer *peer, struct socket *sock,
 		pcache_bm_set_all(bm);
 	}
 
-	/* Flush PMEM cache → backing so we can read the latest data from the
-	 * backing device during resync. */
+	/*
+	 * This loop reads the payload straight off the *backing* device, so
+	 * every dirty key has to be down there first. pcache_cache_flush() is
+	 * not enough on its own -- it closes the open ksets, which persists
+	 * metadata to PMEM but leaves the data in the cache -- so follow it
+	 * with an actual writeback drain. Skipping this ships stale backing
+	 * blocks, gets them ACKed, clears the dirty bits and reports
+	 * "resync done (dirty=0)" while the two nodes hold different data.
+	 */
 	ret = pcache_cache_flush(&pcache->cache);
 	if (ret) {
 		pcache_err("primary: cache_flush failed before resync: %d\n", ret);
+		return ret;
+	}
+	ret = pcache_cache_writeback_all(&pcache->cache,
+					 PCACHE_RS_WRITEBACK_TIMEOUT_MS);
+	if (ret) {
+		pcache_err("primary: writeback drain before resync failed: %d\n", ret);
 		return ret;
 	}
 
@@ -951,84 +972,141 @@ static int pcache_do_resync(struct pcache_peer *peer, struct socket *sock,
 	pcache_info("primary: resync starting (dirty=%llu / %llu bits)\n",
 		    pcache_bm_dirty_count(bm), bm->nr_bits);
 
-	while (!kthread_should_stop() &&
-	       pcache_bm_find_next_dirty(bm, &cursor, &nr_bits,
-					 PCACHE_RS_BITS_PER_CHUNK)) {
-		u64 sector = cursor * PCACHE_BM_SECTORS_PER_BIT;
-		u32 size   = nr_bits * PCACHE_BM_BLOCK_SIZE;
-		u32 nr_pages = DIV_ROUND_UP(size, PAGE_SIZE);
-		u64 block_id;
-		struct bio *rbio;
-		struct pcache_packet_header rh, ah;
-		struct pcache_rs_data_pkt rs;
-		u8 buf[sizeof(rh) + sizeof(rs)];
+	/*
+	 * Sweep repeatedly. The cursor only moves forward, so a range that an
+	 * application write re-dirties behind it would otherwise never be
+	 * revisited -- and the mark_synced below would then declare the peer
+	 * up to date while it is still owed that data. Each pass restarts at
+	 * bit 0 and the loop stops when a pass makes no progress, so a writer
+	 * faster than the resync cannot spin here forever; leftover bits stay
+	 * set and are simply owed to the next resync.
+	 */
+	for (pass = 0; pass < PCACHE_RS_MAX_PASSES; pass++) {
+		u64 dirty_before = pcache_bm_dirty_count(bm);
 
-		/* 1. Read this dirty range from backing into our page array. */
-		rbio = bio_alloc(backing_bdev, nr_pages, REQ_OP_READ, GFP_NOIO);
-		if (!rbio) {
-			ret = -ENOMEM;
-			goto out_free;
-		}
-		rbio->bi_iter.bi_sector = sector;
-		for (i = 0; i < nr_pages; i++) {
-			u32 page_len = min_t(u32, PAGE_SIZE,
-					     size - i * PAGE_SIZE);
-			if (!bio_add_page(rbio, pages[i], page_len, 0)) {
-				bio_put(rbio);
-				pcache_err("primary: bio_add_page failed\n");
-				ret = -EIO;
+		if (!dirty_before)
+			break;
+		if (pass && dirty_before >= dirty_prev)
+			break;		/* no progress -- stop chasing the writer */
+		dirty_prev = dirty_before;
+		cursor = 0;
+
+		while (!kthread_should_stop() &&
+		       pcache_bm_find_next_dirty(bm, &cursor, &nr_bits,
+						 PCACHE_RS_BITS_PER_CHUNK)) {
+			u64 sector = cursor * PCACHE_BM_SECTORS_PER_BIT;
+			u32 size   = nr_bits * PCACHE_BM_BLOCK_SIZE;
+			u32 nr_pages = DIV_ROUND_UP(size, PAGE_SIZE);
+			u64 block_id;
+			struct bio *rbio;
+			struct pcache_packet_header rh, ah;
+			struct pcache_rs_data_pkt rs;
+			u8 buf[sizeof(rh) + sizeof(rs)];
+
+			/*
+			 * Clear the range *before* reading it, not after the ACK.
+			 * Application writes keep landing while the resync runs -- below
+			 * ESTABLISHED they are not replicated, they only re-dirty the
+			 * bitmap -- and clearing afterwards wipes the bits belonging to
+			 * any write that arrived after the read, so that data is never
+			 * sent to the peer and never marked as owed either. Clearing
+			 * first means such a write re-dirties the range and a later
+			 * iteration picks it up; the loop only ends once no dirty bit
+			 * is left. On failure the range is restored below.
+			 */
+			pcache_bm_clear_range(bm, sector, size);
+
+			/*
+			 * The pre-loop drain only covers the first chunk, since those
+			 * same writes keep re-dirtying the cache. Keep it clean per
+			 * chunk -- when it already is, this costs one PMEM kset read.
+			 */
+			ret = pcache_cache_writeback_all(&pcache->cache,
+							 PCACHE_RS_WRITEBACK_TIMEOUT_MS);
+			if (ret) {
+				pcache_err("primary: writeback drain during resync failed: %d\n", ret);
+				pcache_bm_set_range(bm, sector, size);  /* undo the pre-clear */
 				goto out_free;
 			}
+
+			/* 1. Read this dirty range from backing into our page array. */
+			rbio = bio_alloc(backing_bdev, nr_pages, REQ_OP_READ, GFP_NOIO);
+			if (!rbio) {
+				ret = -ENOMEM;
+				pcache_bm_set_range(bm, sector, size);  /* undo the pre-clear */
+				goto out_free;
+			}
+			rbio->bi_iter.bi_sector = sector;
+			for (i = 0; i < nr_pages; i++) {
+				u32 page_len = min_t(u32, PAGE_SIZE,
+						     size - i * PAGE_SIZE);
+				if (!bio_add_page(rbio, pages[i], page_len, 0)) {
+					bio_put(rbio);
+					pcache_err("primary: bio_add_page failed\n");
+					ret = -EIO;
+					pcache_bm_set_range(bm, sector, size);  /* undo the pre-clear */
+					goto out_free;
+				}
+			}
+			ret = submit_bio_wait(rbio);
+			bio_put(rbio);
+			if (ret) {
+				pcache_err("primary: resync read failed sector=%llu size=%u ret=%d\n",
+					   sector, size, ret);
+				pcache_bm_set_range(bm, sector, size);  /* undo the pre-clear */
+				goto out_free;
+			}
+
+			/* 2. Send P_RS_DATA header + payload. */
+			block_id = (u64)atomic64_inc_return(&peer->streams[0].next_block_id);
+			memset(&rh, 0, sizeof(rh));
+			rh.type     = cpu_to_le16(PCACHE_P_RS_DATA);
+			rh.length   = cpu_to_le16(sizeof(rs));
+			rh.sector   = cpu_to_le64(sector);
+			rh.block_id = cpu_to_le64(block_id);
+			rh.size     = cpu_to_le32(size);
+			rs.start_bit = cpu_to_le64(cursor);
+			rs.nr_bits   = cpu_to_le32(nr_bits);
+			rs.size      = cpu_to_le32(size);
+			rs.block_id  = cpu_to_le64(block_id);
+			memcpy(buf, &rh, sizeof(rh));
+			memcpy(buf + sizeof(rh), &rs, sizeof(rs));
+			ret = pcache_send_all(sock, buf, sizeof(buf));
+			if (ret) {
+				pcache_bm_set_range(bm, sector, size);  /* undo the pre-clear */
+				goto out_free;
+			}
+
+			ret = pcache_send_pages_inline(sock, pages, nr_pages, size);
+			if (ret) {
+				pcache_bm_set_range(bm, sector, size);  /* undo the pre-clear */
+				goto out_free;
+			}
+
+			/* 3. Wait for P_RS_ACK. */
+			ret = pcache_recv_all(sock, &ah, sizeof(ah));
+			if (ret) {
+				pcache_bm_set_range(bm, sector, size);  /* undo the pre-clear */
+				goto out_free;
+			}
+			if (le16_to_cpu(ah.type) != PCACHE_P_RS_ACK ||
+			    le64_to_cpu(ah.block_id) != block_id) {
+				pcache_err("primary: bad RS_ACK type=%u block_id=%llu expected=%llu\n",
+					   le16_to_cpu(ah.type),
+					   le64_to_cpu(ah.block_id), block_id);
+				ret = -EPROTO;
+				pcache_bm_set_range(bm, sector, size);  /* undo the pre-clear */
+				goto out_free;
+			}
+
+			/* 4. Range was cleared before the read (see above). */
+			cursor += nr_bits;
 		}
-		ret = submit_bio_wait(rbio);
-		bio_put(rbio);
-		if (ret) {
-			pcache_err("primary: resync read failed sector=%llu size=%u ret=%d\n",
-				   sector, size, ret);
-			goto out_free;
-		}
-
-		/* 2. Send P_RS_DATA header + payload. */
-		block_id = (u64)atomic64_inc_return(&peer->streams[0].next_block_id);
-		memset(&rh, 0, sizeof(rh));
-		rh.type     = cpu_to_le16(PCACHE_P_RS_DATA);
-		rh.length   = cpu_to_le16(sizeof(rs));
-		rh.sector   = cpu_to_le64(sector);
-		rh.block_id = cpu_to_le64(block_id);
-		rh.size     = cpu_to_le32(size);
-		rs.start_bit = cpu_to_le64(cursor);
-		rs.nr_bits   = cpu_to_le32(nr_bits);
-		rs.size      = cpu_to_le32(size);
-		rs.block_id  = cpu_to_le64(block_id);
-		memcpy(buf, &rh, sizeof(rh));
-		memcpy(buf + sizeof(rh), &rs, sizeof(rs));
-		ret = pcache_send_all(sock, buf, sizeof(buf));
-		if (ret)
-			goto out_free;
-
-		ret = pcache_send_pages_inline(sock, pages, nr_pages, size);
-		if (ret)
-			goto out_free;
-
-		/* 3. Wait for P_RS_ACK. */
-		ret = pcache_recv_all(sock, &ah, sizeof(ah));
-		if (ret)
-			goto out_free;
-		if (le16_to_cpu(ah.type) != PCACHE_P_RS_ACK ||
-		    le64_to_cpu(ah.block_id) != block_id) {
-			pcache_err("primary: bad RS_ACK type=%u block_id=%llu expected=%llu\n",
-				   le16_to_cpu(ah.type),
-				   le64_to_cpu(ah.block_id), block_id);
-			ret = -EPROTO;
-			goto out_free;
-		}
-
-		/* 4. Clear bitmap range. */
-		pcache_bm_clear_range(bm, sector, size);
-		cursor += nr_bits;
 	}
 
 	if (!kthread_should_stop()) {
+		u64 left = pcache_bm_dirty_count(bm);
+
 		struct pcache_packet_header done = {
 			.type   = cpu_to_le16(PCACHE_P_BITMAP_DONE),
 			.length = 0,
@@ -1037,9 +1115,19 @@ static int pcache_do_resync(struct pcache_peer *peer, struct socket *sock,
 		if (ret)
 			goto out_free;
 
-		pcache_bm_mark_synced(bm, peer_gen);
-		pcache_info("primary: resync done (dirty=%llu)\n",
-			    pcache_bm_dirty_count(bm));
+		/*
+		 * Only claim the peer is in sync when nothing is still owed.
+		 * mark_synced records peer_gen and clears the device-level
+		 * gen_dirty; doing that with dirty bits left would tell the
+		 * next handshake the two sides agree when they do not.
+		 */
+		if (!left) {
+			pcache_bm_mark_synced(bm, peer_gen);
+			pcache_info("primary: resync done (dirty=0)\n");
+		} else {
+			pcache_info("primary: resync incomplete, %llu bit(s) still owed (writer outran resync); left dirty for the next pass\n",
+				    left);
+		}
 	}
 
 out_free:
