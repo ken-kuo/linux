@@ -1332,7 +1332,13 @@ static void pcache_data_stream_stop(struct pcache_stream *st)
 
 	/* Detach + drop the install ref (refcount frees the socket). */
 	pcache_conn_drop(st);
-	pcache_flush_stream(st, -EIO);
+	/*
+	 * Success, not -EIO: the payload is already committed to the local
+	 * cache and pcache_flush_stream marks the range dirty, so losing this
+	 * data stream costs a resync, not the user's write. Matches the
+	 * control stream's link-death flush in pcache_primary_receiver.
+	 */
+	pcache_flush_stream(st, 0);
 }
 
 /*
@@ -1409,6 +1415,24 @@ connect:
 		conn = NULL;
 		sock = NULL;
 		pcache_conn_drop(cst);
+
+		/*
+		 * Nothing drains streams[0]->pending_list outside the
+		 * ESTABLISHED loop further down, so anything still queued here
+		 * -- enqueued in the window between "socket connected" and a
+		 * failed negotiation, or racing our exit from ESTABLISHED --
+		 * stalls until the next successful negotiation, and forever if
+		 * negotiation never succeeds (split-brain HALT, asymmetric peer
+		 * config). Complete them locally with success: the data is
+		 * already committed to the local cache and pcache_flush_stream
+		 * marks the range dirty, so the resync covers this peer.
+		 *
+		 * Safe to flush from this thread (invariant 1): the data-stream
+		 * threads were just stopped by pcache_data_streams_down(),
+		 * streams[0]'s receiver was stopped just above, and this thread
+		 * *is* streams[0]'s sender.
+		 */
+		pcache_flush_stream(cst, 0);
 
 		if (initiator) {
 			ret = pcache_create_peer_socket(peer);
@@ -1702,7 +1726,14 @@ exit:
 	conn = NULL;
 	sock = NULL;
 	pcache_conn_drop(cst);
-	pcache_flush_pending(peer, -EIO);
+	/*
+	 * This exit is only reached via kthread_should_stop(), i.e. remove-peer,
+	 * set-role, resolve-split-brain or device teardown. In every one of
+	 * those the write is already durable in the local cache and its range
+	 * is marked dirty, so complete the bios with success -- an operator
+	 * action must not surface as filesystem I/O errors.
+	 */
+	pcache_flush_pending(peer, 0);
 	return 0;
 }
 
@@ -2199,6 +2230,25 @@ void pcache_net_stop(struct dm_pcache *pcache)
 	pcache->net = NULL;
 }
 
+/*
+ * May this peer receive replicated writes right now?
+ *
+ * A live socket is not enough. streams[0]->pending_list is only drained from
+ * inside pcache_primary_worker's ESTABLISHED loop, so a req enqueued while the
+ * peer is still connecting, handshaking, exchanging sync-params or running a
+ * resync just sits there until negotiation completes. Requiring ESTABLISHED
+ * sends those writes down the no-peer path instead, where the dirty bitmap
+ * records them and the resync delivers them -- which is what the bitmap is for.
+ *
+ * This is the preventive half; pcache_primary_worker also flushes the control
+ * stream on its way back to connect: to catch reqs that raced the transition.
+ */
+static bool pcache_peer_can_replicate(struct pcache_peer *peer)
+{
+	return peer->state == PCACHE_C_CONNECTED &&
+	       peer->repl_state == PCACHE_R_ESTABLISHED;
+}
+
 bool pcache_peer_connected(struct dm_pcache *pcache)
 {
 	struct pcache_network *net = pcache->net;
@@ -2209,16 +2259,15 @@ bool pcache_peer_connected(struct dm_pcache *pcache)
 	if (!net)
 		return false;
 
-	/* Step 2: "connected" means at least one populated peer slot is
-	 * currently connected. This already matches the multi-peer fan-out
-	 * semantic (we only suppress the offline-bitmap-dirty branch when
-	 * we have somebody to replicate to).
+	/* "Connected" here means "at least one peer we can replicate to" --
+	 * it selects the replicated fast path in pcache_submit_req, so it must
+	 * match the fan-out's own eligibility test exactly.
 	 *
 	 * The read side is what keeps a concurrent remove-peer from freeing
 	 * the peer between the slot load and the peer->state read. */
 	percpu_down_read(&net->peers_lock);
 	for_each_active_peer(net, peer, slot) {
-		if (peer->state == PCACHE_C_CONNECTED) {
+		if (pcache_peer_can_replicate(peer)) {
 			connected = true;
 			break;
 		}
@@ -2659,7 +2708,16 @@ int pcache_remove_peer(struct dm_pcache *pcache, u32 peer_node_id)
 		kthread_stop(peer->streams[0].receiver);
 		peer->streams[0].receiver = NULL;
 	}
-	pcache_flush_pending(peer, -EIO);
+	/*
+	 * Complete in-flight replicated writes with success, not -EIO.
+	 * remove-peer is an explicit operator action meaning "stop replicating
+	 * to this node"; the data is already committed to the local cache, so
+	 * failing a user bio that happened to be in flight turns an
+	 * administrative command into filesystem I/O errors. Writes issued
+	 * after this point are fenced by the quorum check in dm_pcache_map_bio
+	 * if the operator configured one.
+	 */
+	pcache_flush_pending(peer, 0);
 	pcache_peer_bitmap_exit(peer);
 	/* Unpublish before freeing (see pcache_net_stop). */
 	net->peers[slot] = NULL;
@@ -2795,9 +2853,12 @@ int pcache_net_submit_write(struct dm_pcache *pcache,
 		struct pcache_stream *st;
 		u32 s;
 
-		if (peer->state != PCACHE_C_CONNECTED) {
+		if (!pcache_peer_can_replicate(peer)) {
 			/* Phase 3.5 — mark THIS peer's bitmap so its next
-			 * resync covers the range. */
+			 * resync covers the range. Also covers a peer that is
+			 * connected but still negotiating: nothing would drain
+			 * its pending_list yet, so the bitmap is the right
+			 * carrier for this write. */
 			if (peer->bm)
 				pcache_bm_set_range(peer->bm, sector, size);
 			any_skipped = true;
@@ -2909,7 +2970,7 @@ int pcache_net_submit_flush(struct dm_pcache *pcache,
 	for_each_active_peer(net, peer, slot) {
 		struct pcache_stream *st = &peer->streams[0];
 
-		if (peer->state != PCACHE_C_CONNECTED)
+		if (!pcache_peer_can_replicate(peer))
 			continue;	/* will resync from its dirty bitmap */
 
 		/*
