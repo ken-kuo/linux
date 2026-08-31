@@ -644,12 +644,25 @@ wait_sock:
 			pcache_dev_err(peer->pcache,
 				"split-brain detected for peer node_id=%d; halted (run dmsetup message resolve-split-brain to recover)\n",
 				peer->node_id);
+			/*
+			 * Release the socket *before* parking, not after. The
+			 * put/drop used to sit below the loop, which only runs
+			 * on kthread_stop -- so for the entire time we sat in
+			 * HALT the stream still had a conn installed, and the
+			 * accept thread rejected every reconnect from the peer
+			 * as "already connected; drop dup". The peer saw only
+			 * ECONNRESET out of sync_params, forever, with no way
+			 * to learn that this side had declared a split-brain.
+			 */
+			peer->state = PCACHE_C_CONNECTING;
+			pcache_conn_put(conn);
+			conn = NULL;
+			sock = NULL;
+			pcache_conn_drop(cst);
 			while (!kthread_should_stop()) {
 				set_current_state(TASK_INTERRUPTIBLE);
 				schedule_timeout(HZ);
 			}
-		pcache_conn_drop(cst);
-		pcache_conn_put(conn);
 			return 0;
 		} else if (role == PCACHE_R_SYNC_TARGET) {
 			pcache_set_repl_state(peer, PCACHE_R_SYNC_TARGET);
@@ -1609,6 +1622,19 @@ connect:
 				pcache_dev_err(peer->pcache,
 					"split-brain detected for peer node_id=%d; halted\n",
 					peer->node_id);
+				/*
+				 * Let the socket go. Replication is stopped
+				 * either way, and sitting on an installed conn
+				 * that nobody services makes the accept thread
+				 * reject the peer's reconnects as duplicates --
+				 * the peer then only ever sees ECONNRESET out
+				 * of sync_params and never learns why.
+				 */
+				peer->state = PCACHE_C_CONNECTING;
+				pcache_conn_put(conn);
+				conn = NULL;
+				sock = NULL;
+				pcache_conn_drop(cst);
 				while (!kthread_should_stop()) {
 					set_current_state(TASK_INTERRUPTIBLE);
 					schedule_timeout(HZ);
@@ -2038,6 +2064,14 @@ static int pcache_accept_thread(void *arg)
 			sock_release(sock);
 			continue;
 		}
+		if (peer->split_brain) {
+			percpu_up_write(&net->peers_lock);
+			pcache_dev_err(pcache,
+				"accept: peer node_id=%d is halted on split-brain; refusing (run dmsetup message resolve-split-brain)\n",
+				peer_node_id);
+			sock_release(sock);
+			continue;
+		}
 		if (stream_id < 0 || stream_id >= peer->nr_streams) {
 			percpu_up_write(&net->peers_lock);
 			pcache_dev_err(pcache,
@@ -2387,6 +2421,7 @@ int pcache_add_peer(struct dm_pcache *pcache, u32 peer_node_id, const char *addr
 {
 	struct pcache_network *net = pcache->net;
 	struct pcache_peer *peer;
+	bool fresh_registration = false;
 	u64 gen;
 	int slot, ret;
 
@@ -2408,8 +2443,16 @@ int pcache_add_peer(struct dm_pcache *pcache, u32 peer_node_id, const char *addr
 			percpu_up_write(&net->peers_lock);
 			return -EEXIST;	/* already fully alive */
 		}
-		/* registry has slot but no in-memory peer — recreate it */
+		/* Registry still holds a live entry for this node -- the device
+		 * was recreated and we are re-attaching to the *same*
+		 * registration, so its persisted bitmap is still meaningful
+		 * (this is what makes the registry worth persisting at all). */
 	} else {
+		/* No live entry: either a first-time add or a re-add after
+		 * remove-peer. Either way the slot we are about to claim may
+		 * still hold a tombstoned peer's bitmap, which does not
+		 * describe this registration. */
+		fresh_registration = true;
 		gen = pcache->generation;
 		ret = pcache_registry_add(pcache->registry, peer_node_id, addr,
 					  gen, &slot);
@@ -2430,7 +2473,8 @@ int pcache_add_peer(struct dm_pcache *pcache, u32 peer_node_id, const char *addr
 	}
 
 	/* Phase 3.5 — per-peer bitmap on its registry-assigned slot. */
-	ret = pcache_peer_bitmap_init(peer, pcache->backing_dev.dev_size, slot);
+	ret = pcache_peer_bitmap_init(peer, pcache->backing_dev.dev_size, slot,
+				      fresh_registration);
 	if (ret) {
 		pcache_free_peer(peer);
 		pcache_registry_remove(pcache->registry, peer_node_id);

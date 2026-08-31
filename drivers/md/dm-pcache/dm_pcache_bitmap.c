@@ -320,7 +320,7 @@ int pcache_bm_flush_sync(struct pcache_bitmap *bm)
  * with FULL_SYNC_NEEDED flagged.
  */
 int pcache_peer_bitmap_init(struct pcache_peer *peer, u64 backing_sectors,
-			    int slot_idx)
+			    int slot_idx, bool force_fresh)
 {
 	struct dm_pcache *pcache = peer->pcache;
 	struct pcache_cache_dev *cdev = &pcache->cache_dev;
@@ -380,7 +380,17 @@ int pcache_peer_bitmap_init(struct pcache_peer *peer, u64 backing_sectors,
 	spin_lock_init(&bm->lock);
 	atomic64_set(&bm->dirty_count, 0);
 
-	hdr = pcache_bm_header_load(bm, &hdr_buf, NULL);
+	/*
+	 * force_fresh: the caller just claimed this slot for a new registration
+	 * (add-peer after a remove-peer recycles a tombstoned slot, and the old
+	 * peer's bitmap is still sitting in that PMEM slot). Loading it would
+	 * resurrect generation bookkeeping that describes a relationship which
+	 * no longer exists -- decide_sync_role then sees the mutual-witness
+	 * condition broken and declares a split-brain that never happened.
+	 * Removing a peer destroys its dirty tracking, so on re-add we know
+	 * nothing about it: start clean and take the full sync.
+	 */
+	hdr = force_fresh ? NULL : pcache_bm_header_load(bm, &hdr_buf, NULL);
 	if (hdr && le64_to_cpu(hdr_buf.magic) == PCACHE_BM_MAGIC &&
 	    le64_to_cpu(hdr_buf.bm_nr_bits) == nr_bits &&
 	    le32_to_cpu(hdr_buf.bm_block_shift) == PCACHE_BM_BLOCK_SHIFT) {

@@ -78,7 +78,7 @@ struct pcache_bitmap {
 };
 
 int  pcache_peer_bitmap_init(struct pcache_peer *peer, u64 backing_sectors,
-			     int slot_idx);
+			     int slot_idx, bool force_fresh);
 void pcache_peer_bitmap_exit(struct pcache_peer *peer);
 
 void pcache_bm_set_range(struct pcache_bitmap *bm, u64 sector, u32 size);
