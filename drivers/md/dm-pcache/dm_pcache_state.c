@@ -393,14 +393,32 @@ static int pcache_handle_rs_data_recv(struct pcache_peer *peer,
 		goto free_data;
 
 	ret = pcache_net_write_to_cache(&pcache->cache, sector, data, size, false);
-	if (ret)
-		pcache_err("secondary: RS_DATA write_to_cache failed: %d\n", ret);
+	if (ret) {
+		/*
+		 * Do NOT acknowledge a chunk we failed to store. The ACK below
+		 * used to be sent unconditionally, so a failed resync write was
+		 * reported to the source as success: the source had already
+		 * cleared that range's dirty bits before reading it, so the
+		 * data was neither delivered nor still owed, and both sides
+		 * ended up believing they were in sync. Returning the error
+		 * instead drops the connection; the source's error path
+		 * restores the range (see pcache_do_resync) and the resync
+		 * resumes after the reconnect.
+		 *
+		 * DRBD signals this explicitly with P_RS_NEG_ACK. Failing the
+		 * connection gets the same safety without a protocol bump, at
+		 * the cost of redoing the chunks already in flight.
+		 */
+		pcache_err("secondary: RS_DATA write_to_cache failed: %d (sector=%llu size=%u) -- dropping connection rather than ACKing\n",
+			   ret, sector, size);
+		goto free_data;
+	}
 
 	/* Step 6 fix — clear the dirty bits we just brought into sync. Without
 	 * this, bits OR'd in during bilateral bitmap exchange (Step 6) would
 	 * stay set after resync, making sync_params at the next handshake see
 	 * Secondary as having unsynced data and decide HALT on gen mismatch. */
-	if (!ret && peer->bm)
+	if (peer->bm)
 		pcache_bm_clear_range(peer->bm, sector, size);
 
 	{
@@ -703,8 +721,20 @@ wait_sock:
 			break;
 		case PCACHE_P_RS_DATA:
 			ret = pcache_handle_rs_data_recv(peer, sock, &hdr);
-			if (ret)
-				pcache_err("secondary: RS_DATA recv failed: %d\n", ret);
+			if (ret) {
+				/*
+				 * Leave the loop, do not just log. We did not
+				 * ACK this chunk, so the source is now blocked
+				 * in its ACK read and would sit there for the
+				 * full 300 s socket timeout. Dropping the
+				 * connection here makes it fail immediately;
+				 * its error path restores the chunk's dirty
+				 * range and the resync resumes on reconnect.
+				 */
+				pcache_err("secondary: RS_DATA recv failed: %d -- dropping connection\n",
+					   ret);
+				goto out;
+			}
 			break;
 		case PCACHE_P_BITMAP_DONE:
 			/* Phase 2 Step 8: Primary finished sending resync.
@@ -754,9 +784,10 @@ wait_sock:
 		}
 	}
 
+out:
 	pcache_data_streams_down(peer);
-		pcache_conn_drop(cst);
-		pcache_conn_put(conn);
+	pcache_conn_drop(cst);
+	pcache_conn_put(conn);
 	return 0;
 }
 
