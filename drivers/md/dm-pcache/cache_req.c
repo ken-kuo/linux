@@ -937,7 +937,31 @@ int pcache_net_write_to_cache(struct pcache_cache *cache, u64 sector,
 			cache_seg_put(key->cache_pos.cache_seg);
 			cache_key_delete(key);
 			spin_unlock(&cache_subtree->tree_lock);
-			return ret;
+			if (ret != -EBUSY)
+				return ret;
+			/*
+			 * Cache full again, this time at kset-close: appending
+			 * filled the kset, and closing it needs a fresh segment
+			 * that get_cache_segment() could not hand out.
+			 *
+			 * pcache_wait_seg() above only backpressures the data
+			 * allocation, so this used to escape as -EBUSY, the
+			 * secondary NACKed, and the primary merely marked the
+			 * range dirty -- the write was silently downgraded from
+			 * "replicated" to "owed", and nothing pays that debt
+			 * while the connection stays up. Apply the same
+			 * backpressure instead: wait for a segment and redo
+			 * this chunk. io_done is untouched, and the undo above
+			 * already released the key and its reservation.
+			 */
+			if (pcache_is_stopping(CACHE_TO_PCACHE(cache)))
+				return -EIO;
+			wait_event_interruptible_timeout(
+				cache->seg_wait_wq,
+				!cache->cache_full ||
+				pcache_is_stopping(CACHE_TO_PCACHE(cache)),
+				HZ / 10);
+			continue;
 		}
 #if PCACHE_LAT_TRACE
 		b = ktime_get_ns(); t_append += b - a;
