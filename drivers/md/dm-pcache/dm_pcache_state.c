@@ -2998,16 +2998,25 @@ int pcache_net_submit_write(struct dm_pcache *pcache,
 		}
 
 		/*
-		 * GFP_NOWAIT, not GFP_NOIO: this runs under peers_lock on the
-		 * write hot path, and a blocking mempool_alloc() would pin the
-		 * device-wide lock until an ACK returns an element, stalling
-		 * add/remove-peer and every other replicated write behind one
-		 * memory-starved bio. mempool still hands out its reserve for a
-		 * non-blocking request and only fails once that is exhausted --
-		 * at which point skipping this peer (bitmap marked dirty, next
-		 * resync covers the range) beats sleeping here.
+		 * Block rather than skip. This was GFP_NOWAIT for a while, on
+		 * the theory that sleeping under peers_lock would stall
+		 * add/remove-peer -- but the failure path marks the range dirty
+		 * and moves on, which silently downgrades the write from
+		 * "replicated" to "owed", and nothing drains that debt while the
+		 * connection stays up. Trading a rare admin-command delay for a
+		 * secondary that is quietly stale is the wrong way round.
+		 *
+		 * DRBD reaches the same conclusion for the same situation: when
+		 * buffer allocation exceeds max-buffers it throttles via
+		 * schedule_timeout instead of rejecting, and its comment in
+		 * drbd_alloc_pages() spells out why a hard limit is the worse
+		 * option. It only ever NEG_ACKs a peer write on a real I/O
+		 * error, never on being out of resources.
+		 *
+		 * peers_lock is a percpu_rwsem and this is its read side, so
+		 * sleeping here delays a pending writer but cannot deadlock.
 		 */
-		req = mempool_alloc(net->req_pool, GFP_NOWAIT);
+		req = mempool_alloc(net->req_pool, GFP_NOIO);
 		if (!req) {
 			if (peer->bm)
 				pcache_bm_set_range(peer->bm, sector, size);
