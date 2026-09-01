@@ -355,7 +355,24 @@ static void pcache_handle_ack(struct pcache_stream *stream,
 	}
 #endif
 
-	pcache_req_put(found->pcache_req, success ? 0 : -EIO);
+	/*
+	 * A NACK is not a user-visible I/O error. The peer could not store this
+	 * chunk, so we marked the range dirty above -- and the payload is
+	 * already committed to the local cache. That is exactly the state the
+	 * no-peer-connected path reports as success, and the same reasoning the
+	 * -ENOTCONN path in pcache_submit_req uses. Failing the bio here turns
+	 * "one replica fell behind" into an EIO the filesystem has to handle,
+	 * for a write that is durable and scheduled for resync.
+	 *
+	 * The exception is a configured quorum that has actually been lost;
+	 * refusing the write is then the fence doing its job.
+	 *
+	 * DRBD draws the same line: P_NEG_ACK marks the range out of sync and
+	 * pushes the peer's disk state below UpToDate, but the application
+	 * write still completes -- the local disk has the data.
+	 */
+	pcache_req_put(found->pcache_req,
+		       success || pcache_has_quorum(peer->pcache) ? 0 : -EIO);
 	pcache_pending_req_free(peer, found);
 }
 
