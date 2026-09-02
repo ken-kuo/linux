@@ -75,13 +75,26 @@ static inline bool is_cache_clean(struct pcache_cache *cache, struct pcache_cach
 }
 
 /*
- * Drain every dirty key down to the backing device and wait for it.
+ * Close the open ksets, then drain every dirty key down to the backing device
+ * and wait for it.
  *
- * pcache_cache_flush() only closes the open ksets, i.e. it persists *metadata*
- * to PMEM; the data itself stays in the cache until the writeback worker walks
- * the log from dirty_tail and pushes it to backing. Any caller that intends to
- * read current content straight off the backing device -- resync is the one
- * that does -- must wait for that to happen, or it reads stale blocks.
+ * Both halves are needed, and each is useless alone:
+ *
+ * - pcache_cache_flush() only closes the open ksets, i.e. it persists
+ *   *metadata* to PMEM; the data itself stays in the cache until the writeback
+ *   worker walks the log from dirty_tail and pushes it to backing.
+ * - The drain alone cannot see a key that is still sitting in an open kset.
+ *   is_cache_clean() decides by reading the kset at dirty_tail, and an open
+ *   kset has not been written yet, so a cache holding the newest writes reports
+ *   itself clean. cache_key_append() closes a kset when it fills up and
+ *   otherwise leaves it to a delayed work up to a second later, so under a
+ *   steady writer that window is open essentially all the time.
+ *
+ * Draining without flushing first therefore returns success while the newest
+ * writes are cache-only, and a caller that then reads the backing device gets
+ * stale blocks for a range it believes is current. Flushing here rather than in
+ * the caller keeps that impossible to get wrong: every caller of this function
+ * is about to read backing.
  *
  * Kicks the writeback worker and polls until dirty_tail has caught up with
  * key_head. Returns 0 when the cache is clean, -ETIMEDOUT if it did not settle
@@ -96,6 +109,11 @@ int pcache_cache_writeback_all(struct pcache_cache *cache, unsigned int timeout_
 	struct pcache_cache_pos dirty_tail;
 	unsigned long deadline = jiffies + msecs_to_jiffies(timeout_ms);
 	bool clean;
+	int ret;
+
+	ret = pcache_cache_flush(cache);
+	if (ret)
+		return ret;
 
 	for (;;) {
 		if (pcache_is_stopping(pcache))

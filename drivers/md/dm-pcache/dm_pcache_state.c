@@ -1027,18 +1027,13 @@ static int pcache_do_resync(struct pcache_peer *peer, struct socket *sock,
 
 	/*
 	 * This loop reads the payload straight off the *backing* device, so
-	 * every dirty key has to be down there first. pcache_cache_flush() is
-	 * not enough on its own -- it closes the open ksets, which persists
-	 * metadata to PMEM but leaves the data in the cache -- so follow it
-	 * with an actual writeback drain. Skipping this ships stale backing
-	 * blocks, gets them ACKed, clears the dirty bits and reports
-	 * "resync done (dirty=0)" while the two nodes hold different data.
+	 * every dirty key has to be down there first -- both the ones the
+	 * writeback worker has not reached yet and the ones still sitting in an
+	 * open kset. pcache_cache_writeback_all() covers both (it flushes before
+	 * it drains). Skipping this ships stale backing blocks, gets them ACKed,
+	 * clears the dirty bits and reports "resync done (dirty=0)" while the two
+	 * nodes hold different data.
 	 */
-	ret = pcache_cache_flush(&pcache->cache);
-	if (ret) {
-		pcache_err("primary: cache_flush failed before resync: %d\n", ret);
-		return ret;
-	}
 	ret = pcache_cache_writeback_all(&pcache->cache,
 					 PCACHE_RS_WRITEBACK_TIMEOUT_MS);
 	if (ret == -ETIMEDOUT) {
