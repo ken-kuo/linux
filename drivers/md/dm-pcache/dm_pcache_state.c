@@ -241,6 +241,27 @@ pcache_decide_sync_role(struct pcache_peer *peer,
 	if (peer_gen > my_gen && my_gen == peer_my_gen)
 		return PCACHE_R_SYNC_TARGET;
 
+	/*
+	 * An interrupted resync lands here and is not a split-brain. The source
+	 * bumped its generation and started sending; the target's
+	 * peer_gen_at_sync still trails because mark_synced never ran. Both
+	 * sides then report the same gen with a stale peer_gen_at_sync -- the
+	 * exact reciprocity failure the case below is meant to catch.
+	 *
+	 * RESYNC_IN_PROGRESS already records which side was mid-flight: it is
+	 * set in pcache_do_resync and cleared by mark_synced. It was simply
+	 * never consulted here, only on bitmap load after a crash. Resume in
+	 * the direction it names instead of halting.
+	 */
+	if (my_flags & PCACHE_BM_F_RESYNC_IN_PROGRESS) {
+		pcache_info("sync_params: resuming an interrupted resync (we were the source)\n");
+		return PCACHE_R_SYNC_SOURCE;
+	}
+	if (peer_flags & PCACHE_SP_F_RESYNC_IN_PROGRESS) {
+		pcache_info("sync_params: resuming an interrupted resync (peer was the source)\n");
+		return PCACHE_R_SYNC_TARGET;
+	}
+
 	/* Same gen but reciprocity broken, or unrelated chains — split-brain. */
 	pcache_err("sync_params: incompatible generations, halting replication\n");
 	return PCACHE_R_HALT;
@@ -267,6 +288,8 @@ static int pcache_exchange_sync_params(struct pcache_peer *peer,
 		my_nr_bits  = bm->nr_bits;
 		if (bm->flags & PCACHE_BM_F_FULL_SYNC_NEEDED)
 			my_flags |= PCACHE_SP_F_NEED_FULL;
+		if (bm->flags & PCACHE_BM_F_RESYNC_IN_PROGRESS)
+			my_flags |= PCACHE_SP_F_RESYNC_IN_PROGRESS;
 	}
 
 	if (initiator) {
@@ -1018,7 +1041,18 @@ static int pcache_do_resync(struct pcache_peer *peer, struct socket *sock,
 	}
 	ret = pcache_cache_writeback_all(&pcache->cache,
 					 PCACHE_RS_WRITEBACK_TIMEOUT_MS);
-	if (ret) {
+	if (ret == -ETIMEDOUT) {
+		/*
+		 * A writer busy enough to outrun writeback is a reason to make
+		 * no progress, not a reason to drop the connection. Each chunk
+		 * re-checks anyway, so fall through: the sweep either finds a
+		 * quiet moment or reports itself incomplete and leaves the bits
+		 * dirty. Returning an error here cost a reconnect instead, and
+		 * that reconnect used to be misread as a split-brain.
+		 */
+		pcache_info("primary: writeback drain timed out before resync; sweeping anyway\n");
+		ret = 0;
+	} else if (ret) {
 		pcache_err("primary: writeback drain before resync failed: %d\n", ret);
 		return ret;
 	}
@@ -1089,9 +1123,21 @@ static int pcache_do_resync(struct pcache_peer *peer, struct socket *sock,
 			ret = pcache_cache_writeback_all(&pcache->cache,
 							 PCACHE_RS_WRITEBACK_TIMEOUT_MS);
 			if (ret) {
-				pcache_err("primary: writeback drain during resync failed: %d\n", ret);
-				pcache_bm_set_range(bm, sector, size);  /* undo the pre-clear */
-				goto out_free;
+				/*
+				 * Cannot read backing for this chunk without
+				 * shipping stale data, and the range was already
+				 * cleared above. Put it back and stop sweeping:
+				 * the pass then makes no progress, so the loop
+				 * reports the resync incomplete and leaves the
+				 * debt on the bitmap -- honest, and repairable
+				 * by a later resync. Tearing the connection down
+				 * here helped nobody.
+				 */
+				pcache_bm_set_range(bm, sector, size);
+				pcache_info("primary: writeback drain stalled at sector %llu (%d); ending this sweep\n",
+					    sector, ret);
+				ret = 0;
+				goto sweep_done;
 			}
 
 			/* 1. Read this dirty range from backing into our page array. */
@@ -1169,6 +1215,7 @@ static int pcache_do_resync(struct pcache_peer *peer, struct socket *sock,
 		}
 	}
 
+sweep_done:
 	if (!kthread_should_stop()) {
 		u64 left = pcache_bm_dirty_count(bm);
 

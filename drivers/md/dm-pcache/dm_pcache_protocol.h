@@ -101,6 +101,13 @@ struct pcache_sync_params_pkt {
 } __packed;
 
 #define PCACHE_SP_F_NEED_FULL	BIT(0)	/* request full bitmap (fresh peer) */
+/*
+ * Sender was in the middle of a resync that never finished. Both sides then
+ * have the same device generation while peer_gen_at_sync still trails it, which
+ * is otherwise indistinguishable from a genuine split-brain -- the resync was
+ * interrupted, not the data diverged. Tells the receiver which way to resume.
+ */
+#define PCACHE_SP_F_RESYNC_IN_PROGRESS	BIT(1)
 
 /* Phase 2 — bitmap chunk in BITMAP_EXCHANGE phase */
 struct pcache_bitmap_pkt {
