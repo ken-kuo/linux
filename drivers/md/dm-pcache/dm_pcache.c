@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <linux/module.h>
+#include <linux/random.h>
 #include <linux/blkdev.h>
 #include <linux/bio.h>
 #include <linux/timekeeping.h>
@@ -12,6 +13,45 @@
 #include "dm_pcache_bitmap.h"
 #include "dm_pcache_registry.h"
 #include "dm_pcache_net.h"
+
+static int pcache_fault_rate;		/* percent; 0 disables everything */
+static unsigned int pcache_fault_types;	/* bitmask of PCACHE_FAULT_* */
+static unsigned int pcache_fault_count;	/* faults actually injected */
+
+module_param_named(fault_rate, pcache_fault_rate, int, 0644);
+MODULE_PARM_DESC(fault_rate, "Percent chance of injecting a fault at an enabled site (0 = off)");
+module_param_named(fault_types, pcache_fault_types, uint, 0644);
+MODULE_PARM_DESC(fault_types, "Bitmask of fault sites: 1=secondary data write, 2=secondary resync write");
+module_param_named(fault_count, pcache_fault_count, uint, 0444);
+MODULE_PARM_DESC(fault_count, "Number of faults injected so far (read-only)");
+
+static const char *pcache_fault_str(unsigned int type)
+{
+	switch (type) {
+	case PCACHE_FAULT_DATA_WRITE:	return "secondary data write";
+	case PCACHE_FAULT_RS_WRITE:	return "secondary resync write";
+	}
+	return "unknown";
+}
+
+/*
+ * True when this call site should pretend to fail. See the comment on
+ * PCACHE_FAULT_* in dm_pcache.h for why this exists.
+ */
+bool pcache_should_fail(unsigned int type)
+{
+	if (likely(!pcache_fault_rate))
+		return false;
+	if (!(pcache_fault_types & (1u << type)))
+		return false;
+	if ((get_random_u32() % 100) + 1 > (u32)pcache_fault_rate)
+		return false;
+
+	pcache_fault_count++;
+	pr_warn_ratelimited("dm-pcache: injecting %s failure (count=%u)\n",
+			    pcache_fault_str(type), pcache_fault_count);
+	return true;
+}
 
 void pcache_defer_reqs_kick(struct dm_pcache *pcache)
 {

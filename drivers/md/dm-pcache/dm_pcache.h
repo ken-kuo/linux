@@ -109,6 +109,26 @@ struct pcache_request {
 void pcache_req_get(struct pcache_request *pcache_req);
 void pcache_req_put(struct pcache_request *pcache_req, int ret);
 
+/*
+ * Fault injection, modelled on DRBD's (drbd_insert_fault / fault_rate /
+ * fault_types). Without it the only way to make a secondary reject a write is
+ * to race a teardown against live I/O, which is how the intermittent divergence
+ * hunt burned hours waiting on an 8%-probability event. These sites are the two
+ * that produce a NACK, i.e. the paths whose handling was wrong in fix-history
+ * 12 and 13.
+ *
+ *   echo 100 > /sys/module/dm_pcache/parameters/fault_rate
+ *   echo 1   > /sys/module/dm_pcache/parameters/fault_types   # DATA_WRITE
+ *   cat        /sys/module/dm_pcache/parameters/fault_count
+ *
+ * fault_rate 0 (the default) makes pcache_should_fail() a single predictable
+ * branch, so leaving the hooks compiled in costs nothing measurable.
+ */
+#define PCACHE_FAULT_DATA_WRITE		0	/* secondary: P_DATA -> cache */
+#define PCACHE_FAULT_RS_WRITE		1	/* secondary: P_RS_DATA -> cache */
+
+bool pcache_should_fail(unsigned int type);
+
 void pcache_defer_reqs_kick(struct dm_pcache *pcache);
 
 /* network */

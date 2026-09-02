@@ -410,6 +410,8 @@ static int pcache_handle_rs_data_recv(struct pcache_peer *peer,
 		goto free_data;
 
 	ret = pcache_net_write_to_cache(&pcache->cache, sector, data, size, false);
+	if (!ret && pcache_should_fail(PCACHE_FAULT_RS_WRITE))
+		ret = -EIO;
 	if (ret) {
 		/*
 		 * Do NOT acknowledge a chunk we failed to store. The ACK below
@@ -517,6 +519,8 @@ static int pcache_handle_data_recv(struct pcache_stream *stream,
 
 	ret = pcache_net_write_to_cache(&pcache->cache, sector, data, size,
 					!!(flags & PCACHE_F_FUA));
+	if (!ret && pcache_should_fail(PCACHE_FAULT_DATA_WRITE))
+		ret = -EIO;
 	if (ret)
 		pcache_err("write to cache failed: %d (sector=%llu size=%u)\n",
 			   ret, sector, size);
