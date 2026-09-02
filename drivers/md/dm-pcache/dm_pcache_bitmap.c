@@ -37,6 +37,12 @@ static void pcache_bm_mark_range_pages_dirty(struct pcache_bitmap *bm,
  * start DOWN and the end UP so we never under-mark a partially dirty
  * 4 KiB block.
  */
+/*
+ * Bits touched by [sector, sector+size), rounded *outward*: a partially covered
+ * bit at either end is included. Correct for marking dirty -- covering extra is
+ * harmless, missing any is not -- and wrong for clearing, which must never
+ * discard a neighbour's dirty bit. See pcache_bm_range_to_bits_covered().
+ */
 static void pcache_bm_range_to_bits(struct pcache_bitmap *bm,
 				    u64 sector, u32 size,
 				    u64 *start_bit, u64 *end_bit)
@@ -51,6 +57,35 @@ static void pcache_bm_range_to_bits(struct pcache_bitmap *bm,
 		*end_bit = bm->nr_bits;
 	if (*start_bit > bm->nr_bits)
 		*start_bit = bm->nr_bits;
+}
+
+/*
+ * Bits *fully* covered by [sector, sector+size), rounded inward. Used for
+ * clearing: a bit only partially covered still describes data outside this
+ * range, and dropping it would lose that region silently -- nothing else
+ * records the debt once the bit is gone.
+ *
+ * Callers today pass bit-aligned ranges (the resync walks the bitmap itself,
+ * and the secondary echoes what the source sent), so this is equivalent for
+ * them; it stops the first unaligned caller from being a data-loss bug.
+ * Returns false when the range covers no whole bit.
+ */
+static bool pcache_bm_range_to_bits_covered(struct pcache_bitmap *bm,
+					    u64 sector, u32 size,
+					    u64 *start_bit, u64 *end_bit)
+{
+	u64 first_sector = sector;
+	u64 last_sector  = sector + (size >> SECTOR_SHIFT);
+
+	*start_bit = DIV_ROUND_UP_ULL(first_sector, PCACHE_BM_SECTORS_PER_BIT);
+	*end_bit   = last_sector / PCACHE_BM_SECTORS_PER_BIT;
+
+	if (*end_bit > bm->nr_bits)
+		*end_bit = bm->nr_bits;
+	if (*start_bit > bm->nr_bits)
+		*start_bit = bm->nr_bits;
+
+	return *start_bit < *end_bit;
 }
 
 void pcache_bm_set_range(struct pcache_bitmap *bm, u64 sector, u32 size)
@@ -105,7 +140,9 @@ void pcache_bm_clear_range(struct pcache_bitmap *bm, u64 sector, u32 size)
 	if (!bm || !size)
 		return;
 
-	pcache_bm_range_to_bits(bm, sector, size, &start_bit, &end_bit);
+	if (!pcache_bm_range_to_bits_covered(bm, sector, size,
+					     &start_bit, &end_bit))
+		return;
 
 	spin_lock(&bm->lock);
 	for (b = start_bit; b < end_bit; b++) {
