@@ -82,6 +82,7 @@ int  pcache_peer_bitmap_init(struct pcache_peer *peer, u64 backing_sectors,
 void pcache_peer_bitmap_exit(struct pcache_peer *peer);
 
 void pcache_bm_set_range(struct pcache_bitmap *bm, u64 sector, u32 size);
+void pcache_bm_set_range_owed(struct pcache_bitmap *bm, u64 sector, u32 size);
 void pcache_bm_clear_range(struct pcache_bitmap *bm, u64 sector, u32 size);
 
 bool pcache_bm_test_bit(struct pcache_bitmap *bm, u64 bit);

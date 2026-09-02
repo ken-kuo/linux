@@ -88,7 +88,24 @@ static bool pcache_bm_range_to_bits_covered(struct pcache_bitmap *bm,
 	return *start_bit < *end_bit;
 }
 
-void pcache_bm_set_range(struct pcache_bitmap *bm, u64 sector, u32 size)
+/*
+ * @new_data: true when the caller is recording data this node just accepted,
+ * false when it is only learning what a peer is still owed.
+ *
+ * The distinction matters because of the generation bump below. A generation
+ * says *which data* this node holds; the bitmap says what a peer is missing.
+ * They are not the same fact, and conflating them is how an interrupted resync
+ * turns into a bogus split-brain: every reconnect exchanges bitmaps, each merge
+ * marked bits and bumped the receiver's generation, so after a few rounds the
+ * Secondary looked newer than the Primary, the resync direction inverted, and
+ * the round after that the two generations no longer lined up at all.
+ *
+ * DRBD keeps them apart for the same reason: receive_bitmap() merges into the
+ * peer's bitmap slot and never touches the current UUID -- learning about work
+ * is not the same as having new data.
+ */
+static void __pcache_bm_set_range(struct pcache_bitmap *bm, u64 sector, u32 size,
+				  bool new_data)
 {
 	u64 start_bit, end_bit, b;
 	long delta = 0;
@@ -117,7 +134,7 @@ void pcache_bm_set_range(struct pcache_bitmap *bm, u64 sector, u32 size)
 	/* Phase 3.5 — device-wide gen bump (was per-bitmap in Phase 2/3).
 	 * First new dirty bit anywhere since last mark_synced bumps gen so
 	 * the next handshake puts us as SYNC_SOURCE for any peer behind. */
-	if (delta && pcache) {
+	if (delta && pcache && new_data) {
 		spin_lock(&pcache->gen_lock);
 		if (!pcache->gen_dirty) {
 			pcache->gen_dirty = true;
@@ -130,6 +147,21 @@ void pcache_bm_set_range(struct pcache_bitmap *bm, u64 sector, u32 size)
 
 	if (bumped_gen)
 		pcache_bm_header_flush(bm);
+}
+
+/* Data this node accepted and the peer does not have yet. */
+void pcache_bm_set_range(struct pcache_bitmap *bm, u64 sector, u32 size)
+{
+	__pcache_bm_set_range(bm, sector, size, true);
+}
+
+/*
+ * Debt learned from the peer's own bitmap during the exchange. Same bits, but
+ * no new data landed here, so the generation must not move.
+ */
+void pcache_bm_set_range_owed(struct pcache_bitmap *bm, u64 sector, u32 size)
+{
+	__pcache_bm_set_range(bm, sector, size, false);
 }
 
 void pcache_bm_clear_range(struct pcache_bitmap *bm, u64 sector, u32 size)

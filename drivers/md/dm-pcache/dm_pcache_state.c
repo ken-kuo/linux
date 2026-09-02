@@ -156,7 +156,7 @@ static int pcache_recv_bitmap_merge(struct pcache_peer *peer, struct socket *soc
 			u64 sector = start * PCACHE_BM_SECTORS_PER_BIT;
 			u32 size = nbits * PCACHE_BM_BLOCK_SIZE;
 
-			pcache_bm_set_range(bm, sector, size);
+			pcache_bm_set_range_owed(bm, sector, size);
 		}
 		runs_recv++;
 	}
@@ -230,8 +230,25 @@ pcache_decide_sync_role(struct pcache_peer *peer,
 
 	/* Clean reconnect: both gens line up reciprocally. */
 	if (my_gen == peer_gen &&
-	    my_peer_gen == peer_gen && peer_my_gen == my_gen)
+	    my_peer_gen == peer_gen && peer_my_gen == my_gen) {
+		u64 owed = pcache_bm_dirty_count(bm);
+
+		/*
+		 * Generations say which data we hold; the bitmap says what this
+		 * peer is still missing. An interrupted resync leaves the second
+		 * true while the first agrees, and answering from generations
+		 * alone declares "in sync" over a debt nobody will now pay.
+		 * Only the Primary can drive a resync here, so a Secondary that
+		 * still holds bits waits to be pushed to.
+		 */
+		if (owed) {
+			pcache_info("sync_params: generations agree but %llu bit(s) still owed -- resyncing instead of claiming sync\n",
+				    owed);
+			return primary ? PCACHE_R_SYNC_SOURCE :
+					 PCACHE_R_SYNC_TARGET;
+		}
 		return PCACHE_R_ESTABLISHED;
+	}
 
 	/* I am newer: peer's view of itself == my recorded snapshot of it. */
 	if (my_gen > peer_gen && peer_gen == my_peer_gen)
@@ -780,13 +797,35 @@ wait_sock:
 				goto out;
 			}
 			break;
-		case PCACHE_P_BITMAP_DONE:
+		case PCACHE_P_BITMAP_DONE: {
 			/* Phase 2 Step 8: Primary finished sending resync.
-			 * Mark synced and transition to ESTABLISHED. */
-			pcache_bm_mark_synced(peer->bm,
-					      peer->peer_generation);
+			 * "Finished" is not the same as "complete": the sweep
+			 * gives up when a writer outruns it. Only adopt the
+			 * source's generation when it says nothing is left,
+			 * otherwise our peer_gen_at_sync would advance over a
+			 * debt that was never delivered. Replication resumes
+			 * either way -- the bits stay owed on the source. */
+			struct pcache_bitmap_done_pkt dp = { 0 };
+			u16 blen = le16_to_cpu(hdr.length);
+
+			if (blen >= sizeof(dp)) {
+				ret = pcache_recv_all(sock, &dp, sizeof(dp));
+				if (ret) {
+					pcache_err("secondary: BITMAP_DONE body recv: %d\n",
+						   ret);
+					goto out;
+				}
+			}
+			if (!le64_to_cpu(dp.left)) {
+				pcache_bm_mark_synced(peer->bm,
+						      peer->peer_generation);
+			} else {
+				pcache_info("secondary: resync ended with %llu bit(s) still owed -- not marking in sync\n",
+					    le64_to_cpu(dp.left));
+			}
 			pcache_set_repl_state(peer, PCACHE_R_ESTABLISHED);
 			break;
+		}
 		case PCACHE_P_DEMOTE_REQ: {
 			/* Phase 3.5 B1 — peer is about to promote; we should
 			 * demote (already Secondary here, so no-op state-wise)
@@ -1213,12 +1252,25 @@ static int pcache_do_resync(struct pcache_peer *peer, struct socket *sock,
 sweep_done:
 	if (!kthread_should_stop()) {
 		u64 left = pcache_bm_dirty_count(bm);
-
+		struct pcache_bitmap_done_pkt dp;
 		struct pcache_packet_header done = {
 			.type   = cpu_to_le16(PCACHE_P_BITMAP_DONE),
-			.length = 0,
+			.length = cpu_to_le16(sizeof(dp)),
 		};
-		ret = pcache_send_packet(sock, &done);
+		u8 dbuf[sizeof(done) + sizeof(dp)];
+
+		/*
+		 * Carry the outstanding count. This packet used to be a bare
+		 * "I have stopped sending", and the target read it as "we are
+		 * in sync" and marked itself synced -- after a sweep that had
+		 * shipped nothing at all. The debt then existed only on this
+		 * side's bitmap while both sides' handshake state said the two
+		 * agreed, and nothing ever went looking for it again.
+		 */
+		dp.left = cpu_to_le64(left);
+		memcpy(dbuf, &done, sizeof(done));
+		memcpy(dbuf + sizeof(done), &dp, sizeof(dp));
+		ret = pcache_send_all(sock, dbuf, sizeof(dbuf));
 		if (ret)
 			goto out_free;
 
@@ -1768,6 +1820,22 @@ connect:
 					schedule_timeout(HZ);
 					continue;
 				}
+			} else if (role == PCACHE_R_SYNC_TARGET) {
+				/*
+				 * A Primary cannot be a resync target: this
+				 * node's receiver only handles ACK/NACK, so
+				 * there is nothing here to apply P_RS_DATA.
+				 * Falling into the branch below would have
+				 * marked us synced -- forgiving a debt that was
+				 * never paid, silently. Drop the connection and
+				 * let the handshake settle again instead.
+				 */
+				pcache_err("primary: elected SYNC_TARGET (peer claims newer data); dropping the connection rather than claiming sync\n");
+				peer->state = PCACHE_C_CONNECTING;
+				pcache_set_repl_state(peer, PCACHE_R_OFF);
+				set_current_state(TASK_INTERRUPTIBLE);
+				schedule_timeout(HZ);
+				continue;
 			} else {
 				/* Clean reconnect — peer says we're already in sync. */
 				pcache_bm_mark_synced(peer->bm,

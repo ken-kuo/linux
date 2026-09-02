@@ -130,10 +130,20 @@ struct pcache_rs_data_pkt {
 	/* followed by `size` bytes of payload */
 } __packed;
 
+/*
+ * Body of P_BITMAP_DONE when sent at the end of a resync sweep. A zero-length
+ * P_BITMAP_DONE (the terminator of the bitmap exchange, and what older builds
+ * sent after a sweep) means "nothing owed", so absence of the body is safe.
+ */
+struct pcache_bitmap_done_pkt {
+	__le64	left;			/* bits still owed; 0 = fully in sync */
+} __packed;
+
 #define PCACHE_PKT_HEADER_SIZE	sizeof(struct pcache_packet_header)
 #define PCACHE_HS_PKT_SIZE	sizeof(struct pcache_handshake_pkt)
 #define PCACHE_SP_PKT_SIZE	sizeof(struct pcache_sync_params_pkt)
 #define PCACHE_BM_PKT_SIZE	sizeof(struct pcache_bitmap_pkt)
 #define PCACHE_RS_PKT_SIZE	sizeof(struct pcache_rs_data_pkt)
+#define PCACHE_BM_DONE_PKT_SIZE	sizeof(struct pcache_bitmap_done_pkt)
 
 #endif /* _DM_PCACHE_PROTOCOL_H */
