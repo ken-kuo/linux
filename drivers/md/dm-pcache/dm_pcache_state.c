@@ -2250,11 +2250,41 @@ static int pcache_accept_thread(void *arg)
 		 * worker. At nr_streams == 1 this is the legacy path.
 		 */
 		if (pcache_stream_has_conn(&peer->streams[stream_id])) {
-			/* Race-loser: lower-id outbound got there first. */
+			if (pcache_peer_is_initiator(peer)) {
+				/* We dial this peer, so an inbound connection
+				 * from it is the loser of a simultaneous
+				 * connect: ours is the one to keep. */
+				percpu_up_write(&net->peers_lock);
+				pcache_dev_info(pcache,
+					"accept: peer node_id=%d stream=%d already connected; drop dup\n",
+					peer_node_id, stream_id);
+				sock_release(sock);
+				continue;
+			}
+			/*
+			 * This peer dials us and we never dial it, so an
+			 * inbound connection here cannot be a race -- it is the
+			 * peer telling us it has given up on the connection we
+			 * still hold. Ours is stale, and nothing else will ever
+			 * reap it: after an asymmetric link failure our socket
+			 * sits half-closed, and a half-closed socket keeps
+			 * answering TCP keepalive probes, so the keepalive is
+			 * satisfied forever while every reconnect is refused as
+			 * a duplicate. Measured 20+ minutes wedged, with this
+			 * node reporting bm_dirty=0 the whole time
+			 * (fix-history #16).
+			 *
+			 * Drop ours and let the peer's next attempt land -- it
+			 * retries about once a second. Installing this socket
+			 * here instead would race the per-peer worker's own
+			 * teardown, which drops whatever is installed at the
+			 * time and would take the fresh connection with it.
+			 */
 			percpu_up_write(&net->peers_lock);
 			pcache_dev_info(pcache,
-				"accept: peer node_id=%d stream=%d already connected; drop dup\n",
+				"accept: peer node_id=%d stream=%d reconnected; dropping the connection we still held (stale)\n",
 				peer_node_id, stream_id);
+			pcache_conn_drop(&peer->streams[stream_id]);
 			sock_release(sock);
 			continue;
 		}
