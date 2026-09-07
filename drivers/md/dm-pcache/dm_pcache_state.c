@@ -1594,12 +1594,39 @@ static void pcache_peer_workers_stop(struct pcache_peer *peer)
 		kthread_stop_put(rcv);
 }
 
+/*
+ * A worker slot must be empty before anything starts a worker into it.
+ *
+ * Every start path is reached only after the matching stop path has cleared the
+ * slot -- but that is a convention spread across the accept thread, both
+ * control workers, the role switch and split-brain resolution, and a convention
+ * is what produced the dangling task_struct this file's stop path now guards
+ * against. Overwriting an occupied slot leaks the old task's reference; make it
+ * impossible rather than merely less harmful than it used to be.
+ *
+ * WARN, not just an error return: this cannot happen unless the ownership rule
+ * has been broken somewhere, and the stack trace names the caller that broke
+ * it.
+ */
+static bool pcache_worker_slot_busy(struct pcache_stream *st, const char *what)
+{
+	if (!st->sender && !st->receiver)
+		return false;
+
+	WARN_ONCE(1, "dm-pcache: %s: worker slot for stream %d already occupied\n",
+		  what, st->stream_id);
+	return true;
+}
+
 /* Spawn the per-stream worker(s) for an already-connected data stream. */
 static int pcache_data_stream_start(struct pcache_stream *st)
 {
 	struct pcache_peer *peer = st->peer;
 	const char *dev = peer->pcache->ti->table->md->name;
 	struct task_struct *t;
+
+	if (pcache_worker_slot_busy(st, "data-stream-start"))
+		return -EBUSY;
 
 	if (peer->is_primary) {
 		t = kthread_run(pcache_data_sender, st, "pcache-dsend-%s-%d",
@@ -2101,6 +2128,9 @@ static int pcache_start_secondary(struct pcache_peer *peer)
 {
 	struct task_struct *t;
 
+	if (pcache_worker_slot_busy(&peer->streams[0], "start-secondary"))
+		return -EBUSY;
+
 	t = kthread_run(pcache_secondary_worker, peer, "pcache-secondary-%s",
 			peer->pcache->ti->table->md->name);
 	if (IS_ERR(t))
@@ -2113,6 +2143,9 @@ static int pcache_start_secondary(struct pcache_peer *peer)
 static int pcache_start_primary(struct pcache_peer *peer)
 {
 	struct task_struct *t;
+
+	if (pcache_worker_slot_busy(&peer->streams[0], "start-primary"))
+		return -EBUSY;
 
 	t = kthread_run(pcache_primary_worker, peer, "pcache-primary-%s",
 			peer->pcache->ti->table->md->name);
@@ -2765,7 +2798,7 @@ static void pcache_set_role_swap_workers(struct pcache_network *net,
 					 bool to_primary)
 {
 	struct pcache_peer *peer;
-	int slot;
+	int slot, ret;
 
 	for_each_active_peer(net, peer, slot) {
 		peer->is_primary = to_primary;
@@ -2782,10 +2815,11 @@ static void pcache_set_role_swap_workers(struct pcache_network *net,
 		peer->state = PCACHE_C_CONNECTING;
 		peer->repl_state = PCACHE_R_OFF;
 
-		if (to_primary)
-			pcache_start_primary(peer);
-		else
-			pcache_start_secondary(peer);
+		ret = to_primary ? pcache_start_primary(peer)
+				 : pcache_start_secondary(peer);
+		if (ret)
+			pcache_err("set-role: peer node_id=%u left without a worker: %d\n",
+				   peer->node_id, ret);
 	}
 }
 
@@ -2956,6 +2990,7 @@ int pcache_resolve_split_brain(struct dm_pcache *pcache, u32 peer_node_id,
 	{
 		struct pcache_peer *p2 = peer;
 		bool was_primary = p2->is_primary;
+		int ret;
 
 		pcache_conn_shutdown(&p2->streams[0]);
 
@@ -2965,10 +3000,11 @@ int pcache_resolve_split_brain(struct dm_pcache *pcache, u32 peer_node_id,
 		p2->state = PCACHE_C_CONNECTING;
 		p2->repl_state = PCACHE_R_OFF;
 
-		if (was_primary)
-			pcache_start_primary(p2);
-		else
-			pcache_start_secondary(p2);
+		ret = was_primary ? pcache_start_primary(p2)
+				  : pcache_start_secondary(p2);
+		if (ret)
+			pcache_err("resolve-split-brain: peer node_id=%u left without a worker: %d\n",
+				   p2->node_id, ret);
 	}
 
 	percpu_up_write(&net->peers_lock);
