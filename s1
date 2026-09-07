@@ -1,0 +1,14 @@
+set $i=0
+set $head_page = $arg0
+printf "compound_head\n"
+printf "order: "
+p/x ((struct folio *)$head_page)->_folio_order
+while ($i < 8)
+  printf "flags[%d]: ", $i
+  p/x ((struct page *)$head_page)[$i]->flags
+  printf "_refcount: "
+  p/x ((struct page *)$head_page)[$i]->_refcount
+  printf "compound_head: "
+  p/x ((struct page *)$head_page)[$i]->compound_head
+  set $i=$i+1
+end

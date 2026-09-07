@@ -1,0 +1,74 @@
+macro define skb_end_pointer(skb) \
+	((struct sk_buff *)skb)->head + ((struct sk_buff *)skb)->end
+macro define skb_shinfo(skb) \
+	((struct skb_shared_info *)(skb_end_pointer(skb)))
+
+set $i=0
+set $skb = (struct sk_buff *) $arg0
+set $shinfo = skb_shinfo($skb)
+
+printf "skb: "
+p $skb
+
+printf "shinfo: "
+p $shinfo
+
+set $nr_frags = $shinfo->nr_frags
+printf "nr_frags: "
+p $nr_frags
+
+set $dataref = $shinfo->dataref
+printf "dataref: "
+p $dataref
+
+set $frag_list = $shinfo->frag_list
+printf "frag_list: "
+p $frag_list
+
+set $headlen = $skb->len - $skb->data_len
+printf "headlen: "
+p $headlen
+
+set $cloned = $skb->cloned
+printf "cloned: "
+p $cloned
+
+set $pp_recycle = $skb->pp_recycle
+printf "pp_recycle: "
+p $pp_recycle
+
+set $users = $skb->users
+printf "users: "
+p $users
+
+while ($i < $nr_frags)
+  printf "frags[%d]:\n", $i
+  p $shinfo->frags[$i]->bv_page
+  printf "refcount: "
+  p $shinfo->frags[$i]->bv_page->_refcount
+  printf "pp_magic: "
+  p/x $shinfo->frags[$i]->bv_page->pp_magic
+  printf "pp_frag_count: "
+  p $shinfo->frags[$i]->bv_page->pp_frag_count
+  set $i=$i+1
+end
+
+if $skb->head
+	printf "skb->head head page:\n"
+	set $skb_head_page = (struct page *)((((unsigned long)$skb->head - 0xffff888000000000) >> 12) * sizeof(struct page) + 0xffffea0000000000)
+	if (($skb_head_page->flags & 0x10000) == 0)
+		set $skb_head_head_page = (struct page *)($skb_head_page->compound_head - 1)
+	else
+		set $skb_head_head_page = $skb_head_page
+	end
+	p $skb_head_head_page
+	printf "refcount: "
+	p $skb_head_head_page->_refcount
+	printf "flags: "
+	p/x $skb_head_head_page->flags
+	printf "pp_magic: "
+	p/x $skb_head_head_page->pp_magic
+	printf "pp_frag_count: "
+	p $skb_head_head_page->pp_frag_count
+end
+

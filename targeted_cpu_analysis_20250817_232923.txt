@@ -1,0 +1,236 @@
+=== Targeted CPU Support Analysis Report ===
+Target CPUs: Intel 5th Gen Xeon (Emerald Rapids) & AMD Zen 5
+Search range: v6.1..HEAD
+Search mode: Precise word boundary matching (no false positives)
+Timestamp: 2025-08-17T15:29:23Z
+
+
+----- INTEL EMERALD RAPIDS ANALYSIS -----
+>> 1. Intel Emerald Rapids Family Detection
+
+Searching for: emerald.*rapids
+Found 40 commits:
+118da22eb6fb 2025-07-19 Eric Biggers lib/crc: x86/crc32c: Enable VPCLMULQDQ optimization where beneficial
+31c8714cf5b9 2025-06-30 Ian Rogers perf vendor events: Update EmeraldRapids events
+b41c1d8d0790 2025-07-04 Eric Biggers fscrypt: Don't use problematic non-inline crypto engines
+4ecf9eab4a04 2025-03-28 Ian Rogers perf vendor events: Update emeraldrapids events/metrics
+6138f3451516 2025-03-17 Artem Bityutskiy intel_idle: Add C1 demotion on/off sysfs knob
+8c4fc9ce402c 2025-02-10 Eric Biggers crypto: x86/aes-ctr - rewrite AESNI+AVX optimized CTR and add VAES support
+d9207cf7760f 2025-02-14 Qiuxu Zhuo EDAC/{skx_common,i10nm}: Fix some missing error reports on Emerald Rapids
+5ee60fbf7375 2025-02-11 Ian Rogers perf vendor events: Update EmeraldRapids events/metrics
+7803339fa929 2024-11-27 Sean Christopherson KVM: selftests: Use data load to trigger LLC references/misses in Intel PMU
+1201f226c863 2024-12-10 Sean Christopherson KVM: x86: Cache CPUID.0xD XSTATE offsets+sizes during module init
+00e2c199cb37 2024-11-12 Srinivas Pandruvada cpufreq: intel_pstate: Update Balance-performance EPP for Granite Rapids
+84dd048cf895 2024-10-13 Eric Biggers crypto: x86/crc32c - eliminate jump table and excessive unrolling
+370406bf5738 2024-08-06 Artem Bityutskiy intel_idle: add Granite Rapids Xeon support
+3ca2a3d1e727 2024-08-02 Srinivas Pandruvada cpufreq: intel_pstate: Support Granite Rapids and Sierra Forest OOB mode
+64a66f4a3c89 2024-08-01 Pedro Henrique Kopper cpufreq: intel_pstate: Update Balance performance EPP for Emerald Rapids
+40ccd6aa3e2e 2024-06-20 Ian Rogers perf vendor events: Add/update emeraldrapids events/metrics
+7e1c3f584ee7 2024-05-29 Srinivas Pandruvada cpufreq: intel_pstate: Support Emerald Rapids OOB mode
+b06affb1cb58 2024-06-02 Eric Biggers crypto: x86/aes-gcm - add VAES and AVX512 / AVX10 optimized AES-GCM
+36f353a1ebf8 2024-03-20 Ian Rogers perf vendor events intel: Update emeraldrapids to 1.06
+ea518afc9920 2024-02-13 Ian Rogers perf vendor events intel: Update emeraldrapids events to v1.03
+576d7fed09c7 2024-01-03 Ian Rogers perf vendor events intel: Update emeraldrapids events to v1.02
+e95013156ad8 2023-12-13 Zhenguo Yao cpufreq: intel_pstate: Add Emerald Rapids support in no-HWP mode
+8a94d3bfaf45 2023-10-25 Ian Rogers perf vendor events intel: Update emeraldrapids to v1.01
+0e3f10e6aa97 2023-10-19 Zhang Rui tools/power/turbostat: Add MSR_CORE_C1_RES support for spr_features
+8c994eff8fcf 2023-08-28 Ian Rogers perf vendor events intel: Add emeraldrapids, update sapphirerapids to v1.16
+36168bc061b4 2023-04-04 Tony Luck x86/cpu: Add Xeon Emerald Rapids to list of CPUs that support PPIN
+d31bbdf42b46 2023-03-21 Jithu Joseph platform/x86/intel/ifs: Introduce Array Scan test to IFS
+2c00056f5429 2023-02-23 Srinivas Pandruvada tools/power/x86/intel-speed-select: Change TRL display for Emerald Rapids
+1d54b139f434 2023-02-22 Srinivas Pandruvada tools/power/x86/intel-speed-select: Identify Emerald Rapids
+872d28001be5 2023-03-14 Artem Bityutskiy perf/x86/cstate: Add Granite Rapids support
+61f9fdcdcd01 2022-08-24 Zhang Rui tools/power/x86/intel-speed-select: Add Emerald Rapid quirk
+e4b2bc6616e2 2023-01-13 Qiuxu Zhuo EDAC/i10nm: Add Intel Emerald Rapids server support
+74528edfbc66 2023-01-20 Artem Bityutskiy intel_idle: add Emerald Rapids Xeon support
+7adc6885259e 2023-01-04 Zhang Rui powercap: intel_rapl: add support for Emerald Rapids
+03953a697bdd 2023-01-18 Kan Liang perf vendor events intel: Add Emerald Rapids
+5a8a05f165fb 2023-01-06 Kan Liang perf/x86/intel/cstate: Add Emerald Rapids
+6795e558e9cc 2023-01-06 Kan Liang perf/x86/intel: Add Emerald Rapids
+5268a2842066 2023-01-06 Kan Liang perf/x86/intel/uncore: Add Emerald Rapids
+69ced4160969 2023-01-06 Kan Liang perf/x86/msr: Add Emerald Rapids
+57512b57dcfa 2023-01-04 Zhang Rui perf/x86/rapl: Add support for Intel Emerald Rapids
+9c252ecf3036 2022-11-22 Artem Bityutskiy platform/x86: intel-uncore-freq: add Emerald Rapids support
+
+Searching for: EMR
+Found 16 commits:
+474e1cd6fe89 2025-02-17 Ville Syrjälä drm/i915: Introduce i915_error_regs
+93da6af3ae56 2024-12-10 Sean Christopherson KVM: x86: Defer runtime updates of dynamic CPUID bits until CPUID emulation
+7803339fa929 2024-11-27 Sean Christopherson KVM: selftests: Use data load to trigger LLC references/misses in Intel PMU
+1201f226c863 2024-12-10 Sean Christopherson KVM: x86: Cache CPUID.0xD XSTATE offsets+sizes during module init
+a025b0dbd83f 2024-10-17 Jason Gerecke HID: wacom: Set eraser status when either 'Eraser' or 'Invert' usage is set
+2934b12281ab 2024-10-09 Jason Gerecke HID: wacom: Hardcode (non-inverted) AES pens as BTN_TOOL_PEN
+8c827853f60d 2024-09-27 Ville Syrjälä drm/i915: Switch over to gen3 irq code on gen2
+f8a86a9bb5f7 2024-06-14 Kan Liang perf/x86/intel/uncore: Support HBM and CXL PMON counters
+0007f3932592 2024-06-14 Kan Liang perf/x86/uncore: Save the unit control address of all units
+b333067ff3b0 2023-08-28 Ian Rogers perf vendor events intel: Fix spelling mistakes
+8c994eff8fcf 2023-08-28 Ian Rogers perf vendor events intel: Add emeraldrapids, update sapphirerapids to v1.16
+6f7f984fa85b 2023-09-05 Kan Liang perf/x86/uncore: Correct the number of CHAs on EMR
+d31bbdf42b46 2023-03-21 Jithu Joseph platform/x86/intel/ifs: Introduce Array Scan test to IFS
+93cac4150727 2023-01-04 Zhang Rui tools/power turbostat: Introduce support for EMR
+e7e12f6ec8bf 2023-01-25 Ville Syrjälä drm/i915: Mask page table errors on gen2/3 with FBC
+3687ce7517a1 2023-01-25 Ville Syrjälä drm/i915: Extract {i9xx,i965)_error_mask()
+74528edfbc66 2023-01-20 Artem Bityutskiy intel_idle: add Emerald Rapids Xeon support
+
+Searching for: code change: 0xcf
+No commits found
+
+
+Searching for: code change: EMERALD_RAPIDS
+No commits found
+
+>> 2. Intel Emerald Rapids Microcode
+No commits found for Intel EMR Microcode
+
+>> 3. Intel Emerald Rapids Power Management
+Found 9 unique commits for Intel EMR Power Management:
+00e2c199cb37 2024-11-12 Srinivas Pandruvada cpufreq: intel_pstate: Update Balance-performance EPP for Granite Rapids
+370406bf5738 2024-08-06 Artem Bityutskiy intel_idle: add Granite Rapids Xeon support
+3ca2a3d1e727 2024-08-02 Srinivas Pandruvada cpufreq: intel_pstate: Support Granite Rapids and Sierra Forest OOB mode
+6138f3451516 2025-03-17 Artem Bityutskiy intel_idle: Add C1 demotion on/off sysfs knob
+64a66f4a3c89 2024-08-01 Pedro Henrique Kopper cpufreq: intel_pstate: Update Balance performance EPP for Emerald Rapids
+74528edfbc66 2023-01-20 Artem Bityutskiy intel_idle: add Emerald Rapids Xeon support
+7adc6885259e 2023-01-04 Zhang Rui powercap: intel_rapl: add support for Emerald Rapids74528edfbc66 2023-01-20 Artem Bityutskiy intel_idle: add Emerald Rapids Xeon support
+7e1c3f584ee7 2024-05-29 Srinivas Pandruvada cpufreq: intel_pstate: Support Emerald Rapids OOB mode
+e95013156ad8 2023-12-13 Zhenguo Yao cpufreq: intel_pstate: Add Emerald Rapids support in no-HWP mode
+
+>> 4. Intel Emerald Rapids PMU
+Found 19 unique commits for Intel EMR PMU:
+0007f3932592 2024-06-14 Kan Liang perf/x86/uncore: Save the unit control address of all units
+03953a697bdd 2023-01-18 Kan Liang perf vendor events intel: Add Emerald Rapids
+31c8714cf5b9 2025-06-30 Ian Rogers perf vendor events: Update EmeraldRapids events
+36f353a1ebf8 2024-03-20 Ian Rogers perf vendor events intel: Update emeraldrapids to 1.06
+40ccd6aa3e2e 2024-06-20 Ian Rogers perf vendor events: Add/update emeraldrapids events/metrics
+4ecf9eab4a04 2025-03-28 Ian Rogers perf vendor events: Update emeraldrapids events/metrics
+5268a2842066 2023-01-06 Kan Liang perf/x86/intel/uncore: Add Emerald Rapids
+57512b57dcfa 2023-01-04 Zhang Rui perf/x86/rapl: Add support for Intel Emerald Rapidsf8a86a9bb5f7 2024-06-14 Kan Liang perf/x86/intel/uncore: Support HBM and CXL PMON counters
+576d7fed09c7 2024-01-03 Ian Rogers perf vendor events intel: Update emeraldrapids events to v1.02
+5a8a05f165fb 2023-01-06 Kan Liang perf/x86/intel/cstate: Add Emerald Rapids
+5ee60fbf7375 2025-02-11 Ian Rogers perf vendor events: Update EmeraldRapids events/metrics
+6795e558e9cc 2023-01-06 Kan Liang perf/x86/intel: Add Emerald Rapids
+69ced4160969 2023-01-06 Kan Liang perf/x86/msr: Add Emerald Rapids
+6f7f984fa85b 2023-09-05 Kan Liang perf/x86/uncore: Correct the number of CHAs on EMR8c994eff8fcf 2023-08-28 Ian Rogers perf vendor events intel: Add emeraldrapids, update sapphirerapids to v1.16
+872d28001be5 2023-03-14 Artem Bityutskiy perf/x86/cstate: Add Granite Rapids support
+8a94d3bfaf45 2023-10-25 Ian Rogers perf vendor events intel: Update emeraldrapids to v1.01
+8c994eff8fcf 2023-08-28 Ian Rogers perf vendor events intel: Add emeraldrapids, update sapphirerapids to v1.16
+b333067ff3b0 2023-08-28 Ian Rogers perf vendor events intel: Fix spelling mistakes
+ea518afc9920 2024-02-13 Ian Rogers perf vendor events intel: Update emeraldrapids events to v1.03
+
+>> 5. Intel Emerald Rapids Thermal
+No commits found for Intel EMR Thermal
+
+>> 6. Intel Emerald Rapids Virtualization
+Found 2 unique commits for Intel EMR Virtualization:
+1201f226c863 2024-12-10 Sean Christopherson KVM: x86: Cache CPUID.0xD XSTATE offsets+sizes during module init
+1201f226c863 2024-12-10 Sean Christopherson KVM: x86: Cache CPUID.0xD XSTATE offsets+sizes during module init93da6af3ae56 2024-12-10 Sean Christopherson KVM: x86: Defer runtime updates of dynamic CPUID bits until CPUID emulation
+
+>> 7. Intel Emerald Rapids Security
+No commits found for Intel EMR Security
+
+>> 8. Intel Emerald Rapids Memory
+Found 2 unique commits for Intel EMR Memory:
+d9207cf7760f 2025-02-14 Qiuxu Zhuo EDAC/{skx_common,i10nm}: Fix some missing error reports on Emerald Rapids
+e4b2bc6616e2 2023-01-13 Qiuxu Zhuo EDAC/i10nm: Add Intel Emerald Rapids server support
+
+
+----- AMD ZEN 5 ANALYSIS -----
+>> 1. AMD Zen 5 Family Detection
+
+Searching for: zen.*5
+Found 39 commits:
+118da22eb6fb 2025-07-19 Eric Biggers lib/crc: x86/crc32c: Enable VPCLMULQDQ optimization where beneficial
+9f65592b7e1f 2025-07-06 Eric Biggers lib/crypto: x86/poly1305: Fix performance regression on short messages
+7dc6b2d3b550 2025-06-24 Rahul Chandra platform/x86: asus-nb-wmi: add DMI quirk for ASUS Zenbook Duo UX8406CA
+a5bd029c733b 2025-05-19 Eric Biggers net: add skb_crc32c()
+35db59fa8ea2 2025-04-29 Ravi Bangoria perf test amd ibs: Add sample period unit test
+fa1332a8011e 2025-04-29 Ravi Bangoria perf mem/c2c amd: Add ldlat support
+fc481adc97f4 2025-04-29 Ravi Bangoria perf amd ibs: Incorporate Zen5 DTLB and PageSize information
+eeefc13c71e2 2025-04-29 Ravi Bangoria perf amd ibs: Add Load Latency bits in raw dump
+ce32b0c9c522 2025-04-02 Gregory Price cxl: core/region - ignore interleave granularity when ways=1
+2c183963fb5f 2025-04-03 David Hows hwmon: (k10temp) Add support for Zen5 Ryzen Desktop
+805b743fc163 2025-04-10 Borislav Petkov (AMD) x86/microcode/AMD: Extend the SHA check to Zen5, block loading of any unreleased standalone Zen5 microcode patches
+570ef50a15d7 2025-04-04 Eric Biggers crypto: x86/aes-xts - optimize _compute_first_set_of_tweaks for AVX-512
+f5e7fd685796 2025-03-24 Ahmed S. Darwish tools/x86/kcpuid: Update bitfields to x86-cpuid-db v2.1
+d02198550423 2025-03-04 Eric Biggers x86/fpu: Improve crypto performance by making kernel-mode FPU reliably usable in softirqs
+8c4fc9ce402c 2025-02-10 Eric Biggers crypto: x86/aes-ctr - rewrite AESNI+AVX optimized CTR and add VAES support
+0b347a4218da 2025-02-05 Ravi Bangoria perf/amd/ibs: Update DTLB/PageSize decode logic
+d20610c19b4a 2025-02-05 Ravi Bangoria perf/amd/ibs: Add support for OP Load Latency Filtering
+4ffd50862d41 2025-02-10 Eric Biggers x86/crc64: implement crc64_be and crc64_nvme using new template
+dbdda1fde382 2025-02-10 Eric Biggers x86/crc-t10dif: implement crc_t10dif using new template
+a03fda967eb3 2025-02-10 Eric Biggers x86/crc32: implement crc32_le using new template
+3cd46a78eeee 2024-12-12 Eric Biggers crypto: x86/aes-xts - additional optimizations
+95791ccd112e 2024-12-12 Eric Biggers crypto: x86/aes-gcm - tune better for AMD CPUs
+84dd048cf895 2024-10-13 Eric Biggers crypto: x86/crc32c - eliminate jump table and excessive unrolling
+86e6b1547b3d 2024-10-23 Linus Torvalds x86: fix user address masking non-canonical speculation issue
+46610ba41ef1 2024-10-18 Sandipan Das perf vendor events amd: Update Zen 5 data cache fill events
+17aedce6e0ff 2024-10-18 Sandipan Das perf vendor events amd: Add Zen 5 data fabric metrics
+f101a8e345c2 2024-10-18 Sandipan Das perf vendor events amd: Add Zen 5 data fabric events
+bf5641eccf71 2024-07-29 Perry Yuan x86/CPU/AMD: Add models 0x60-0x6f to the Zen5 range
+e6e758fa6443 2024-06-02 Eric Biggers crypto: x86/aes-gcm - rewrite the AES-NI optimized AES-GCM
+b06affb1cb58 2024-06-02 Eric Biggers crypto: x86/aes-gcm - add VAES and AVX512 / AVX10 optimized AES-GCM
+77a70f80751d 2024-05-03 Sandipan Das perf vendor events amd: Add Zen 5 mapping
+a9fe4ac7a3a2 2024-05-03 Sandipan Das perf vendor events amd: Add Zen 5 metrics
+dc082ae61858 2024-05-03 Sandipan Das perf vendor events amd: Add Zen 5 uncore events
+45c072f2537a 2024-05-03 Sandipan Das perf vendor events amd: Add Zen 5 core events
+2718a7fdf292 2024-04-10 Wenkuan Wang x86/CPU/AMD: Add models 0x10-0x1f to the Zen5 range
+021a67d09615 2024-02-23 Maxim Kudinov ACPI: resource: Add MAIBENBEN X577 to irq1_edge_low_force_override
+3e4147f33f8b 2024-01-04 Borislav Petkov (AMD) x86/CPU/AMD: Add X86_FEATURE_ZEN5
+e2605d4039a4 2024-01-03 David McFarland ACPI: resource: Add Infinity laptops to irq1_edge_low_force_override
+6dbef74aeb09 2023-08-11 Cristian Ciocaltea x86/cpu/amd: Enable Zenbleed fix for AMD Custom APU 0405
+326e1c208f3f 2023-04-05 Samuel Čavoj usb: typec: ucsi: acpi: add quirk for ASUS Zenbook UM325
+
+Searching for: family.*0x1a
+Found 4 commits:
+0581d384f344 2025-04-25 Suma Hegde platform/x86/amd/hsmp: Make amd_hsmp and hsmp_acpi as mutually exclusive drivers
+836d0d7107e5 2024-11-18 Suma Hegde platform/x86/amd/hsmp: Add support for HSMP protocol version 7 messages
+54ab7d7c59c9 2024-10-21 Swapnil Sapkal amd-pstate: Switch to amd-pstate by default on some Server platforms
+0e640f0a47d8 2024-05-10 Shyam Sundar S K x86/amd_nb: Add new PCI IDs for AMD family 0x1a
+d2bf115115d5 2024-01-06 Suma Hegde platform/x86/amd/hsmp: Non-ACPI support for AMD F1A_M00~0Fh
+
+Searching for: code change: 0x1a
+No commits found
+
+>> 2. AMD Zen 5 Microcode
+Found 1 unique commits for AMD Zen 5 Microcode:
+805b743fc163 2025-04-10 Borislav Petkov (AMD) x86/microcode/AMD: Extend the SHA check to Zen5, block loading of any unreleased standalone Zen5 microcode patches
+
+>> 3. AMD Zen 5 Power Management
+Found 1 unique commits for AMD Zen 5 Power Management:
+54ab7d7c59c9 2024-10-21 Swapnil Sapkal amd-pstate: Switch to amd-pstate by default on some Server platforms
+
+>> 4. AMD Zen 5 PMU
+Found 9 unique commits for AMD Zen 5 PMU:
+0b347a4218da 2025-02-05 Ravi Bangoria perf/amd/ibs: Update DTLB/PageSize decode logic
+17aedce6e0ff 2024-10-18 Sandipan Das perf vendor events amd: Add Zen 5 data fabric metrics
+45c072f2537a 2024-05-03 Sandipan Das perf vendor events amd: Add Zen 5 core events77a70f80751d 2024-05-03 Sandipan Das perf vendor events amd: Add Zen 5 mapping68cdf1e6e8f2 2024-03-25 Sandipan Das perf/x86/amd/core: Define a proper ref-cycles event for Zen 4 and later
+46610ba41ef1 2024-10-18 Sandipan Das perf vendor events amd: Update Zen 5 data cache fill events
+77a70f80751d 2024-05-03 Sandipan Das perf vendor events amd: Add Zen 5 mapping
+a9fe4ac7a3a2 2024-05-03 Sandipan Das perf vendor events amd: Add Zen 5 metrics
+d20610c19b4a 2025-02-05 Ravi Bangoria perf/amd/ibs: Add support for OP Load Latency Filtering
+dc082ae61858 2024-05-03 Sandipan Das perf vendor events amd: Add Zen 5 uncore events
+f101a8e345c2 2024-10-18 Sandipan Das perf vendor events amd: Add Zen 5 data fabric events
+
+>> 5. AMD Zen 5 Thermal
+Found 3 unique commits for AMD Zen 5 Thermal:
+2c183963fb5f 2025-04-03 David Hows hwmon: (k10temp) Add support for Zen5 Ryzen Desktop2c183963fb5f 2025-04-03 David Hows hwmon: (k10temp) Add support for Zen5 Ryzen Desktop
+3cd9da416d5b 2023-08-08 Avadhut Naik hwmon: (k10temp) Add thermal support for AMD Family 1Ah-based models
+4599510091a1 2024-08-20 Mario Limonciello hwmon: (k10temp): Use cpu_feature_enabled() for detecting zen
+
+>> 6. AMD Zen 5 Virtualization
+No commits found for AMD Zen 5 Virtualization
+
+>> 7. AMD Zen 5 Security
+Found 4 unique commits for AMD Zen 5 Security:
+2718a7fdf292 2024-04-10 Wenkuan Wang x86/CPU/AMD: Add models 0x10-0x1f to the Zen5 range
+3e4147f33f8b 2024-01-04 Borislav Petkov (AMD) x86/CPU/AMD: Add X86_FEATURE_ZEN5
+6dbef74aeb09 2023-08-11 Cristian Ciocaltea x86/cpu/amd: Enable Zenbleed fix for AMD Custom APU 04053e4147f33f8b 2024-01-04 Borislav Petkov (AMD) x86/CPU/AMD: Add X86_FEATURE_ZEN5
+bf5641eccf71 2024-07-29 Perry Yuan x86/CPU/AMD: Add models 0x60-0x6f to the Zen5 range
+
+>> 8. AMD Zen 5 Memory
+No commits found for AMD Zen 5 Memory
+
+
+----- ANALYSIS COMPLETE -----
+Analysis completed successfully!
+Full results saved to: targeted_cpu_analysis_20250817_232923.txt
+Check the output file for detailed commit information

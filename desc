@@ -1,0 +1,2532 @@
+arch/um/drivers/virt-pci.c:	struct virtio_device *vdev = vq->vdev;
+arch/um/drivers/virt-pci.c:	struct virtio_device *vdev = vq->vdev;
+arch/um/drivers/virtio_uml.c:				if (vq->index == msg.msg.payload.vring_state.index) {
+arch/um/drivers/virtio_uml.c:					vu_dev->vq_irq_vq_map |= BIT_ULL(vq->index);
+arch/um/drivers/virtio_uml.c:			if (vu_dev->vq_irq_vq_map & BIT_ULL(vq->index))
+arch/um/drivers/virtio_uml.c:	struct virtio_uml_vq_info *info = vq->priv;
+arch/um/drivers/virtio_uml.c:		vu_dev = to_virtio_uml_device(vq->vdev);
+arch/um/drivers/virtio_uml.c:						  vq->index, 0) == 0;
+arch/um/drivers/virtio_uml.c:	struct virtio_uml_vq_info *info = vq->priv;
+arch/um/drivers/virtio_uml.c:	struct virtio_uml_vq_info *info = vq->priv;
+arch/um/drivers/virtio_uml.c:		vu_dev = to_virtio_uml_device(vq->vdev);
+arch/um/drivers/virtio_uml.c:		WARN_ON(vhost_user_set_vring_enable(vu_dev, vq->index, false));
+arch/um/drivers/virtio_uml.c:	struct virtio_uml_vq_info *info = vq->priv;
+arch/um/drivers/virtio_uml.c:	rc = vhost_user_set_vring_call(vu_dev, vq->index, call_fds[1]);
+arch/um/drivers/virtio_uml.c:	vq->priv = info;
+arch/um/drivers/virtio_uml.c:	vq->num_max = num;
+arch/um/drivers/virtio_uml.c:		struct virtio_uml_vq_info *info = vq->priv;
+arch/um/drivers/virtio_uml.c:			rc = vhost_user_set_vring_kick(vu_dev, vq->index,
+arch/um/drivers/virtio_uml.c:		rc = vhost_user_set_vring_enable(vu_dev, vq->index, true);
+arch/um/drivers/virtio_uml.c:			struct virtio_uml_vq_info *info = vq->priv;
+arch/um/drivers/virtio_uml.c:			vhost_user_set_vring_enable(vu_dev, vq->index, false);
+arch/um/drivers/virtio_uml.c:			struct virtio_uml_vq_info *info = vq->priv;
+arch/um/drivers/virtio_uml.c:			vhost_user_set_vring_enable(vu_dev, vq->index, true);
+drivers/block/virtio_blk.c:		if (vbr->out_hdr.type & cpu_to_virtio32(vq->vdev, VIRTIO_BLK_T_OUT))
+drivers/block/virtio_blk.c:	struct virtio_blk *vblk = vq->vdev->priv;
+drivers/block/virtio_blk.c:	int qid = vq->index;
+drivers/block/virtio_blk.c:	spin_lock_irq(&vq->lock);
+drivers/block/virtio_blk.c:	kick = virtqueue_kick_prepare(vq->vq);
+drivers/block/virtio_blk.c:	spin_unlock_irq(&vq->lock);
+drivers/block/virtio_blk.c:		virtqueue_notify(vq->vq);
+drivers/block/virtio_blk.c:	spin_lock_irqsave(&vq->lock, flags);
+drivers/block/virtio_blk.c:		err = virtblk_add_req(vq->vq, vbr);
+drivers/block/virtio_blk.c:	kick = virtqueue_kick_prepare(vq->vq);
+drivers/block/virtio_blk.c:	spin_unlock_irqrestore(&vq->lock, flags);
+drivers/block/virtio_blk.c:				virtqueue_notify(vq->vq);
+drivers/block/virtio_blk.c:	spin_lock_irqsave(&vq->lock, flags);
+drivers/block/virtio_blk.c:	while ((vbr = virtqueue_get_buf(vq->vq, &len)) != NULL) {
+drivers/block/virtio_blk.c:	spin_unlock_irqrestore(&vq->lock, flags);
+drivers/block/virtio_blk.c:		queue_depth = vblk->vqs[0].vq->num_free;
+drivers/bluetooth/virtio_bt.c:	struct virtio_bluetooth *vbt = vq->vdev->priv;
+drivers/char/hw_random/virtio-rng.c:	struct virtrng_info *vi = vq->vdev->priv;
+drivers/char/virtio_console.c:		ret = vq->num_free;
+drivers/char/virtio_console.c:	if (out_vq->num_free == 0)
+drivers/char/virtio_console.c:	if (is_rproc_serial(port->out_vq->vdev))
+drivers/char/virtio_console.c:		buf = alloc_buf(vq->vdev, PAGE_SIZE, 0);
+drivers/char/virtio_console.c:		handle_control_message(vq->vdev, portdev, buf);
+drivers/char/virtio_console.c:	port = find_port_by_vq(vq->vdev->priv, vq);
+drivers/char/virtio_console.c:	port = find_port_by_vq(vq->vdev->priv, vq);
+drivers/char/virtio_console.c:	portdev = vq->vdev->priv;
+drivers/crypto/virtio/virtio_crypto_akcipher_algs.c:	spin_lock_irqsave(&data_vq->lock, flags);
+drivers/crypto/virtio/virtio_crypto_akcipher_algs.c:	ret = virtqueue_add_sgs(data_vq->vq, sgs, num_out, num_in, vc_req, GFP_ATOMIC);
+drivers/crypto/virtio/virtio_crypto_akcipher_algs.c:	virtqueue_kick(data_vq->vq);
+drivers/crypto/virtio/virtio_crypto_akcipher_algs.c:	spin_unlock_irqrestore(&data_vq->lock, flags);
+drivers/crypto/virtio/virtio_crypto_akcipher_algs.c:	return crypto_transfer_akcipher_request_to_engine(data_vq->engine, req);
+drivers/crypto/virtio/virtio_crypto_core.c:	struct virtio_crypto *vcrypto = vq->vdev->priv;
+drivers/crypto/virtio/virtio_crypto_core.c:	struct virtio_crypto *vcrypto = vq->vdev->priv;
+drivers/crypto/virtio/virtio_crypto_core.c:	unsigned int qid = vq->index;
+drivers/crypto/virtio/virtio_crypto_skcipher_algs.c:	spin_lock_irqsave(&data_vq->lock, flags);
+drivers/crypto/virtio/virtio_crypto_skcipher_algs.c:	err = virtqueue_add_sgs(data_vq->vq, sgs, num_out,
+drivers/crypto/virtio/virtio_crypto_skcipher_algs.c:	virtqueue_kick(data_vq->vq);
+drivers/crypto/virtio/virtio_crypto_skcipher_algs.c:	spin_unlock_irqrestore(&data_vq->lock, flags);
+drivers/crypto/virtio/virtio_crypto_skcipher_algs.c:	return crypto_transfer_skcipher_request_to_engine(data_vq->engine, req);
+drivers/crypto/virtio/virtio_crypto_skcipher_algs.c:	return crypto_transfer_skcipher_request_to_engine(data_vq->engine, req);
+drivers/crypto/virtio/virtio_crypto_skcipher_algs.c:	virtqueue_kick(data_vq->vq);
+drivers/gpio/gpio-virtio.c:	struct virtio_gpio *vgpio = vq->vdev->priv;
+drivers/gpu/drm/virtio/virtgpu_kms.c:	spin_lock_init(&vgvq->qlock);
+drivers/gpu/drm/virtio/virtgpu_kms.c:	init_waitqueue_head(&vgvq->ack_queue);
+drivers/gpu/drm/virtio/virtgpu_kms.c:	INIT_WORK(&vgvq->dequeue_work, work_func);
+drivers/gpu/drm/virtio/virtgpu_trace.h:		       __entry->dev = vq->vdev->index;
+drivers/gpu/drm/virtio/virtgpu_trace.h:		       __entry->vq = vq->index;
+drivers/gpu/drm/virtio/virtgpu_trace.h:		       __entry->name = vq->name;
+drivers/gpu/drm/virtio/virtgpu_vq.c:	struct drm_device *dev = vq->vdev->priv;
+drivers/gpu/drm/virtio/virtgpu_vq.c:	struct drm_device *dev = vq->vdev->priv;
+drivers/gpu/drm/virtio/virtgpu_vq.c:	if (vq->num_free < elemcnt) {
+drivers/gpu/drm/virtio/virtgpu_vq.c:		wait_event(vgdev->ctrlq.ack_queue, vq->num_free >= elemcnt);
+drivers/gpu/drm/virtio/virtgpu_vq.c:		wait_event(vgdev->cursorq.ack_queue, vq->num_free >= outcnt);
+drivers/iommu/virtio-iommu.c:	struct viommu_dev *viommu = vq->vdev->priv;
+drivers/iommu/virtio-iommu.c:	size_t nr_evts = vq->num_free;
+drivers/media/common/videobuf2/videobuf2-v4l2.c:/* vb2_ops helpers. Only use if vq->lock is non-NULL. */
+drivers/media/common/videobuf2/videobuf2-v4l2.c:	mutex_unlock(vq->lock);
+drivers/media/common/videobuf2/videobuf2-v4l2.c:	mutex_lock(vq->lock);
+drivers/media/dvb-frontends/rtl2832_sdr.c:	if (vq->num_buffers + *nbuffers < 8)
+drivers/media/dvb-frontends/rtl2832_sdr.c:		*nbuffers = 8 - vq->num_buffers;
+drivers/media/i2c/video-i2c.c:	if (vq->num_buffers + *nbuffers < 2)
+drivers/media/pci/dt3155/dt3155.c:	if (vq->num_buffers + *nbuffers < 2)
+drivers/media/pci/dt3155/dt3155.c:		*nbuffers = 2 - vq->num_buffers;
+drivers/media/pci/netup_unidvb/netup_unidvb_core.c:	if (vq->num_buffers + *nbuffers < VIDEO_MAX_FRAME)
+drivers/media/pci/netup_unidvb/netup_unidvb_core.c:		*nbuffers = VIDEO_MAX_FRAME - vq->num_buffers;
+drivers/media/pci/saa7134/saa7134-empress.c:	struct saa7134_dmaqueue *dmaq = vq->drv_priv;
+drivers/media/pci/saa7134/saa7134-empress.c:	struct saa7134_dmaqueue *dmaq = vq->drv_priv;
+drivers/media/pci/saa7134/saa7134-ts.c:	struct saa7134_dmaqueue *dmaq = vq->drv_priv;
+drivers/media/pci/saa7134/saa7134-ts.c:	struct saa7134_dmaqueue *dmaq = vq->drv_priv;
+drivers/media/pci/saa7134/saa7134-video.c:	struct saa7134_dmaqueue *dmaq = vq->drv_priv;
+drivers/media/pci/saa7134/saa7134-video.c:	struct saa7134_dmaqueue *dmaq = vq->drv_priv;
+drivers/media/pci/tw686x/tw686x-video.c:	if (vq->num_buffers + *nbuffers < 3)
+drivers/media/pci/tw686x/tw686x-video.c:		*nbuffers = 3 - vq->num_buffers;
+drivers/media/pci/zoran/zoran_driver.c:	if (*nbuffers < vq->min_buffers_needed)
+drivers/media/pci/zoran/zoran_driver.c:		*nbuffers = vq->min_buffers_needed;
+drivers/media/pci/zoran/zoran_driver.c:	struct zoran *zr = vq->drv_priv;
+drivers/media/pci/zoran/zoran_driver.c:	struct zoran *zr = vq->drv_priv;
+drivers/media/pci/zoran/zoran_driver.c:	vq->dev = &zr->pci_dev->dev;
+drivers/media/pci/zoran/zoran_driver.c:	vq->type = dir;
+drivers/media/pci/zoran/zoran_driver.c:	vq->io_modes = VB2_DMABUF | VB2_MMAP;
+drivers/media/pci/zoran/zoran_driver.c:	vq->drv_priv = zr;
+drivers/media/pci/zoran/zoran_driver.c:	vq->buf_struct_size = sizeof(struct zr_buffer);
+drivers/media/pci/zoran/zoran_driver.c:	vq->ops = &zr_video_qops;
+drivers/media/pci/zoran/zoran_driver.c:	vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/pci/zoran/zoran_driver.c:	vq->gfp_flags = GFP_DMA32;
+drivers/media/pci/zoran/zoran_driver.c:	vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
+drivers/media/pci/zoran/zoran_driver.c:	vq->min_buffers_needed = 9;
+drivers/media/pci/zoran/zoran_driver.c:	vq->lock = &zr->lock;
+drivers/media/platform/allegro-dvt/allegro-core.c:		 V4L2_TYPE_IS_OUTPUT(vq->type) ? "output" : "capture",
+drivers/media/platform/allegro-dvt/allegro-core.c:		if (V4L2_TYPE_IS_OUTPUT(vq->type)) {
+drivers/media/platform/allegro-dvt/allegro-core.c:		if (V4L2_TYPE_IS_OUTPUT(vq->type))
+drivers/media/platform/allegro-dvt/allegro-core.c:	src_vq->dev = &channel->dev->plat_dev->dev;
+drivers/media/platform/allegro-dvt/allegro-core.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+drivers/media/platform/allegro-dvt/allegro-core.c:	src_vq->io_modes = VB2_DMABUF | VB2_MMAP;
+drivers/media/platform/allegro-dvt/allegro-core.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/allegro-dvt/allegro-core.c:	src_vq->drv_priv = channel;
+drivers/media/platform/allegro-dvt/allegro-core.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/allegro-dvt/allegro-core.c:	src_vq->ops = &allegro_queue_ops;
+drivers/media/platform/allegro-dvt/allegro-core.c:	src_vq->buf_struct_size = sizeof(struct allegro_m2m_buffer);
+drivers/media/platform/allegro-dvt/allegro-core.c:	src_vq->lock = &channel->dev->lock;
+drivers/media/platform/allegro-dvt/allegro-core.c:	dst_vq->dev = &channel->dev->plat_dev->dev;
+drivers/media/platform/allegro-dvt/allegro-core.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/media/platform/allegro-dvt/allegro-core.c:	dst_vq->io_modes = VB2_DMABUF | VB2_MMAP;
+drivers/media/platform/allegro-dvt/allegro-core.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/allegro-dvt/allegro-core.c:	dst_vq->drv_priv = channel;
+drivers/media/platform/allegro-dvt/allegro-core.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/allegro-dvt/allegro-core.c:	dst_vq->ops = &allegro_queue_ops;
+drivers/media/platform/allegro-dvt/allegro-core.c:	dst_vq->buf_struct_size = sizeof(struct allegro_m2m_buffer);
+drivers/media/platform/allegro-dvt/allegro-core.c:	dst_vq->lock = &channel->dev->lock;
+drivers/media/platform/amlogic/meson-ge2d/ge2d.c:	struct ge2d_frame *f = get_frame(ctx, vq->type);
+drivers/media/platform/amlogic/meson-ge2d/ge2d.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type))
+drivers/media/platform/amlogic/meson-ge2d/ge2d.c:		if (V4L2_TYPE_IS_OUTPUT(vq->type))
+drivers/media/platform/amlogic/meson-ge2d/ge2d.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+drivers/media/platform/amlogic/meson-ge2d/ge2d.c:	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/amlogic/meson-ge2d/ge2d.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/amlogic/meson-ge2d/ge2d.c:	src_vq->ops = &ge2d_qops;
+drivers/media/platform/amlogic/meson-ge2d/ge2d.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/amlogic/meson-ge2d/ge2d.c:	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/amlogic/meson-ge2d/ge2d.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/amlogic/meson-ge2d/ge2d.c:	src_vq->lock = &ctx->ge2d->mutex;
+drivers/media/platform/amlogic/meson-ge2d/ge2d.c:	src_vq->dev = ctx->ge2d->v4l2_dev.dev;
+drivers/media/platform/amlogic/meson-ge2d/ge2d.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/media/platform/amlogic/meson-ge2d/ge2d.c:	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/amlogic/meson-ge2d/ge2d.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/amlogic/meson-ge2d/ge2d.c:	dst_vq->ops = &ge2d_qops;
+drivers/media/platform/amlogic/meson-ge2d/ge2d.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/amlogic/meson-ge2d/ge2d.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/amlogic/meson-ge2d/ge2d.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/amlogic/meson-ge2d/ge2d.c:	dst_vq->lock = &ctx->ge2d->mutex;
+drivers/media/platform/amlogic/meson-ge2d/ge2d.c:	dst_vq->dev = ctx->ge2d->v4l2_dev.dev;
+drivers/media/platform/amphion/vpu_dbg.c:			vq->num_buffers,
+drivers/media/platform/amphion/vpu_dbg.c:			vq->last_buffer_dequeued);
+drivers/media/platform/amphion/vpu_dbg.c:			vq->num_buffers,
+drivers/media/platform/amphion/vpu_dbg.c:			vq->last_buffer_dequeued);
+drivers/media/platform/amphion/vpu_dbg.c:	for (i = 0; i < vq->num_buffers; i++) {
+drivers/media/platform/amphion/vpu_dbg.c:		struct vb2_buffer *vb = vq->bufs[i];
+drivers/media/platform/amphion/vpu_dbg.c:	for (i = 0; i < vq->num_buffers; i++) {
+drivers/media/platform/amphion/vpu_dbg.c:		struct vb2_buffer *vb = vq->bufs[i];
+drivers/media/platform/amphion/vpu_v4l2.c:	cur_fmt = vpu_get_format(inst, vq->type);
+drivers/media/platform/amphion/vpu_v4l2.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type))
+drivers/media/platform/amphion/vpu_v4l2.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+drivers/media/platform/amphion/vpu_v4l2.c:	inst->out_format.type = src_vq->type;
+drivers/media/platform/amphion/vpu_v4l2.c:	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/amphion/vpu_v4l2.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/amphion/vpu_v4l2.c:	src_vq->ops = &vpu_vb2_ops;
+drivers/media/platform/amphion/vpu_v4l2.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/amphion/vpu_v4l2.c:		src_vq->mem_ops = &vb2_vmalloc_memops;
+drivers/media/platform/amphion/vpu_v4l2.c:	src_vq->drv_priv = inst;
+drivers/media/platform/amphion/vpu_v4l2.c:	src_vq->buf_struct_size = sizeof(struct vpu_vb2_buffer);
+drivers/media/platform/amphion/vpu_v4l2.c:	src_vq->min_buffers_needed = 1;
+drivers/media/platform/amphion/vpu_v4l2.c:	src_vq->dev = inst->vpu->dev;
+drivers/media/platform/amphion/vpu_v4l2.c:	src_vq->lock = &inst->lock;
+drivers/media/platform/amphion/vpu_v4l2.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+drivers/media/platform/amphion/vpu_v4l2.c:	inst->cap_format.type = dst_vq->type;
+drivers/media/platform/amphion/vpu_v4l2.c:	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/amphion/vpu_v4l2.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/amphion/vpu_v4l2.c:	dst_vq->ops = &vpu_vb2_ops;
+drivers/media/platform/amphion/vpu_v4l2.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/amphion/vpu_v4l2.c:		dst_vq->mem_ops = &vb2_vmalloc_memops;
+drivers/media/platform/amphion/vpu_v4l2.c:	dst_vq->drv_priv = inst;
+drivers/media/platform/amphion/vpu_v4l2.c:	dst_vq->buf_struct_size = sizeof(struct vpu_vb2_buffer);
+drivers/media/platform/amphion/vpu_v4l2.c:	dst_vq->min_buffers_needed = 1;
+drivers/media/platform/amphion/vpu_v4l2.c:	dst_vq->dev = inst->vpu->dev;
+drivers/media/platform/amphion/vpu_v4l2.c:	dst_vq->lock = &inst->lock;
+drivers/media/platform/chips-media/coda-common.c:			 __func__, v4l2_type_names[f->type], vq->num_buffers);
+drivers/media/platform/chips-media/coda-common.c:	dst_vq->last_buffer_dequeued = true;
+drivers/media/platform/chips-media/coda-common.c:	wake_up(&dst_vq->done_wq);
+drivers/media/platform/chips-media/coda-common.c:	spin_lock_irqsave(&dst_vq->done_lock, flags);
+drivers/media/platform/chips-media/coda-common.c:	if (list_empty(&dst_vq->done_list)) {
+drivers/media/platform/chips-media/coda-common.c:		spin_unlock_irqrestore(&dst_vq->done_lock, flags);
+drivers/media/platform/chips-media/coda-common.c:	dst_vb = list_last_entry(&dst_vq->done_list, struct vb2_buffer,
+drivers/media/platform/chips-media/coda-common.c:	spin_unlock_irqrestore(&dst_vq->done_lock, flags);
+drivers/media/platform/chips-media/coda-common.c:	q_data = get_q_data(ctx, vq->type);
+drivers/media/platform/chips-media/coda-common.c:	if (ctx->bitstream.size && vq->type == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
+drivers/media/platform/chips-media/coda-common.c:		    vq->type == V4L2_BUF_TYPE_VIDEO_OUTPUT)
+drivers/media/platform/chips-media/coda-common.c:	vq->drv_priv = ctx;
+drivers/media/platform/chips-media/coda-common.c:	vq->ops = &coda_qops;
+drivers/media/platform/chips-media/coda-common.c:	vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/chips-media/coda-common.c:	vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/chips-media/coda-common.c:	vq->lock = &ctx->dev->dev_mutex;
+drivers/media/platform/chips-media/coda-common.c:	vq->allow_zero_bytesused = 1;
+drivers/media/platform/chips-media/coda-common.c:	vq->min_buffers_needed = 1;
+drivers/media/platform/chips-media/coda-common.c:	vq->dev = ctx->dev->dev;
+drivers/media/platform/chips-media/coda-common.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+drivers/media/platform/chips-media/coda-common.c:	src_vq->io_modes = VB2_DMABUF | VB2_MMAP;
+drivers/media/platform/chips-media/coda-common.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/chips-media/coda-common.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/media/platform/chips-media/coda-common.c:	dst_vq->io_modes = VB2_DMABUF | VB2_MMAP;
+drivers/media/platform/chips-media/coda-common.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/chips-media/coda-common.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+drivers/media/platform/chips-media/coda-common.c:	src_vq->io_modes = VB2_DMABUF | VB2_MMAP | VB2_USERPTR;
+drivers/media/platform/chips-media/coda-common.c:	src_vq->mem_ops = &vb2_vmalloc_memops;
+drivers/media/platform/chips-media/coda-common.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/media/platform/chips-media/coda-common.c:	dst_vq->io_modes = VB2_DMABUF | VB2_MMAP;
+drivers/media/platform/chips-media/coda-common.c:	dst_vq->dma_attrs = DMA_ATTR_NO_KERNEL_MAPPING;
+drivers/media/platform/chips-media/coda-common.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/intel/pxa_camera.c:	vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/media/platform/intel/pxa_camera.c:	vq->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
+drivers/media/platform/intel/pxa_camera.c:	vq->drv_priv = pcdev;
+drivers/media/platform/intel/pxa_camera.c:	vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
+drivers/media/platform/intel/pxa_camera.c:	vq->buf_struct_size = sizeof(struct pxa_buffer);
+drivers/media/platform/intel/pxa_camera.c:	vq->dev = pcdev->v4l2_dev.dev;
+drivers/media/platform/intel/pxa_camera.c:	vq->ops = &pxac_vb2_ops;
+drivers/media/platform/intel/pxa_camera.c:	vq->mem_ops = &vb2_dma_sg_memops;
+drivers/media/platform/intel/pxa_camera.c:	vq->lock = &pcdev->mlock;
+drivers/media/platform/m2m-deinterlace.c:	q_data = get_q_data(vq->type);
+drivers/media/platform/m2m-deinterlace.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+drivers/media/platform/m2m-deinterlace.c:	src_vq->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
+drivers/media/platform/m2m-deinterlace.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/m2m-deinterlace.c:	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/m2m-deinterlace.c:	src_vq->ops = &deinterlace_qops;
+drivers/media/platform/m2m-deinterlace.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/m2m-deinterlace.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/m2m-deinterlace.c:	src_vq->dev = ctx->dev->v4l2_dev.dev;
+drivers/media/platform/m2m-deinterlace.c:	src_vq->lock = &ctx->dev->dev_mutex;
+drivers/media/platform/m2m-deinterlace.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/media/platform/m2m-deinterlace.c:	dst_vq->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
+drivers/media/platform/m2m-deinterlace.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/m2m-deinterlace.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/m2m-deinterlace.c:	dst_vq->ops = &deinterlace_qops;
+drivers/media/platform/m2m-deinterlace.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/m2m-deinterlace.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/m2m-deinterlace.c:	dst_vq->dev = ctx->dev->v4l2_dev.dev;
+drivers/media/platform/m2m-deinterlace.c:	dst_vq->lock = &ctx->dev->dev_mutex;
+drivers/media/platform/marvell/mcam-core.c:	vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/media/platform/marvell/mcam-core.c:	vq->drv_priv = cam;
+drivers/media/platform/marvell/mcam-core.c:	vq->lock = &cam->s_mutex;
+drivers/media/platform/marvell/mcam-core.c:	vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
+drivers/media/platform/marvell/mcam-core.c:	vq->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF | VB2_READ;
+drivers/media/platform/marvell/mcam-core.c:	vq->buf_struct_size = sizeof(struct mcam_vb_buffer);
+drivers/media/platform/marvell/mcam-core.c:	vq->dev = cam->dev;
+drivers/media/platform/marvell/mcam-core.c:		vq->ops = &mcam_vb2_ops;
+drivers/media/platform/marvell/mcam-core.c:		vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/marvell/mcam-core.c:		vq->ops = &mcam_vb2_sg_ops;
+drivers/media/platform/marvell/mcam-core.c:		vq->mem_ops = &vb2_dma_sg_memops;
+drivers/media/platform/marvell/mcam-core.c:		vq->ops = &mcam_vb2_ops;
+drivers/media/platform/marvell/mcam-core.c:		vq->mem_ops = &vb2_vmalloc_memops;
+drivers/media/platform/mediatek/jpeg/mtk_jpeg_core.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+drivers/media/platform/mediatek/jpeg/mtk_jpeg_core.c:	src_vq->io_modes = VB2_DMABUF | VB2_MMAP;
+drivers/media/platform/mediatek/jpeg/mtk_jpeg_core.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/mediatek/jpeg/mtk_jpeg_core.c:	src_vq->buf_struct_size = sizeof(struct mtk_jpeg_src_buf);
+drivers/media/platform/mediatek/jpeg/mtk_jpeg_core.c:	src_vq->ops = jpeg->variant->qops;
+drivers/media/platform/mediatek/jpeg/mtk_jpeg_core.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/mediatek/jpeg/mtk_jpeg_core.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/mediatek/jpeg/mtk_jpeg_core.c:	src_vq->lock = &ctx->jpeg->lock;
+drivers/media/platform/mediatek/jpeg/mtk_jpeg_core.c:	src_vq->dev = ctx->jpeg->dev;
+drivers/media/platform/mediatek/jpeg/mtk_jpeg_core.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+drivers/media/platform/mediatek/jpeg/mtk_jpeg_core.c:	dst_vq->io_modes = VB2_DMABUF | VB2_MMAP;
+drivers/media/platform/mediatek/jpeg/mtk_jpeg_core.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/mediatek/jpeg/mtk_jpeg_core.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/mediatek/jpeg/mtk_jpeg_core.c:	dst_vq->ops = jpeg->variant->qops;
+drivers/media/platform/mediatek/jpeg/mtk_jpeg_core.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/mediatek/jpeg/mtk_jpeg_core.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/mediatek/jpeg/mtk_jpeg_core.c:	dst_vq->lock = &ctx->jpeg->lock;
+drivers/media/platform/mediatek/jpeg/mtk_jpeg_core.c:	dst_vq->dev = ctx->jpeg->dev;
+drivers/media/platform/mediatek/mdp/mtk_mdp_m2m.c:	frame = mtk_mdp_ctx_get_frame(ctx, vq->type);
+drivers/media/platform/mediatek/mdp/mtk_mdp_m2m.c:		    ctx->id, vq->type, *num_planes, *num_buffers,
+drivers/media/platform/mediatek/mdp/mtk_mdp_m2m.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+drivers/media/platform/mediatek/mdp/mtk_mdp_m2m.c:	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/mediatek/mdp/mtk_mdp_m2m.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/mediatek/mdp/mtk_mdp_m2m.c:	src_vq->ops = &mtk_mdp_m2m_qops;
+drivers/media/platform/mediatek/mdp/mtk_mdp_m2m.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/mediatek/mdp/mtk_mdp_m2m.c:	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/mediatek/mdp/mtk_mdp_m2m.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/mediatek/mdp/mtk_mdp_m2m.c:	src_vq->dev = &ctx->mdp_dev->pdev->dev;
+drivers/media/platform/mediatek/mdp/mtk_mdp_m2m.c:	src_vq->lock = &ctx->mdp_dev->lock;
+drivers/media/platform/mediatek/mdp/mtk_mdp_m2m.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+drivers/media/platform/mediatek/mdp/mtk_mdp_m2m.c:	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/mediatek/mdp/mtk_mdp_m2m.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/mediatek/mdp/mtk_mdp_m2m.c:	dst_vq->ops = &mtk_mdp_m2m_qops;
+drivers/media/platform/mediatek/mdp/mtk_mdp_m2m.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/mediatek/mdp/mtk_mdp_m2m.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/mediatek/mdp/mtk_mdp_m2m.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/mediatek/mdp/mtk_mdp_m2m.c:	dst_vq->dev = &ctx->mdp_dev->pdev->dev;
+drivers/media/platform/mediatek/mdp/mtk_mdp_m2m.c:	dst_vq->lock = &ctx->mdp_dev->lock;
+drivers/media/platform/mediatek/mdp3/mtk-mdp3-m2m.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+drivers/media/platform/mediatek/mdp3/mtk-mdp3-m2m.c:	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/mediatek/mdp3/mtk-mdp3-m2m.c:	src_vq->ops = &mdp_m2m_qops;
+drivers/media/platform/mediatek/mdp3/mtk-mdp3-m2m.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/mediatek/mdp3/mtk-mdp3-m2m.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/mediatek/mdp3/mtk-mdp3-m2m.c:	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/mediatek/mdp3/mtk-mdp3-m2m.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/mediatek/mdp3/mtk-mdp3-m2m.c:	src_vq->dev = &ctx->mdp_dev->pdev->dev;
+drivers/media/platform/mediatek/mdp3/mtk-mdp3-m2m.c:	src_vq->lock = &ctx->ctx_lock;
+drivers/media/platform/mediatek/mdp3/mtk-mdp3-m2m.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+drivers/media/platform/mediatek/mdp3/mtk-mdp3-m2m.c:	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/mediatek/mdp3/mtk-mdp3-m2m.c:	dst_vq->ops = &mdp_m2m_qops;
+drivers/media/platform/mediatek/mdp3/mtk-mdp3-m2m.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/mediatek/mdp3/mtk-mdp3-m2m.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/mediatek/mdp3/mtk-mdp3-m2m.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/mediatek/mdp3/mtk-mdp3-m2m.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/mediatek/mdp3/mtk-mdp3-m2m.c:	dst_vq->dev = &ctx->mdp_dev->pdev->dev;
+drivers/media/platform/mediatek/mdp3/mtk-mdp3-m2m.c:	dst_vq->lock = &ctx->ctx_lock;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:	q_data = mtk_vdec_get_q_data(ctx, vq->type);
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:		mtk_v4l2_err("vq->type=%d err\n", vq->type);
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:		if (vq->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE)
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:			ctx->id, vq->type, *nplanes, *nbuffers,
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:	src_vq->type		= V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:	src_vq->io_modes	= VB2_DMABUF | VB2_MMAP;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:	src_vq->drv_priv	= ctx;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:	src_vq->buf_struct_size = sizeof(struct mtk_video_dec_buf);
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:	src_vq->ops		= ctx->dev->vdec_pdata->vdec_vb2_ops;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:	src_vq->mem_ops		= &vb2_dma_contig_memops;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:	src_vq->lock		= &ctx->dev->dev_mutex;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:	src_vq->dev             = &ctx->dev->plat_dev->dev;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:	src_vq->allow_cache_hints = 1;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:	dst_vq->type		= V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:	dst_vq->io_modes	= VB2_DMABUF | VB2_MMAP;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:	dst_vq->drv_priv	= ctx;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:	dst_vq->buf_struct_size = sizeof(struct mtk_video_dec_buf);
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:	dst_vq->ops		= ctx->dev->vdec_pdata->vdec_vb2_ops;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:	dst_vq->mem_ops		= &vb2_dma_contig_memops;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:	dst_vq->lock		= &ctx->dev->dev_mutex;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:	dst_vq->dev             = &ctx->dev->plat_dev->dev;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec.c:	dst_vq->allow_cache_hints = 1;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec_stateless.c:	src_vq->supports_requests = true;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_dec_stateless.c:	src_vq->requires_requests = true;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_enc.c:	struct mtk_q_data *q_data = mtk_venc_get_q_data(ctx, vq->type);
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_enc.c:	src_vq->type		= V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_enc.c:	src_vq->io_modes	= VB2_DMABUF | VB2_MMAP | VB2_USERPTR;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_enc.c:	src_vq->drv_priv	= ctx;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_enc.c:	src_vq->buf_struct_size = sizeof(struct mtk_video_enc_buf);
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_enc.c:	src_vq->ops		= &mtk_venc_vb2_ops;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_enc.c:	src_vq->mem_ops		= &vb2_dma_contig_memops;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_enc.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_enc.c:	src_vq->lock		= &ctx->q_mutex;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_enc.c:	src_vq->dev		= &ctx->dev->plat_dev->dev;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_enc.c:	dst_vq->type		= V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_enc.c:	dst_vq->io_modes	= VB2_DMABUF | VB2_MMAP | VB2_USERPTR;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_enc.c:	dst_vq->drv_priv	= ctx;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_enc.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_enc.c:	dst_vq->ops		= &mtk_venc_vb2_ops;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_enc.c:	dst_vq->mem_ops		= &vb2_dma_contig_memops;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_enc.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_enc.c:	dst_vq->lock		= &ctx->q_mutex;
+drivers/media/platform/mediatek/vcodec/mtk_vcodec_enc.c:	dst_vq->dev		= &ctx->dev->plat_dev->dev;
+drivers/media/platform/mediatek/vcodec/vdec/vdec_vp9_req_lat_if.c:	for (i = 0; i < vq->num_buffers; i++) {
+drivers/media/platform/mediatek/vcodec/vdec/vdec_vp9_req_lat_if.c:		if (vb == vq->bufs[i]) {
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type))
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	if (V4L2_TYPE_IS_CAPTURE(vq->type) && vb->num_planes > 1) {
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type))
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:		if (vq->memory == VB2_MEMORY_DMABUF) {
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type)) {
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:		if (V4L2_TYPE_IS_CAPTURE(vq->type)) {
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:		if (V4L2_TYPE_IS_OUTPUT(vq->type)) {
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:		if (V4L2_TYPE_IS_OUTPUT(vq->type))
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	src_vq->buf_struct_size = sizeof(struct tegra_m2m_buffer);
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	src_vq->io_modes = VB2_DMABUF | VB2_MMAP;
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	src_vq->supports_requests = true;
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	src_vq->requires_requests = true;
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	src_vq->lock = &vde->v4l2_lock;
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	src_vq->dma_attrs = dma_attrs;
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	src_vq->mem_ops = mem_ops;
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	src_vq->ops = &tegra_qops;
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	src_vq->dev = vde->dev;
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	dst_vq->buf_struct_size = sizeof(struct tegra_m2m_buffer);
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	dst_vq->io_modes = VB2_DMABUF | VB2_MMAP;
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	dst_vq->lock = &vde->v4l2_lock;
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	dst_vq->dma_attrs = dma_attrs;
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	dst_vq->mem_ops = mem_ops;
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	dst_vq->ops = &tegra_qops;
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/nvidia/tegra-vde/v4l2.c:	dst_vq->dev = vde->dev;
+drivers/media/platform/nxp/dw100/dw100.c:	format = &dw100_get_q_data(ctx, vq->type)->pix_fmt;
+drivers/media/platform/nxp/dw100/dw100.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+drivers/media/platform/nxp/dw100/dw100.c:	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/nxp/dw100/dw100.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/nxp/dw100/dw100.c:	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/nxp/dw100/dw100.c:	src_vq->ops = &dw100_qops;
+drivers/media/platform/nxp/dw100/dw100.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/nxp/dw100/dw100.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/nxp/dw100/dw100.c:	src_vq->lock = &ctx->vq_mutex;
+drivers/media/platform/nxp/dw100/dw100.c:	src_vq->dev = ctx->dw_dev->v4l2_dev.dev;
+drivers/media/platform/nxp/dw100/dw100.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+drivers/media/platform/nxp/dw100/dw100.c:	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/nxp/dw100/dw100.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/nxp/dw100/dw100.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/nxp/dw100/dw100.c:	dst_vq->ops = &dw100_qops;
+drivers/media/platform/nxp/dw100/dw100.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/nxp/dw100/dw100.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/nxp/dw100/dw100.c:	dst_vq->lock = &ctx->vq_mutex;
+drivers/media/platform/nxp/dw100/dw100.c:	dst_vq->dev = ctx->dw_dev->v4l2_dev.dev;
+drivers/media/platform/nxp/imx-jpeg/mxc-jpeg.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+drivers/media/platform/nxp/imx-jpeg/mxc-jpeg.c:	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/nxp/imx-jpeg/mxc-jpeg.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/nxp/imx-jpeg/mxc-jpeg.c:	src_vq->buf_struct_size = sizeof(struct mxc_jpeg_src_buf);
+drivers/media/platform/nxp/imx-jpeg/mxc-jpeg.c:	src_vq->ops = &mxc_jpeg_qops;
+drivers/media/platform/nxp/imx-jpeg/mxc-jpeg.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/nxp/imx-jpeg/mxc-jpeg.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/nxp/imx-jpeg/mxc-jpeg.c:	src_vq->lock = &ctx->mxc_jpeg->lock;
+drivers/media/platform/nxp/imx-jpeg/mxc-jpeg.c:	src_vq->dev = ctx->mxc_jpeg->dev;
+drivers/media/platform/nxp/imx-jpeg/mxc-jpeg.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+drivers/media/platform/nxp/imx-jpeg/mxc-jpeg.c:	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/nxp/imx-jpeg/mxc-jpeg.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/nxp/imx-jpeg/mxc-jpeg.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/nxp/imx-jpeg/mxc-jpeg.c:	dst_vq->ops = &mxc_jpeg_qops;
+drivers/media/platform/nxp/imx-jpeg/mxc-jpeg.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/nxp/imx-jpeg/mxc-jpeg.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/nxp/imx-jpeg/mxc-jpeg.c:	dst_vq->lock = &ctx->mxc_jpeg->lock;
+drivers/media/platform/nxp/imx-jpeg/mxc-jpeg.c:	dst_vq->dev = ctx->mxc_jpeg->dev;
+drivers/media/platform/nxp/imx-pxp.c:	q_data = get_q_data(ctx, vq->type);
+drivers/media/platform/nxp/imx-pxp.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+drivers/media/platform/nxp/imx-pxp.c:	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/nxp/imx-pxp.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/nxp/imx-pxp.c:	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/nxp/imx-pxp.c:	src_vq->ops = &pxp_qops;
+drivers/media/platform/nxp/imx-pxp.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/nxp/imx-pxp.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/nxp/imx-pxp.c:	src_vq->lock = &ctx->dev->dev_mutex;
+drivers/media/platform/nxp/imx-pxp.c:	src_vq->dev = ctx->dev->v4l2_dev.dev;
+drivers/media/platform/nxp/imx-pxp.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/media/platform/nxp/imx-pxp.c:	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/nxp/imx-pxp.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/nxp/imx-pxp.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/nxp/imx-pxp.c:	dst_vq->ops = &pxp_qops;
+drivers/media/platform/nxp/imx-pxp.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/nxp/imx-pxp.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/nxp/imx-pxp.c:	dst_vq->lock = &ctx->dev->dev_mutex;
+drivers/media/platform/nxp/imx-pxp.c:	dst_vq->dev = ctx->dev->v4l2_dev.dev;
+drivers/media/platform/nxp/mx2_emmaprp.c:	q_data = get_q_data(ctx, vq->type);
+drivers/media/platform/nxp/mx2_emmaprp.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+drivers/media/platform/nxp/mx2_emmaprp.c:	src_vq->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
+drivers/media/platform/nxp/mx2_emmaprp.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/nxp/mx2_emmaprp.c:	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/nxp/mx2_emmaprp.c:	src_vq->ops = &emmaprp_qops;
+drivers/media/platform/nxp/mx2_emmaprp.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/nxp/mx2_emmaprp.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/nxp/mx2_emmaprp.c:	src_vq->dev = ctx->dev->v4l2_dev.dev;
+drivers/media/platform/nxp/mx2_emmaprp.c:	src_vq->lock = &ctx->dev->dev_mutex;
+drivers/media/platform/nxp/mx2_emmaprp.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/media/platform/nxp/mx2_emmaprp.c:	dst_vq->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
+drivers/media/platform/nxp/mx2_emmaprp.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/nxp/mx2_emmaprp.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/nxp/mx2_emmaprp.c:	dst_vq->ops = &emmaprp_qops;
+drivers/media/platform/nxp/mx2_emmaprp.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/nxp/mx2_emmaprp.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/nxp/mx2_emmaprp.c:	dst_vq->dev = ctx->dev->v4l2_dev.dev;
+drivers/media/platform/nxp/mx2_emmaprp.c:	dst_vq->lock = &ctx->dev->dev_mutex;
+drivers/media/platform/qcom/venus/vdec.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+drivers/media/platform/qcom/venus/vdec.c:	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/qcom/venus/vdec.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/qcom/venus/vdec.c:	src_vq->ops = &vdec_vb2_ops;
+drivers/media/platform/qcom/venus/vdec.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/qcom/venus/vdec.c:	src_vq->drv_priv = inst;
+drivers/media/platform/qcom/venus/vdec.c:	src_vq->buf_struct_size = sizeof(struct venus_buffer);
+drivers/media/platform/qcom/venus/vdec.c:	src_vq->allow_zero_bytesused = 1;
+drivers/media/platform/qcom/venus/vdec.c:	src_vq->min_buffers_needed = 0;
+drivers/media/platform/qcom/venus/vdec.c:	src_vq->dev = inst->core->dev;
+drivers/media/platform/qcom/venus/vdec.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+drivers/media/platform/qcom/venus/vdec.c:	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/qcom/venus/vdec.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/qcom/venus/vdec.c:	dst_vq->ops = &vdec_vb2_ops;
+drivers/media/platform/qcom/venus/vdec.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/qcom/venus/vdec.c:	dst_vq->drv_priv = inst;
+drivers/media/platform/qcom/venus/vdec.c:	dst_vq->buf_struct_size = sizeof(struct venus_buffer);
+drivers/media/platform/qcom/venus/vdec.c:	dst_vq->allow_zero_bytesused = 1;
+drivers/media/platform/qcom/venus/vdec.c:	dst_vq->min_buffers_needed = 0;
+drivers/media/platform/qcom/venus/vdec.c:	dst_vq->dev = inst->core->dev;
+drivers/media/platform/qcom/venus/venc.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+drivers/media/platform/qcom/venus/venc.c:	src_vq->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
+drivers/media/platform/qcom/venus/venc.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/qcom/venus/venc.c:	src_vq->ops = &venc_vb2_ops;
+drivers/media/platform/qcom/venus/venc.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/qcom/venus/venc.c:	src_vq->drv_priv = inst;
+drivers/media/platform/qcom/venus/venc.c:	src_vq->buf_struct_size = sizeof(struct venus_buffer);
+drivers/media/platform/qcom/venus/venc.c:	src_vq->allow_zero_bytesused = 1;
+drivers/media/platform/qcom/venus/venc.c:	src_vq->min_buffers_needed = 1;
+drivers/media/platform/qcom/venus/venc.c:	src_vq->dev = inst->core->dev;
+drivers/media/platform/qcom/venus/venc.c:		src_vq->bidirectional = 1;
+drivers/media/platform/qcom/venus/venc.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+drivers/media/platform/qcom/venus/venc.c:	dst_vq->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
+drivers/media/platform/qcom/venus/venc.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/qcom/venus/venc.c:	dst_vq->ops = &venc_vb2_ops;
+drivers/media/platform/qcom/venus/venc.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/qcom/venus/venc.c:	dst_vq->drv_priv = inst;
+drivers/media/platform/qcom/venus/venc.c:	dst_vq->buf_struct_size = sizeof(struct venus_buffer);
+drivers/media/platform/qcom/venus/venc.c:	dst_vq->allow_zero_bytesused = 1;
+drivers/media/platform/qcom/venus/venc.c:	dst_vq->min_buffers_needed = 1;
+drivers/media/platform/qcom/venus/venc.c:	dst_vq->dev = inst->core->dev;
+drivers/media/platform/renesas/rcar_drif.c:	if (vq->num_buffers + *num_buffers < 16)
+drivers/media/platform/renesas/rcar_drif.c:		*num_buffers = 16 - vq->num_buffers;
+drivers/media/platform/renesas/rcar_fdp1.c:	q_data = get_q_data(ctx, vq->type);
+drivers/media/platform/renesas/rcar_fdp1.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+drivers/media/platform/renesas/rcar_fdp1.c:	src_vq->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
+drivers/media/platform/renesas/rcar_fdp1.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/renesas/rcar_fdp1.c:	src_vq->buf_struct_size = sizeof(struct fdp1_buffer);
+drivers/media/platform/renesas/rcar_fdp1.c:	src_vq->ops = &fdp1_qops;
+drivers/media/platform/renesas/rcar_fdp1.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/renesas/rcar_fdp1.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/renesas/rcar_fdp1.c:	src_vq->lock = &ctx->fdp1->dev_mutex;
+drivers/media/platform/renesas/rcar_fdp1.c:	src_vq->dev = ctx->fdp1->dev;
+drivers/media/platform/renesas/rcar_fdp1.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+drivers/media/platform/renesas/rcar_fdp1.c:	dst_vq->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
+drivers/media/platform/renesas/rcar_fdp1.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/renesas/rcar_fdp1.c:	dst_vq->buf_struct_size = sizeof(struct fdp1_buffer);
+drivers/media/platform/renesas/rcar_fdp1.c:	dst_vq->ops = &fdp1_qops;
+drivers/media/platform/renesas/rcar_fdp1.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/renesas/rcar_fdp1.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/renesas/rcar_fdp1.c:	dst_vq->lock = &ctx->fdp1->dev_mutex;
+drivers/media/platform/renesas/rcar_fdp1.c:	dst_vq->dev = ctx->fdp1->dev;
+drivers/media/platform/renesas/rcar_jpu.c:	q_data = jpu_get_q_data(ctx, vq->type);
+drivers/media/platform/renesas/rcar_jpu.c:	struct jpu_q_data *q_data = jpu_get_q_data(ctx, vq->type);
+drivers/media/platform/renesas/rcar_jpu.c:		if (V4L2_TYPE_IS_OUTPUT(vq->type))
+drivers/media/platform/renesas/rcar_jpu.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+drivers/media/platform/renesas/rcar_jpu.c:	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/renesas/rcar_jpu.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/renesas/rcar_jpu.c:	src_vq->buf_struct_size = sizeof(struct jpu_buffer);
+drivers/media/platform/renesas/rcar_jpu.c:	src_vq->ops = &jpu_qops;
+drivers/media/platform/renesas/rcar_jpu.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/renesas/rcar_jpu.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/renesas/rcar_jpu.c:	src_vq->lock = &ctx->jpu->mutex;
+drivers/media/platform/renesas/rcar_jpu.c:	src_vq->dev = ctx->jpu->v4l2_dev.dev;
+drivers/media/platform/renesas/rcar_jpu.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+drivers/media/platform/renesas/rcar_jpu.c:	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/renesas/rcar_jpu.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/renesas/rcar_jpu.c:	dst_vq->buf_struct_size = sizeof(struct jpu_buffer);
+drivers/media/platform/renesas/rcar_jpu.c:	dst_vq->ops = &jpu_qops;
+drivers/media/platform/renesas/rcar_jpu.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/renesas/rcar_jpu.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/renesas/rcar_jpu.c:	dst_vq->lock = &ctx->jpu->mutex;
+drivers/media/platform/renesas/rcar_jpu.c:	dst_vq->dev = ctx->jpu->v4l2_dev.dev;
+drivers/media/platform/renesas/sh_vou.c:/* Locking: caller holds fop_lock mutex and vq->irqlock spinlock */
+drivers/media/platform/rockchip/rga/rga-buf.c:	struct rga_frame *f = rga_get_frame(ctx, vq->type);
+drivers/media/platform/rockchip/rga/rga.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+drivers/media/platform/rockchip/rga/rga.c:	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/rockchip/rga/rga.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/rockchip/rga/rga.c:	src_vq->ops = &rga_qops;
+drivers/media/platform/rockchip/rga/rga.c:	src_vq->mem_ops = &vb2_dma_sg_memops;
+drivers/media/platform/rockchip/rga/rga.c:	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/rockchip/rga/rga.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/rockchip/rga/rga.c:	src_vq->lock = &ctx->rga->mutex;
+drivers/media/platform/rockchip/rga/rga.c:	src_vq->dev = ctx->rga->v4l2_dev.dev;
+drivers/media/platform/rockchip/rga/rga.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/media/platform/rockchip/rga/rga.c:	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/rockchip/rga/rga.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/rockchip/rga/rga.c:	dst_vq->ops = &rga_qops;
+drivers/media/platform/rockchip/rga/rga.c:	dst_vq->mem_ops = &vb2_dma_sg_memops;
+drivers/media/platform/rockchip/rga/rga.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/rockchip/rga/rga.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/rockchip/rga/rga.c:	dst_vq->lock = &ctx->rga->mutex;
+drivers/media/platform/rockchip/rga/rga.c:	dst_vq->dev = ctx->rga->v4l2_dev.dev;
+drivers/media/platform/rockchip/rkisp1/rkisp1-params.c:	struct rkisp1_params *params = vq->drv_priv;
+drivers/media/platform/rockchip/rkisp1/rkisp1-params.c:	struct rkisp1_params *params = vq->drv_priv;
+drivers/media/platform/rockchip/rkisp1/rkisp1-stats.c:	struct rkisp1_stats *stats_dev = vq->drv_priv;
+drivers/media/platform/rockchip/rkisp1/rkisp1-stats.c:	struct rkisp1_stats *stats = vq->drv_priv;
+drivers/media/platform/samsung/exynos-gsc/gsc-m2m.c:	frame = ctx_get_frame(ctx, vq->type);
+drivers/media/platform/samsung/exynos-gsc/gsc-m2m.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+drivers/media/platform/samsung/exynos-gsc/gsc-m2m.c:	src_vq->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
+drivers/media/platform/samsung/exynos-gsc/gsc-m2m.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/samsung/exynos-gsc/gsc-m2m.c:	src_vq->ops = &gsc_m2m_qops;
+drivers/media/platform/samsung/exynos-gsc/gsc-m2m.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/samsung/exynos-gsc/gsc-m2m.c:	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/samsung/exynos-gsc/gsc-m2m.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/samsung/exynos-gsc/gsc-m2m.c:	src_vq->lock = &ctx->gsc_dev->lock;
+drivers/media/platform/samsung/exynos-gsc/gsc-m2m.c:	src_vq->dev = &ctx->gsc_dev->pdev->dev;
+drivers/media/platform/samsung/exynos-gsc/gsc-m2m.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+drivers/media/platform/samsung/exynos-gsc/gsc-m2m.c:	dst_vq->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
+drivers/media/platform/samsung/exynos-gsc/gsc-m2m.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/samsung/exynos-gsc/gsc-m2m.c:	dst_vq->ops = &gsc_m2m_qops;
+drivers/media/platform/samsung/exynos-gsc/gsc-m2m.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/samsung/exynos-gsc/gsc-m2m.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/samsung/exynos-gsc/gsc-m2m.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/samsung/exynos-gsc/gsc-m2m.c:	dst_vq->lock = &ctx->gsc_dev->lock;
+drivers/media/platform/samsung/exynos-gsc/gsc-m2m.c:	dst_vq->dev = &ctx->gsc_dev->pdev->dev;
+drivers/media/platform/samsung/exynos4-is/fimc-capture.c:	struct fimc_ctx *ctx = vq->drv_priv;
+drivers/media/platform/samsung/exynos4-is/fimc-capture.c:	struct fimc_ctx *ctx = vq->drv_priv;
+drivers/media/platform/samsung/exynos4-is/fimc-lite.c:	struct fimc_lite *fimc = vq->drv_priv;
+drivers/media/platform/samsung/exynos4-is/fimc-lite.c:	struct fimc_lite *fimc = vq->drv_priv;
+drivers/media/platform/samsung/exynos4-is/fimc-m2m.c:	f = ctx_get_frame(ctx, vq->type);
+drivers/media/platform/samsung/exynos4-is/fimc-m2m.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+drivers/media/platform/samsung/exynos4-is/fimc-m2m.c:	src_vq->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
+drivers/media/platform/samsung/exynos4-is/fimc-m2m.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/samsung/exynos4-is/fimc-m2m.c:	src_vq->ops = &fimc_qops;
+drivers/media/platform/samsung/exynos4-is/fimc-m2m.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/samsung/exynos4-is/fimc-m2m.c:	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/samsung/exynos4-is/fimc-m2m.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/samsung/exynos4-is/fimc-m2m.c:	src_vq->lock = &ctx->fimc_dev->lock;
+drivers/media/platform/samsung/exynos4-is/fimc-m2m.c:	src_vq->dev = &ctx->fimc_dev->pdev->dev;
+drivers/media/platform/samsung/exynos4-is/fimc-m2m.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+drivers/media/platform/samsung/exynos4-is/fimc-m2m.c:	dst_vq->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
+drivers/media/platform/samsung/exynos4-is/fimc-m2m.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/samsung/exynos4-is/fimc-m2m.c:	dst_vq->ops = &fimc_qops;
+drivers/media/platform/samsung/exynos4-is/fimc-m2m.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/samsung/exynos4-is/fimc-m2m.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/samsung/exynos4-is/fimc-m2m.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/samsung/exynos4-is/fimc-m2m.c:	dst_vq->lock = &ctx->fimc_dev->lock;
+drivers/media/platform/samsung/exynos4-is/fimc-m2m.c:	dst_vq->dev = &ctx->fimc_dev->pdev->dev;
+drivers/media/platform/samsung/s5p-g2d/g2d.c:	struct g2d_frame *f = get_frame(ctx, vq->type);
+drivers/media/platform/samsung/s5p-g2d/g2d.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+drivers/media/platform/samsung/s5p-g2d/g2d.c:	src_vq->io_modes = VB2_MMAP | VB2_USERPTR;
+drivers/media/platform/samsung/s5p-g2d/g2d.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/samsung/s5p-g2d/g2d.c:	src_vq->ops = &g2d_qops;
+drivers/media/platform/samsung/s5p-g2d/g2d.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/samsung/s5p-g2d/g2d.c:	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/samsung/s5p-g2d/g2d.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/samsung/s5p-g2d/g2d.c:	src_vq->lock = &ctx->dev->mutex;
+drivers/media/platform/samsung/s5p-g2d/g2d.c:	src_vq->dev = ctx->dev->v4l2_dev.dev;
+drivers/media/platform/samsung/s5p-g2d/g2d.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/media/platform/samsung/s5p-g2d/g2d.c:	dst_vq->io_modes = VB2_MMAP | VB2_USERPTR;
+drivers/media/platform/samsung/s5p-g2d/g2d.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/samsung/s5p-g2d/g2d.c:	dst_vq->ops = &g2d_qops;
+drivers/media/platform/samsung/s5p-g2d/g2d.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/samsung/s5p-g2d/g2d.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/samsung/s5p-g2d/g2d.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/samsung/s5p-g2d/g2d.c:	dst_vq->lock = &ctx->dev->mutex;
+drivers/media/platform/samsung/s5p-g2d/g2d.c:	dst_vq->dev = ctx->dev->v4l2_dev.dev;
+drivers/media/platform/samsung/s5p-jpeg/jpeg-core.c:	q_data = get_q_data(ctx, vq->type);
+drivers/media/platform/samsung/s5p-jpeg/jpeg-core.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+drivers/media/platform/samsung/s5p-jpeg/jpeg-core.c:	src_vq->io_modes = VB2_MMAP | VB2_USERPTR;
+drivers/media/platform/samsung/s5p-jpeg/jpeg-core.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/samsung/s5p-jpeg/jpeg-core.c:	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/samsung/s5p-jpeg/jpeg-core.c:	src_vq->ops = &s5p_jpeg_qops;
+drivers/media/platform/samsung/s5p-jpeg/jpeg-core.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/samsung/s5p-jpeg/jpeg-core.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/samsung/s5p-jpeg/jpeg-core.c:	src_vq->lock = &ctx->jpeg->lock;
+drivers/media/platform/samsung/s5p-jpeg/jpeg-core.c:	src_vq->dev = ctx->jpeg->dev;
+drivers/media/platform/samsung/s5p-jpeg/jpeg-core.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/media/platform/samsung/s5p-jpeg/jpeg-core.c:	dst_vq->io_modes = VB2_MMAP | VB2_USERPTR;
+drivers/media/platform/samsung/s5p-jpeg/jpeg-core.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/samsung/s5p-jpeg/jpeg-core.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/samsung/s5p-jpeg/jpeg-core.c:	dst_vq->ops = &s5p_jpeg_qops;
+drivers/media/platform/samsung/s5p-jpeg/jpeg-core.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/samsung/s5p-jpeg/jpeg-core.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/samsung/s5p-jpeg/jpeg-core.c:	dst_vq->lock = &ctx->jpeg->lock;
+drivers/media/platform/samsung/s5p-jpeg/jpeg-core.c:	dst_vq->dev = ctx->jpeg->dev;
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_dec.c:	struct s5p_mfc_ctx *ctx = fh_to_ctx(vq->drv_priv);
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_dec.c:	    vq->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_dec.c:		   vq->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_dec.c:		mfc_err("State seems invalid. State = %d, vq->type = %d\n",
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_dec.c:							ctx->state, vq->type);
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_dec.c:	    vq->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_dec.c:	} else if (vq->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE &&
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_dec.c:	struct s5p_mfc_ctx *ctx = fh_to_ctx(vq->drv_priv);
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_dec.c:	if (vq->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_dec.c:	} else if (vq->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_dec.c:	struct s5p_mfc_ctx *ctx = fh_to_ctx(vq->drv_priv);
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_dec.c:	if (vq->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_dec.c:	} else if (vq->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_dec.c:		mfc_err("Unsupported buffer type (%d)\n", vq->type);
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_enc.c:	struct s5p_mfc_ctx *ctx = fh_to_ctx(vq->drv_priv);
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_enc.c:	if (vq->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_enc.c:	} else if (vq->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_enc.c:		mfc_err("invalid queue type: %d\n", vq->type);
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_enc.c:	struct s5p_mfc_ctx *ctx = fh_to_ctx(vq->drv_priv);
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_enc.c:	if (vq->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_enc.c:	} else if (vq->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_enc.c:		mfc_err("invalid queue type: %d\n", vq->type);
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_enc.c:	struct s5p_mfc_ctx *ctx = fh_to_ctx(vq->drv_priv);
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_enc.c:	if (vq->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_enc.c:	} else if (vq->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_enc.c:		mfc_err("invalid queue type: %d\n", vq->type);
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_enc.c:	struct s5p_mfc_ctx *ctx = fh_to_ctx(vq->drv_priv);
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_enc.c:	if (vq->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_enc.c:	} else if (vq->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
+drivers/media/platform/samsung/s5p-mfc/s5p_mfc_enc.c:		mfc_err("unsupported buffer type (%d)\n", vq->type);
+drivers/media/platform/st/sti/bdisp/bdisp-v4l2.c:	struct bdisp_frame *frame = ctx_get_frame(ctx, vq->type);
+drivers/media/platform/st/sti/bdisp/bdisp-v4l2.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+drivers/media/platform/st/sti/bdisp/bdisp-v4l2.c:	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/st/sti/bdisp/bdisp-v4l2.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/st/sti/bdisp/bdisp-v4l2.c:	src_vq->ops = &bdisp_qops;
+drivers/media/platform/st/sti/bdisp/bdisp-v4l2.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/st/sti/bdisp/bdisp-v4l2.c:	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/st/sti/bdisp/bdisp-v4l2.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/st/sti/bdisp/bdisp-v4l2.c:	src_vq->lock = &ctx->bdisp_dev->lock;
+drivers/media/platform/st/sti/bdisp/bdisp-v4l2.c:	src_vq->dev = ctx->bdisp_dev->v4l2_dev.dev;
+drivers/media/platform/st/sti/bdisp/bdisp-v4l2.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/media/platform/st/sti/bdisp/bdisp-v4l2.c:	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/st/sti/bdisp/bdisp-v4l2.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/st/sti/bdisp/bdisp-v4l2.c:	dst_vq->ops = &bdisp_qops;
+drivers/media/platform/st/sti/bdisp/bdisp-v4l2.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/st/sti/bdisp/bdisp-v4l2.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/st/sti/bdisp/bdisp-v4l2.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/st/sti/bdisp/bdisp-v4l2.c:	dst_vq->lock = &ctx->bdisp_dev->lock;
+drivers/media/platform/st/sti/bdisp/bdisp-v4l2.c:	dst_vq->dev = ctx->bdisp_dev->v4l2_dev.dev;
+drivers/media/platform/st/sti/hva/hva-v4l2.c:		if (buf->index >= vq->num_buffers) {
+drivers/media/platform/st/sti/hva/hva-v4l2.c:				ctx->name, buf->index, vq->num_buffers);
+drivers/media/platform/st/sti/hva/hva-v4l2.c:		to_type_str(vq->type), *num_buffers);
+drivers/media/platform/st/sti/hva/hva-v4l2.c:	size = vq->type == V4L2_BUF_TYPE_VIDEO_OUTPUT ?
+drivers/media/platform/st/sti/hva/hva-v4l2.c:		to_type_str(vq->type));
+drivers/media/platform/st/sti/hva/hva-v4l2.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type)) {
+drivers/media/platform/st/sti/hva/hva-v4l2.c:	if (vq->type == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
+drivers/media/platform/st/sti/hva/hva-v4l2.c:		to_type_str(vq->type));
+drivers/media/platform/st/sti/hva/hva-v4l2.c:	if (vq->type == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
+drivers/media/platform/st/sti/hva/hva-v4l2.c:	if ((V4L2_TYPE_IS_OUTPUT(vq->type) &&
+drivers/media/platform/st/sti/hva/hva-v4l2.c:	    (V4L2_TYPE_IS_CAPTURE(vq->type) &&
+drivers/media/platform/st/sti/hva/hva-v4l2.c:			ctx->name, to_type_str(vq->type),
+drivers/media/platform/st/sti/hva/hva-v4l2.c:	vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/st/sti/hva/hva-v4l2.c:	vq->drv_priv = ctx;
+drivers/media/platform/st/sti/hva/hva-v4l2.c:	vq->ops = &hva_qops;
+drivers/media/platform/st/sti/hva/hva-v4l2.c:	vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/st/sti/hva/hva-v4l2.c:	vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/st/sti/hva/hva-v4l2.c:	vq->lock = &ctx->hva_dev->lock;
+drivers/media/platform/st/sti/hva/hva-v4l2.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+drivers/media/platform/st/sti/hva/hva-v4l2.c:	src_vq->buf_struct_size = sizeof(struct hva_frame);
+drivers/media/platform/st/sti/hva/hva-v4l2.c:	src_vq->min_buffers_needed = MIN_FRAMES;
+drivers/media/platform/st/sti/hva/hva-v4l2.c:	src_vq->dev = ctx->hva_dev->dev;
+drivers/media/platform/st/sti/hva/hva-v4l2.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/media/platform/st/sti/hva/hva-v4l2.c:	dst_vq->buf_struct_size = sizeof(struct hva_stream);
+drivers/media/platform/st/sti/hva/hva-v4l2.c:	dst_vq->min_buffers_needed = MIN_STREAMS;
+drivers/media/platform/st/sti/hva/hva-v4l2.c:	dst_vq->dev = ctx->hva_dev->dev;
+drivers/media/platform/st/stm32/dma2d/dma2d.c:	struct dma2d_frame *f = get_frame(ctx, vq->type);
+drivers/media/platform/st/stm32/dma2d/dma2d.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+drivers/media/platform/st/stm32/dma2d/dma2d.c:	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/st/stm32/dma2d/dma2d.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/st/stm32/dma2d/dma2d.c:	src_vq->ops = &dma2d_qops;
+drivers/media/platform/st/stm32/dma2d/dma2d.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/st/stm32/dma2d/dma2d.c:	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/st/stm32/dma2d/dma2d.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/st/stm32/dma2d/dma2d.c:	src_vq->lock = &ctx->dev->mutex;
+drivers/media/platform/st/stm32/dma2d/dma2d.c:	src_vq->dev = ctx->dev->v4l2_dev.dev;
+drivers/media/platform/st/stm32/dma2d/dma2d.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/media/platform/st/stm32/dma2d/dma2d.c:	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/st/stm32/dma2d/dma2d.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/st/stm32/dma2d/dma2d.c:	dst_vq->ops = &dma2d_qops;
+drivers/media/platform/st/stm32/dma2d/dma2d.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/st/stm32/dma2d/dma2d.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/st/stm32/dma2d/dma2d.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/st/stm32/dma2d/dma2d.c:	dst_vq->lock = &ctx->dev->mutex;
+drivers/media/platform/st/stm32/dma2d/dma2d.c:	dst_vq->dev = ctx->dev->v4l2_dev.dev;
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type))
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type))
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:		if (V4L2_TYPE_IS_OUTPUT(vq->type))
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type) && ctx->prev)
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type)) {
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type)) {
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	src_vq->min_buffers_needed = 1;
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	src_vq->ops = &deinterlace_qops;
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	src_vq->lock = &ctx->dev->dev_mutex;
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	src_vq->dev = ctx->dev->dev;
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	dst_vq->min_buffers_needed = 2;
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	dst_vq->ops = &deinterlace_qops;
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	dst_vq->lock = &ctx->dev->dev_mutex;
+drivers/media/platform/sunxi/sun8i-di/sun8i-di.c:	dst_vq->dev = ctx->dev->dev;
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type))
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type))
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:		if (V4L2_TYPE_IS_OUTPUT(vq->type))
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type)) {
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type)) {
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	src_vq->min_buffers_needed = 1;
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	src_vq->ops = &rotate_qops;
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	src_vq->lock = &ctx->dev->dev_mutex;
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	src_vq->dev = ctx->dev->dev;
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	dst_vq->min_buffers_needed = 2;
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	dst_vq->ops = &rotate_qops;
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	dst_vq->lock = &ctx->dev->dev_mutex;
+drivers/media/platform/sunxi/sun8i-rotate/sun8i_rotate.c:	dst_vq->dev = ctx->dev->dev;
+drivers/media/platform/ti/am437x/am437x-vpfe.c:	if (vq->num_buffers + *nbuffers < 3)
+drivers/media/platform/ti/am437x/am437x-vpfe.c:		*nbuffers = 3 - vq->num_buffers;
+drivers/media/platform/ti/cal/cal-video.c:	if (vq->num_buffers + *nbuffers < 3)
+drivers/media/platform/ti/cal/cal-video.c:		*nbuffers = 3 - vq->num_buffers;
+drivers/media/platform/ti/davinci/vpbe_display.c:	if (vq->num_buffers + *nbuffers < VPBE_DEFAULT_NUM_BUFS)
+drivers/media/platform/ti/davinci/vpbe_display.c:		*nbuffers = VPBE_DEFAULT_NUM_BUFS - vq->num_buffers;
+drivers/media/platform/ti/davinci/vpif_capture.c:	if (vq->num_buffers + *nbuffers < 3)
+drivers/media/platform/ti/davinci/vpif_capture.c:		*nbuffers = 3 - vq->num_buffers;
+drivers/media/platform/ti/davinci/vpif_display.c:	if (vq->num_buffers + *nbuffers < 3)
+drivers/media/platform/ti/davinci/vpif_display.c:		*nbuffers = 3 - vq->num_buffers;
+drivers/media/platform/ti/omap/omap_vout.c:	if (is_rotation_enabled(vout) && vq->num_buffers + *nbufs > VRFB_NUM_BUFS) {
+drivers/media/platform/ti/omap/omap_vout.c:		*nbufs = VRFB_NUM_BUFS - vq->num_buffers;
+drivers/media/platform/ti/omap/omap_vout.c:	vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+drivers/media/platform/ti/omap/omap_vout.c:	vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/ti/omap/omap_vout.c:	vq->drv_priv = vout;
+drivers/media/platform/ti/omap/omap_vout.c:	vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
+drivers/media/platform/ti/omap/omap_vout.c:	vq->buf_struct_size = sizeof(struct omap_vout_buffer);
+drivers/media/platform/ti/omap/omap_vout.c:	vq->dev = vfd->v4l2_dev->dev;
+drivers/media/platform/ti/omap/omap_vout.c:	vq->ops = &omap_vout_vb2_ops;
+drivers/media/platform/ti/omap/omap_vout.c:	vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/ti/omap/omap_vout.c:	vq->lock = &vout->lock;
+drivers/media/platform/ti/omap/omap_vout.c:	vq->min_buffers_needed = 1;
+drivers/media/platform/ti/vpe/vpe.c:	q_data = get_q_data(ctx, vq->type);
+drivers/media/platform/ti/vpe/vpe.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+drivers/media/platform/ti/vpe/vpe.c:	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/ti/vpe/vpe.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/ti/vpe/vpe.c:	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/ti/vpe/vpe.c:	src_vq->ops = &vpe_qops;
+drivers/media/platform/ti/vpe/vpe.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/ti/vpe/vpe.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/ti/vpe/vpe.c:	src_vq->lock = &dev->dev_mutex;
+drivers/media/platform/ti/vpe/vpe.c:	src_vq->dev = dev->v4l2_dev.dev;
+drivers/media/platform/ti/vpe/vpe.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+drivers/media/platform/ti/vpe/vpe.c:	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/ti/vpe/vpe.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/ti/vpe/vpe.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/ti/vpe/vpe.c:	dst_vq->ops = &vpe_qops;
+drivers/media/platform/ti/vpe/vpe.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/ti/vpe/vpe.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/ti/vpe/vpe.c:	dst_vq->lock = &dev->dev_mutex;
+drivers/media/platform/ti/vpe/vpe.c:	dst_vq->dev = dev->v4l2_dev.dev;
+drivers/media/platform/verisilicon/hantro_drv.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+drivers/media/platform/verisilicon/hantro_drv.c:	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/verisilicon/hantro_drv.c:	src_vq->drv_priv = ctx;
+drivers/media/platform/verisilicon/hantro_drv.c:	src_vq->ops = &hantro_queue_ops;
+drivers/media/platform/verisilicon/hantro_drv.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/verisilicon/hantro_drv.c:	src_vq->dma_attrs = DMA_ATTR_ALLOC_SINGLE_PAGES |
+drivers/media/platform/verisilicon/hantro_drv.c:	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/platform/verisilicon/hantro_drv.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/verisilicon/hantro_drv.c:	src_vq->lock = &ctx->dev->vpu_mutex;
+drivers/media/platform/verisilicon/hantro_drv.c:	src_vq->dev = ctx->dev->v4l2_dev.dev;
+drivers/media/platform/verisilicon/hantro_drv.c:	src_vq->supports_requests = true;
+drivers/media/platform/verisilicon/hantro_drv.c:	dst_vq->bidirectional = true;
+drivers/media/platform/verisilicon/hantro_drv.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/media/platform/verisilicon/hantro_drv.c:	dst_vq->dma_attrs = DMA_ATTR_ALLOC_SINGLE_PAGES;
+drivers/media/platform/verisilicon/hantro_drv.c:		dst_vq->dma_attrs |= DMA_ATTR_NO_KERNEL_MAPPING;
+drivers/media/platform/verisilicon/hantro_drv.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+drivers/media/platform/verisilicon/hantro_drv.c:	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/media/platform/verisilicon/hantro_drv.c:	dst_vq->drv_priv = ctx;
+drivers/media/platform/verisilicon/hantro_drv.c:	dst_vq->ops = &hantro_queue_ops;
+drivers/media/platform/verisilicon/hantro_drv.c:	dst_vq->buf_struct_size = sizeof(struct hantro_decoded_buffer);
+drivers/media/platform/verisilicon/hantro_drv.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/platform/verisilicon/hantro_drv.c:	dst_vq->lock = &ctx->dev->vpu_mutex;
+drivers/media/platform/verisilicon/hantro_drv.c:	dst_vq->dev = ctx->dev->v4l2_dev.dev;
+drivers/media/platform/verisilicon/hantro_v4l2.c:		vq->subsystem_flags &= ~(VB2_V4L2_FL_SUPPORTS_M2M_HOLD_CAPTURE_BUF);
+drivers/media/platform/verisilicon/hantro_v4l2.c:		vq->subsystem_flags |= VB2_V4L2_FL_SUPPORTS_M2M_HOLD_CAPTURE_BUF;
+drivers/media/platform/verisilicon/hantro_v4l2.c:	switch (vq->type) {
+drivers/media/platform/verisilicon/hantro_v4l2.c:		vpu_err("invalid queue type: %d\n", vq->type);
+drivers/media/platform/verisilicon/hantro_v4l2.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type))
+drivers/media/platform/verisilicon/hantro_v4l2.c:	if (V4L2_TYPE_IS_CAPTURE(vq->type)) {
+drivers/media/platform/via/via-camera.c:	vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/media/platform/via/via-camera.c:	vq->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF | VB2_READ;
+drivers/media/platform/via/via-camera.c:	vq->drv_priv = cam;
+drivers/media/platform/via/via-camera.c:	vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
+drivers/media/platform/via/via-camera.c:	vq->buf_struct_size = sizeof(struct via_buffer);
+drivers/media/platform/via/via-camera.c:	vq->dev = cam->v4l2_dev.dev;
+drivers/media/platform/via/via-camera.c:	vq->ops = &viacam_vb2_ops;
+drivers/media/platform/via/via-camera.c:	vq->mem_ops = &vb2_dma_sg_memops;
+drivers/media/platform/via/via-camera.c:	vq->lock = &cam->lock;
+drivers/media/test-drivers/vicodec/vicodec-core.c:	struct vicodec_q_data *q_data = get_q_data(ctx, vq->type);
+drivers/media/test-drivers/vicodec/vicodec-core.c:	src_vq->type = (multiplanar ?
+drivers/media/test-drivers/vicodec/vicodec-core.c:	src_vq->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
+drivers/media/test-drivers/vicodec/vicodec-core.c:	src_vq->drv_priv = ctx;
+drivers/media/test-drivers/vicodec/vicodec-core.c:	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/test-drivers/vicodec/vicodec-core.c:	src_vq->ops = &vicodec_qops;
+drivers/media/test-drivers/vicodec/vicodec-core.c:	src_vq->mem_ops = &vb2_vmalloc_memops;
+drivers/media/test-drivers/vicodec/vicodec-core.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/test-drivers/vicodec/vicodec-core.c:		src_vq->lock = &ctx->dev->stateful_enc.mutex;
+drivers/media/test-drivers/vicodec/vicodec-core.c:		src_vq->lock = &ctx->dev->stateless_dec.mutex;
+drivers/media/test-drivers/vicodec/vicodec-core.c:		src_vq->lock = &ctx->dev->stateful_dec.mutex;
+drivers/media/test-drivers/vicodec/vicodec-core.c:	src_vq->supports_requests = ctx->is_stateless;
+drivers/media/test-drivers/vicodec/vicodec-core.c:	src_vq->requires_requests = ctx->is_stateless;
+drivers/media/test-drivers/vicodec/vicodec-core.c:	dst_vq->type = (multiplanar ?
+drivers/media/test-drivers/vicodec/vicodec-core.c:	dst_vq->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
+drivers/media/test-drivers/vicodec/vicodec-core.c:	dst_vq->drv_priv = ctx;
+drivers/media/test-drivers/vicodec/vicodec-core.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/test-drivers/vicodec/vicodec-core.c:	dst_vq->ops = &vicodec_qops;
+drivers/media/test-drivers/vicodec/vicodec-core.c:	dst_vq->mem_ops = &vb2_vmalloc_memops;
+drivers/media/test-drivers/vicodec/vicodec-core.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/test-drivers/vicodec/vicodec-core.c:	dst_vq->lock = src_vq->lock;
+drivers/media/test-drivers/vim2m.c:	q_data = get_q_data(ctx, vq->type);
+drivers/media/test-drivers/vim2m.c:		type_name(vq->type), count, size);
+drivers/media/test-drivers/vim2m.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+drivers/media/test-drivers/vim2m.c:	src_vq->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
+drivers/media/test-drivers/vim2m.c:	src_vq->drv_priv = ctx;
+drivers/media/test-drivers/vim2m.c:	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/test-drivers/vim2m.c:	src_vq->ops = &vim2m_qops;
+drivers/media/test-drivers/vim2m.c:	src_vq->mem_ops = &vb2_vmalloc_memops;
+drivers/media/test-drivers/vim2m.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/test-drivers/vim2m.c:	src_vq->lock = &ctx->vb_mutex;
+drivers/media/test-drivers/vim2m.c:	src_vq->supports_requests = true;
+drivers/media/test-drivers/vim2m.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/media/test-drivers/vim2m.c:	dst_vq->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
+drivers/media/test-drivers/vim2m.c:	dst_vq->drv_priv = ctx;
+drivers/media/test-drivers/vim2m.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/media/test-drivers/vim2m.c:	dst_vq->ops = &vim2m_qops;
+drivers/media/test-drivers/vim2m.c:	dst_vq->mem_ops = &vb2_vmalloc_memops;
+drivers/media/test-drivers/vim2m.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/media/test-drivers/vim2m.c:	dst_vq->lock = &ctx->vb_mutex;
+drivers/media/test-drivers/vivid/vivid-meta-cap.c:	if (vq->num_buffers + *nbuffers < 2)
+drivers/media/test-drivers/vivid/vivid-meta-cap.c:		*nbuffers = 2 - vq->num_buffers;
+drivers/media/test-drivers/vivid/vivid-meta-out.c:	if (vq->num_buffers + *nbuffers < 2)
+drivers/media/test-drivers/vivid/vivid-meta-out.c:		*nbuffers = 2 - vq->num_buffers;
+drivers/media/test-drivers/vivid/vivid-touch-cap.c:	if (vq->num_buffers + *nbuffers < 2)
+drivers/media/test-drivers/vivid/vivid-touch-cap.c:		*nbuffers = 2 - vq->num_buffers;
+drivers/media/test-drivers/vivid/vivid-vbi-cap.c:	unsigned size = vq->type == V4L2_BUF_TYPE_SLICED_VBI_CAPTURE ?
+drivers/media/test-drivers/vivid/vivid-vbi-cap.c:	if (vq->num_buffers + *nbuffers < 2)
+drivers/media/test-drivers/vivid/vivid-vbi-cap.c:		*nbuffers = 2 - vq->num_buffers;
+drivers/media/test-drivers/vivid/vivid-vbi-out.c:	unsigned size = vq->type == V4L2_BUF_TYPE_SLICED_VBI_OUTPUT ?
+drivers/media/test-drivers/vivid/vivid-vbi-out.c:	if (vq->num_buffers + *nbuffers < 2)
+drivers/media/test-drivers/vivid/vivid-vbi-out.c:		*nbuffers = 2 - vq->num_buffers;
+drivers/media/test-drivers/vivid/vivid-vid-cap.c:	if (vq->num_buffers + *nbuffers < 2)
+drivers/media/test-drivers/vivid/vivid-vid-cap.c:		*nbuffers = 2 - vq->num_buffers;
+drivers/media/test-drivers/vivid/vivid-vid-out.c:	if (vq->num_buffers + *nbuffers < 2)
+drivers/media/test-drivers/vivid/vivid-vid-out.c:		*nbuffers = 2 - vq->num_buffers;
+drivers/media/usb/airspy/airspy.c:	if (vq->num_buffers + *nbuffers < 8)
+drivers/media/usb/airspy/airspy.c:		*nbuffers = 8 - vq->num_buffers;
+drivers/media/usb/au0828/au0828-video.c:	if (vq->type == V4L2_BUF_TYPE_VIDEO_CAPTURE)
+drivers/media/usb/au0828/au0828-video.c:		if (vq->type == V4L2_BUF_TYPE_VIDEO_CAPTURE) {
+drivers/media/usb/au0828/au0828-video.c:		} else if (vq->type == V4L2_BUF_TYPE_VBI_CAPTURE) {
+drivers/media/usb/cx231xx/cx231xx-417.c:	if (vq->num_buffers + *nbuffers < CX231XX_MIN_BUF)
+drivers/media/usb/cx231xx/cx231xx-417.c:		*nbuffers = CX231XX_MIN_BUF - vq->num_buffers;
+drivers/media/usb/cx231xx/cx231xx-video.c:	if (vq->num_buffers + *nbuffers < CX231XX_MIN_BUF)
+drivers/media/usb/cx231xx/cx231xx-video.c:		*nbuffers = CX231XX_MIN_BUF - vq->num_buffers;
+drivers/media/usb/em28xx/em28xx-video.c:	rc = res_get(dev, vq->type);
+drivers/media/usb/em28xx/em28xx-video.c:		owner = (struct v4l2_fh *)vq->owner;
+drivers/media/usb/em28xx/em28xx-video.c:	res_free(dev, vq->type);
+drivers/media/usb/em28xx/em28xx-video.c:	res_free(dev, vq->type);
+drivers/media/usb/hackrf/hackrf.c:	if (vq->type == V4L2_BUF_TYPE_SDR_CAPTURE)
+drivers/media/usb/hackrf/hackrf.c:	if (vq->num_buffers + *nbuffers < 8)
+drivers/media/usb/hackrf/hackrf.c:		*nbuffers = 8 - vq->num_buffers;
+drivers/media/usb/hackrf/hackrf.c:	if (vq->type == V4L2_BUF_TYPE_SDR_CAPTURE)
+drivers/media/usb/hackrf/hackrf.c:	if (vq->type == V4L2_BUF_TYPE_SDR_CAPTURE) {
+drivers/media/usb/hackrf/hackrf.c:	if (vq->type == V4L2_BUF_TYPE_SDR_CAPTURE)
+drivers/media/usb/usbtv/usbtv-video.c:	if (vq->num_buffers + *nbuffers < 2)
+drivers/media/usb/usbtv/usbtv-video.c:		*nbuffers = 2 - vq->num_buffers;
+drivers/media/usb/uvc/uvc_queue.c:	switch (vq->type) {
+drivers/media/usb/uvc/uvc_queue.c:	if (vq->type != V4L2_BUF_TYPE_META_CAPTURE)
+drivers/media/v4l2-core/v4l2-mem2mem.c:		vq->owner = reqbufs->count ? file->private_data : NULL;
+drivers/media/v4l2-core/v4l2-mem2mem.c:	if (buf->memory == V4L2_MEMORY_MMAP && V4L2_TYPE_IS_CAPTURE(vq->type)) {
+drivers/media/v4l2-core/v4l2-mem2mem.c:		if (V4L2_TYPE_IS_MULTIPLANAR(vq->type)) {
+drivers/media/v4l2-core/v4l2-mem2mem.c:	if (V4L2_TYPE_IS_CAPTURE(vq->type) &&
+drivers/media/v4l2-core/v4l2-mem2mem.c:	if (V4L2_TYPE_IS_CAPTURE(vq->type) &&
+drivers/net/virtio_net.c:	return (vq->index - 1) / 2;
+drivers/net/virtio_net.c:	return vq->index / 2;
+drivers/net/virtio_net.c:	struct virtnet_info *vi = vq->vdev->priv;
+drivers/net/virtio_net.c:	struct virtnet_info *vi = rq->vq->vdev->priv;
+drivers/net/virtio_net.c:	} while (rq->vq->num_free);
+drivers/net/virtio_net.c:	struct virtnet_info *vi = rvq->vdev->priv;
+drivers/net/virtio_net.c:	struct virtnet_info *vi = rq->vq->vdev->priv;
+drivers/net/virtio_net.c:	if (rq->vq->num_free > min((unsigned int)budget, virtqueue_get_vring_size(rq->vq)) / 2) {
+drivers/net/virtio_net.c:	struct virtnet_info *vi = rq->vq->vdev->priv;
+drivers/net/virtio_net.c:		if (sq->vq->num_free >= 2 + MAX_SKB_FRAGS)
+drivers/net/virtio_net.c:	struct virtnet_info *vi = rq->vq->vdev->priv;
+drivers/net/virtio_net.c:	struct virtnet_info *vi = sq->vq->vdev->priv;
+drivers/net/virtio_net.c:	if (sq->vq->num_free >= 2 + MAX_SKB_FRAGS)
+drivers/net/virtio_net.c:	struct virtnet_info *vi = sq->vq->vdev->priv;
+drivers/net/virtio_net.c:	if (sq->vq->num_free < 2+MAX_SKB_FRAGS) {
+drivers/net/virtio_net.c:			if (sq->vq->num_free >= 2+MAX_SKB_FRAGS) {
+drivers/net/virtio_net.c:	ring->rx_max_pending = vi->rq[0].vq->num_max;
+drivers/net/virtio_net.c:	ring->tx_max_pending = vi->sq[0].vq->num_max;
+drivers/net/virtio_net.c:	if (ring->rx_pending > vi->rq[0].vq->num_max)
+drivers/net/virtio_net.c:	if (ring->tx_pending > vi->sq[0].vq->num_max)
+drivers/net/virtio_net.c:		   txqueue, sq->name, sq->vq->index, sq->vq->name,
+drivers/net/virtio_net.c:	struct virtnet_info *vi = vq->vdev->priv;
+drivers/nvdimm/nd_virtio.c:	struct virtio_pmem *vpmem = vq->vdev->priv;
+drivers/platform/mellanox/mlxbf-tmfifo.c:	struct virtio_device *vdev = vring->vq->vdev;
+drivers/platform/mellanox/mlxbf-tmfifo.c:	struct virtio_device *vdev = vring->vq->vdev;
+drivers/platform/mellanox/mlxbf-tmfifo.c:	struct virtio_device *vdev = vring->vq->vdev;
+drivers/platform/mellanox/mlxbf-tmfifo.c:	struct virtio_device *vdev = vring->vq->vdev;
+drivers/platform/mellanox/mlxbf-tmfifo.c:	struct virtio_device *vdev = vring->vq->vdev;
+drivers/platform/mellanox/mlxbf-tmfifo.c:	struct mlxbf_tmfifo_vring *vring = vq->priv;
+drivers/platform/mellanox/mlxbf-tmfifo.c:		vq->num_max = vring->num;
+drivers/platform/mellanox/mlxbf-tmfifo.c:		vq->priv = vring;
+drivers/platform/surface/aggregator/controller.c:	ssam_cplt_submit(cplt, &evq->work);
+drivers/platform/surface/aggregator/controller.c:	evq->cplt = cplt;
+drivers/platform/surface/aggregator/controller.c:	spin_lock_init(&evq->lock);
+drivers/platform/surface/aggregator/controller.c:	INIT_LIST_HEAD(&evq->head);
+drivers/platform/surface/aggregator/controller.c:	INIT_WORK(&evq->work, ssam_event_queue_work_fn);
+drivers/remoteproc/remoteproc_virtio.c:	struct rproc_vring *rvring = vq->priv;
+drivers/remoteproc/remoteproc_virtio.c:	vq->num_max = num;
+drivers/remoteproc/remoteproc_virtio.c:	vq->priv = rvring;
+drivers/remoteproc/remoteproc_virtio.c:		rvring = vq->priv;
+drivers/rpmsg/virtio_rpmsg_bus.c:	struct virtproc_info *vrp = rvq->vdev->priv;
+drivers/rpmsg/virtio_rpmsg_bus.c:	struct device *dev = &rvq->vdev->dev;
+drivers/rpmsg/virtio_rpmsg_bus.c:	struct virtproc_info *vrp = svq->vdev->priv;
+drivers/rpmsg/virtio_rpmsg_bus.c:	dev_dbg(&svq->vdev->dev, "%s\n", __func__);
+drivers/s390/virtio/virtio_ccw.c:	struct virtio_ccw_vq_info *info = vq->priv;
+drivers/s390/virtio/virtio_ccw.c:	vcdev = to_vc_device(info->vq->vdev);
+drivers/s390/virtio/virtio_ccw.c:				      vq->index, info->cookie);
+drivers/s390/virtio/virtio_ccw.c:	struct virtio_ccw_device *vcdev = to_vc_device(vq->vdev);
+drivers/s390/virtio/virtio_ccw.c:	struct virtio_ccw_vq_info *info = vq->priv;
+drivers/s390/virtio/virtio_ccw.c:	unsigned int index = vq->index;
+drivers/s390/virtio/virtio_ccw.c:		dev_warn(&vq->vdev->dev, "Error %d while deleting queue %d\n",
+drivers/s390/virtio/virtio_ccw.c:	vq->num_max = info->num;
+drivers/s390/virtio/virtio_ccw.c:	vq->priv = info;
+drivers/s390/virtio/virtio_ccw.c:		if (info->vq->index == index) {
+drivers/scsi/virtio_scsi.c:	struct virtqueue *vq = virtscsi_vq->vq;
+drivers/scsi/virtio_scsi.c:	spin_lock_irqsave(&virtscsi_vq->vq_lock, flags);
+drivers/scsi/virtio_scsi.c:	spin_unlock_irqrestore(&virtscsi_vq->vq_lock, flags);
+drivers/scsi/virtio_scsi.c:	struct Scsi_Host *sh = virtio_scsi_host(vq->vdev);
+drivers/scsi/virtio_scsi.c:	int index = vq->index - VIRTIO_SCSI_VQ_BASE;
+drivers/scsi/virtio_scsi.c:	struct Scsi_Host *sh = virtio_scsi_host(vq->vdev);
+drivers/scsi/virtio_scsi.c:	struct Scsi_Host *sh = virtio_scsi_host(vq->vdev);
+drivers/scsi/virtio_scsi.c:	spin_lock_irqsave(&vq->vq_lock, flags);
+drivers/scsi/virtio_scsi.c:	needs_kick = virtqueue_kick_prepare(vq->vq);
+drivers/scsi/virtio_scsi.c:	spin_unlock_irqrestore(&vq->vq_lock, flags);
+drivers/scsi/virtio_scsi.c:		virtqueue_notify(vq->vq);
+drivers/scsi/virtio_scsi.c:	spin_lock_irqsave(&vq->vq_lock, flags);
+drivers/scsi/virtio_scsi.c:	err = __virtscsi_add_cmd(vq->vq, cmd, req_size, resp_size);
+drivers/scsi/virtio_scsi.c:		needs_kick = virtqueue_kick_prepare(vq->vq);
+drivers/scsi/virtio_scsi.c:	spin_unlock_irqrestore(&vq->vq_lock, flags);
+drivers/scsi/virtio_scsi.c:		virtqueue_notify(vq->vq);
+drivers/scsi/virtio_scsi.c:		spin_lock_irqsave(&req_vq->vq_lock, flags);
+drivers/scsi/virtio_scsi.c:		spin_unlock_irqrestore(&req_vq->vq_lock, flags);
+drivers/scsi/virtio_scsi.c:	spin_lock_init(&virtscsi_vq->vq_lock);
+drivers/scsi/virtio_scsi.c:	virtscsi_vq->vq = vq;
+drivers/staging/media/atomisp/pci/atomisp_fops.c:	struct atomisp_video_pipe *pipe = vq->priv_data;
+drivers/staging/media/atomisp/pci/atomisp_fops.c:	struct atomisp_video_pipe *pipe = vq->priv_data;
+drivers/staging/media/atomisp/pci/atomisp_fops.c:	struct atomisp_video_pipe *pipe = vq->priv_data;
+drivers/staging/media/deprecated/fsl-viu/fsl-viu.c:	struct viu_fh *fh = vq->priv_data;
+drivers/staging/media/deprecated/fsl-viu/fsl-viu.c:	if (vq->int_ops && vq->int_ops->vaddr)
+drivers/staging/media/deprecated/fsl-viu/fsl-viu.c:		vaddr = vq->int_ops->vaddr(vb);
+drivers/staging/media/deprecated/fsl-viu/fsl-viu.c:	struct viu_fh  *fh  = vq->priv_data;
+drivers/staging/media/deprecated/fsl-viu/fsl-viu.c:	struct viu_fh        *fh      = vq->priv_data;
+drivers/staging/media/deprecated/fsl-viu/fsl-viu.c:	struct viu_fh  *fh   = vq->priv_data;
+drivers/staging/media/deprecated/tm6000/tm6000-video.c:	struct tm6000_fh *fh = vq->priv_data;
+drivers/staging/media/deprecated/tm6000/tm6000-video.c:	struct tm6000_fh *fh = vq->priv_data;
+drivers/staging/media/deprecated/tm6000/tm6000-video.c:	struct tm6000_fh     *fh  = vq->priv_data;
+drivers/staging/media/deprecated/tm6000/tm6000-video.c:	struct tm6000_fh        *fh      = vq->priv_data;
+drivers/staging/media/deprecated/vpfe_capture/vpfe_capture.c:	struct vpfe_fh *fh = vq->priv_data;
+drivers/staging/media/deprecated/vpfe_capture/vpfe_capture.c:	struct vpfe_fh *fh = vq->priv_data;
+drivers/staging/media/deprecated/vpfe_capture/vpfe_capture.c:	struct vpfe_fh *fh = vq->priv_data;
+drivers/staging/media/deprecated/vpfe_capture/vpfe_capture.c:	struct vpfe_fh *fh = vq->priv_data;
+drivers/staging/media/deprecated/zr364xx/zr364xx.c:	struct zr364xx_camera *cam = vq->priv_data;
+drivers/staging/media/deprecated/zr364xx/zr364xx.c:	struct zr364xx_camera *cam = vq->priv_data;
+drivers/staging/media/deprecated/zr364xx/zr364xx.c:	struct zr364xx_camera *cam = vq->priv_data;
+drivers/staging/media/imx/imx-media-capture.c:	if (vq->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
+drivers/staging/media/imx/imx-media-capture.c:		count += vq->num_buffers;
+drivers/staging/media/imx/imx-media-capture.c:		*nbuffers = (count < vq->num_buffers) ? 0 :
+drivers/staging/media/imx/imx-media-capture.c:			count - vq->num_buffers;
+drivers/staging/media/imx/imx-media-capture.c:	if (file->private_data == vq->owner) {
+drivers/staging/media/imx/imx-media-capture.c:		vq->owner = NULL;
+drivers/staging/media/imx/imx-media-capture.c:	vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/staging/media/imx/imx-media-capture.c:	vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/staging/media/imx/imx-media-capture.c:	vq->drv_priv = priv;
+drivers/staging/media/imx/imx-media-capture.c:	vq->buf_struct_size = sizeof(struct imx_media_buffer);
+drivers/staging/media/imx/imx-media-capture.c:	vq->ops = &capture_qops;
+drivers/staging/media/imx/imx-media-capture.c:	vq->mem_ops = &vb2_dma_contig_memops;
+drivers/staging/media/imx/imx-media-capture.c:	vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
+drivers/staging/media/imx/imx-media-capture.c:	vq->lock = &priv->mutex;
+drivers/staging/media/imx/imx-media-capture.c:	vq->min_buffers_needed = 2;
+drivers/staging/media/imx/imx-media-capture.c:	vq->dev = priv->dev;
+drivers/staging/media/imx/imx-media-csc-scaler.c:	q_data = get_q_data(ctx, vq->type);
+drivers/staging/media/imx/imx-media-csc-scaler.c:	dev_dbg(ctx->priv->dev, "type: %d\n", vq->type);
+drivers/staging/media/imx/imx-media-csc-scaler.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type)) {
+drivers/staging/media/imx/imx-media-csc-scaler.c:	q_data = get_q_data(ctx, vq->type);
+drivers/staging/media/imx/imx-media-csc-scaler.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+drivers/staging/media/imx/imx-media-csc-scaler.c:	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/staging/media/imx/imx-media-csc-scaler.c:	src_vq->drv_priv = ctx;
+drivers/staging/media/imx/imx-media-csc-scaler.c:	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/staging/media/imx/imx-media-csc-scaler.c:	src_vq->ops = &ipu_csc_scaler_qops;
+drivers/staging/media/imx/imx-media-csc-scaler.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/staging/media/imx/imx-media-csc-scaler.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/staging/media/imx/imx-media-csc-scaler.c:	src_vq->lock = &ctx->priv->mutex;
+drivers/staging/media/imx/imx-media-csc-scaler.c:	src_vq->dev = ctx->priv->dev;
+drivers/staging/media/imx/imx-media-csc-scaler.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/staging/media/imx/imx-media-csc-scaler.c:	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/staging/media/imx/imx-media-csc-scaler.c:	dst_vq->drv_priv = ctx;
+drivers/staging/media/imx/imx-media-csc-scaler.c:	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/staging/media/imx/imx-media-csc-scaler.c:	dst_vq->ops = &ipu_csc_scaler_qops;
+drivers/staging/media/imx/imx-media-csc-scaler.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/staging/media/imx/imx-media-csc-scaler.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/staging/media/imx/imx-media-csc-scaler.c:	dst_vq->lock = &ctx->priv->mutex;
+drivers/staging/media/imx/imx-media-csc-scaler.c:	dst_vq->dev = ctx->priv->dev;
+drivers/staging/media/imx/imx7-media-csi.c:	if (vq->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
+drivers/staging/media/imx/imx7-media-csi.c:		count += vq->num_buffers;
+drivers/staging/media/imx/imx7-media-csi.c:		*nbuffers = (count < vq->num_buffers) ? 0 :
+drivers/staging/media/imx/imx7-media-csi.c:			count - vq->num_buffers;
+drivers/staging/media/imx/imx7-media-csi.c:	if (file->private_data == vq->owner) {
+drivers/staging/media/imx/imx7-media-csi.c:		vq->owner = NULL;
+drivers/staging/media/imx/imx7-media-csi.c:	vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/staging/media/imx/imx7-media-csi.c:	vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/staging/media/imx/imx7-media-csi.c:	vq->drv_priv = csi;
+drivers/staging/media/imx/imx7-media-csi.c:	vq->buf_struct_size = sizeof(struct imx7_csi_vb2_buffer);
+drivers/staging/media/imx/imx7-media-csi.c:	vq->ops = &imx7_csi_video_qops;
+drivers/staging/media/imx/imx7-media-csi.c:	vq->mem_ops = &vb2_dma_contig_memops;
+drivers/staging/media/imx/imx7-media-csi.c:	vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
+drivers/staging/media/imx/imx7-media-csi.c:	vq->lock = &csi->vdev_mutex;
+drivers/staging/media/imx/imx7-media-csi.c:	vq->min_buffers_needed = 2;
+drivers/staging/media/imx/imx7-media-csi.c:	vq->dev = csi->dev;
+drivers/staging/media/ipu3/ipu3-v4l2.c:	if (vq->type == V4L2_BUF_TYPE_META_CAPTURE ||
+drivers/staging/media/ipu3/ipu3-v4l2.c:	    vq->type == V4L2_BUF_TYPE_META_OUTPUT)
+drivers/staging/media/meson/vdec/vdec.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+drivers/staging/media/meson/vdec/vdec.c:	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/staging/media/meson/vdec/vdec.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/staging/media/meson/vdec/vdec.c:	src_vq->ops = &vdec_vb2_ops;
+drivers/staging/media/meson/vdec/vdec.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/staging/media/meson/vdec/vdec.c:	src_vq->drv_priv = sess;
+drivers/staging/media/meson/vdec/vdec.c:	src_vq->buf_struct_size = sizeof(struct dummy_buf);
+drivers/staging/media/meson/vdec/vdec.c:	src_vq->min_buffers_needed = 1;
+drivers/staging/media/meson/vdec/vdec.c:	src_vq->dev = sess->core->dev;
+drivers/staging/media/meson/vdec/vdec.c:	src_vq->lock = &sess->lock;
+drivers/staging/media/meson/vdec/vdec.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+drivers/staging/media/meson/vdec/vdec.c:	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/staging/media/meson/vdec/vdec.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/staging/media/meson/vdec/vdec.c:	dst_vq->ops = &vdec_vb2_ops;
+drivers/staging/media/meson/vdec/vdec.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/staging/media/meson/vdec/vdec.c:	dst_vq->drv_priv = sess;
+drivers/staging/media/meson/vdec/vdec.c:	dst_vq->buf_struct_size = sizeof(struct dummy_buf);
+drivers/staging/media/meson/vdec/vdec.c:	dst_vq->min_buffers_needed = 1;
+drivers/staging/media/meson/vdec/vdec.c:	dst_vq->dev = sess->core->dev;
+drivers/staging/media/meson/vdec/vdec.c:	dst_vq->lock = &sess->lock;
+drivers/staging/media/rkvdec/rkvdec.c:	vq->subsystem_flags |= desc->subsystem_flags;
+drivers/staging/media/rkvdec/rkvdec.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type))
+drivers/staging/media/rkvdec/rkvdec.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type))
+drivers/staging/media/rkvdec/rkvdec.c:	if (V4L2_TYPE_IS_CAPTURE(vq->type))
+drivers/staging/media/rkvdec/rkvdec.c:		if (V4L2_TYPE_IS_OUTPUT(vq->type))
+drivers/staging/media/rkvdec/rkvdec.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+drivers/staging/media/rkvdec/rkvdec.c:	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/staging/media/rkvdec/rkvdec.c:	src_vq->drv_priv = ctx;
+drivers/staging/media/rkvdec/rkvdec.c:	src_vq->ops = &rkvdec_queue_ops;
+drivers/staging/media/rkvdec/rkvdec.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/staging/media/rkvdec/rkvdec.c:	src_vq->dma_attrs = DMA_ATTR_ALLOC_SINGLE_PAGES |
+drivers/staging/media/rkvdec/rkvdec.c:	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+drivers/staging/media/rkvdec/rkvdec.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/staging/media/rkvdec/rkvdec.c:	src_vq->lock = &rkvdec->vdev_lock;
+drivers/staging/media/rkvdec/rkvdec.c:	src_vq->dev = rkvdec->v4l2_dev.dev;
+drivers/staging/media/rkvdec/rkvdec.c:	src_vq->supports_requests = true;
+drivers/staging/media/rkvdec/rkvdec.c:	src_vq->requires_requests = true;
+drivers/staging/media/rkvdec/rkvdec.c:	dst_vq->bidirectional = true;
+drivers/staging/media/rkvdec/rkvdec.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/staging/media/rkvdec/rkvdec.c:	dst_vq->dma_attrs = DMA_ATTR_ALLOC_SINGLE_PAGES |
+drivers/staging/media/rkvdec/rkvdec.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+drivers/staging/media/rkvdec/rkvdec.c:	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/staging/media/rkvdec/rkvdec.c:	dst_vq->drv_priv = ctx;
+drivers/staging/media/rkvdec/rkvdec.c:	dst_vq->ops = &rkvdec_queue_ops;
+drivers/staging/media/rkvdec/rkvdec.c:	dst_vq->buf_struct_size = sizeof(struct rkvdec_decoded_buffer);
+drivers/staging/media/rkvdec/rkvdec.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/staging/media/rkvdec/rkvdec.c:	dst_vq->lock = &rkvdec->vdev_lock;
+drivers/staging/media/rkvdec/rkvdec.c:	dst_vq->dev = rkvdec->v4l2_dev.dev;
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:		vq->subsystem_flags |=
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:		vq->subsystem_flags &=
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type))
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:		if (V4L2_TYPE_IS_OUTPUT(vq->type))
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type))
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	if (V4L2_TYPE_IS_CAPTURE(vq->type))
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type)) {
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	if (V4L2_TYPE_IS_OUTPUT(vq->type)) {
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	src_vq->drv_priv = ctx;
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	src_vq->buf_struct_size = sizeof(struct cedrus_buffer);
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	src_vq->ops = &cedrus_qops;
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	src_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	src_vq->lock = &ctx->dev->dev_mutex;
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	src_vq->dev = ctx->dev->dev;
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	src_vq->supports_requests = true;
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	src_vq->requires_requests = true;
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	dst_vq->drv_priv = ctx;
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	dst_vq->buf_struct_size = sizeof(struct cedrus_buffer);
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	dst_vq->ops = &cedrus_qops;
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	dst_vq->mem_ops = &vb2_dma_contig_memops;
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	dst_vq->lock = &ctx->dev->dev_mutex;
+drivers/staging/media/sunxi/cedrus/cedrus_video.c:	dst_vq->dev = ctx->dev->dev;
+drivers/staging/r8188eu/core/rtw_xmit.c:	INIT_LIST_HEAD(&ptxservq->tx_pending);
+drivers/staging/r8188eu/core/rtw_xmit.c:	rtw_init_queue(&ptxservq->sta_pending);
+drivers/staging/r8188eu/core/rtw_xmit.c:	ptxservq->qcnt = 0;
+drivers/staging/r8188eu/core/rtw_xmit.c:		return ptxservq->qcnt;
+drivers/staging/r8188eu/core/rtw_xmit.c:		ptxservq->qcnt--;
+drivers/staging/r8188eu/core/rtw_xmit.c:			pframe_queue = &ptxservq->sta_pending;
+drivers/staging/r8188eu/core/rtw_xmit.c:					list_del_init(&ptxservq->tx_pending);
+drivers/staging/r8188eu/core/rtw_xmit.c:	if (list_empty(&ptxservq->tx_pending))
+drivers/staging/r8188eu/core/rtw_xmit.c:		list_add_tail(&ptxservq->tx_pending, get_list_head(phwxmits[ac_index].sta_queue));
+drivers/staging/r8188eu/core/rtw_xmit.c:	list_add_tail(&pxmitframe->list, get_list_head(&ptxservq->sta_pending));
+drivers/staging/r8188eu/core/rtw_xmit.c:	ptxservq->qcnt++;
+drivers/staging/r8188eu/core/rtw_xmit.c:		ptxservq->qcnt--;
+drivers/staging/r8188eu/hal/rtl8188eu_xmit.c:	xmitframe_phead = get_list_head(&ptxservq->sta_pending);
+drivers/staging/r8188eu/hal/rtl8188eu_xmit.c:		ptxservq->qcnt--;
+drivers/staging/r8188eu/hal/rtl8188eu_xmit.c:	if (list_empty(&ptxservq->sta_pending.queue))
+drivers/staging/r8188eu/hal/rtl8188eu_xmit.c:		list_del_init(&ptxservq->tx_pending);
+drivers/staging/rtl8712/rtl8712_xmit.c:	return ptxservq->qcnt;
+drivers/staging/rtl8712/rtl8712_xmit.c:		ptxservq->qcnt--;
+drivers/staging/rtl8712/rtl8712_xmit.c:			pframe_queue = &ptxservq->sta_pending;
+drivers/staging/rtl8712/rtl8712_xmit.c:				list_del_init(&ptxservq->tx_pending);
+drivers/staging/rtl8712/rtl871x_xmit.c:	INIT_LIST_HEAD(&ptxservq->tx_pending);
+drivers/staging/rtl8712/rtl871x_xmit.c:	_init_queue(&ptxservq->sta_pending);
+drivers/staging/rtl8712/rtl871x_xmit.c:	ptxservq->qcnt = 0;
+drivers/staging/rtl8712/rtl871x_xmit.c:	if (list_empty(&ptxservq->tx_pending))
+drivers/staging/rtl8712/rtl871x_xmit.c:		list_add_tail(&ptxservq->tx_pending, &pstapending->queue);
+drivers/staging/rtl8712/rtl871x_xmit.c:	list_add_tail(&pxmitframe->list, &ptxservq->sta_pending.queue);
+drivers/staging/rtl8712/rtl871x_xmit.c:	ptxservq->qcnt++;
+drivers/staging/rtl8723bs/core/rtw_xmit.c:	INIT_LIST_HEAD(&ptxservq->tx_pending);
+drivers/staging/rtl8723bs/core/rtw_xmit.c:	INIT_LIST_HEAD(&ptxservq->sta_pending.queue);
+drivers/staging/rtl8723bs/core/rtw_xmit.c:	spin_lock_init(&ptxservq->sta_pending.lock);
+drivers/staging/rtl8723bs/core/rtw_xmit.c:	ptxservq->qcnt = 0;
+drivers/staging/rtl8723bs/core/rtw_xmit.c:	if (list_empty(&ptxservq->tx_pending))
+drivers/staging/rtl8723bs/core/rtw_xmit.c:		list_add_tail(&ptxservq->tx_pending, get_list_head(phwxmits[ac_index].sta_queue));
+drivers/staging/rtl8723bs/core/rtw_xmit.c:	list_add_tail(&pxmitframe->list, get_list_head(&ptxservq->sta_pending));
+drivers/staging/rtl8723bs/core/rtw_xmit.c:	ptxservq->qcnt++;
+drivers/staging/rtl8723bs/core/rtw_xmit.c:			ptxservq->qcnt--;
+drivers/staging/rtl8723bs/hal/rtl8723bs_xmit.c:			pframe_queue = &ptxservq->sta_pending;
+drivers/staging/rtl8723bs/hal/rtl8723bs_xmit.c:				ptxservq->qcnt--;
+drivers/staging/rtl8723bs/hal/rtl8723bs_xmit.c:				list_del_init(&ptxservq->tx_pending);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	vqp = fw ? &mvq->fwqp : &mvq->vqqp;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	MLX5_SET(qpc, qpc, cqn_rcv, mvq->cq.mcq.cqn);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		vqp = &mvq->vqqp;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		err = rq_buf_alloc(ndev, vqp, mvq->num_ent);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	qp_prepare(ndev, vqp->fw, in, mvq, mvq->num_ent);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		rx_post(vqp, mvq->num_ent);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	struct mlx5_vdpa_net *ndev = mvq->ndev;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	event_cb = &ndev->event_cbs[mvq->index];
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	mlx5_cq_set_ci(&mvq->cq.mcq);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	rx_post(&mvq->vqqp, num);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	struct mlx5_vdpa_net *ndev = mvq->ndev;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	while (!mlx5_vdpa_poll_one(&mvq->cq)) {
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		if (num > mvq->num_ent / 2) {
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	mlx5_cq_arm(&mvq->cq.mcq, MLX5_CQ_DB_REQ_NOT, uar_page, mvq->cq.mcq.cons_index);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	struct mlx5_vdpa_cq *vcq = &mvq->cq;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	mlx5_cq_arm(&mvq->cq.mcq, MLX5_CQ_DB_REQ_NOT, uar_page, mvq->cq.mcq.cons_index);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	struct mlx5_vdpa_cq *vcq = &mvq->cq;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		*umemp = &mvq->umem1;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		*umemp = &mvq->umem2;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		*umemp = &mvq->umem3;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	(*umemp)->size = p_a * mvq->num_ent + p_b;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		umem = &mvq->umem1;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		umem = &mvq->umem2;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		umem = &mvq->umem3;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	MLX5_SET(virtio_net_q_object, obj_context, hw_available_index, mvq->avail_idx);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	MLX5_SET(virtio_net_q_object, obj_context, hw_used_index, mvq->used_idx);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	if (vq_is_tx(mvq->index))
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	MLX5_SET(virtio_q, vq_ctx, queue_index, mvq->index);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	MLX5_SET(virtio_q, vq_ctx, event_qpn_or_msix, mvq->fwqp.mqp.qpn);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	MLX5_SET(virtio_q, vq_ctx, queue_size, mvq->num_ent);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	MLX5_SET64(virtio_q, vq_ctx, desc_addr, mvq->desc_addr);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	MLX5_SET64(virtio_q, vq_ctx, used_addr, mvq->device_addr);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	MLX5_SET64(virtio_q, vq_ctx, available_addr, mvq->driver_addr);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	MLX5_SET(virtio_q, vq_ctx, umem_1_id, mvq->umem1.id);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	MLX5_SET(virtio_q, vq_ctx, umem_1_size, mvq->umem1.size);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	MLX5_SET(virtio_q, vq_ctx, umem_2_id, mvq->umem2.id);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	MLX5_SET(virtio_q, vq_ctx, umem_2_size, mvq->umem2.size);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	MLX5_SET(virtio_q, vq_ctx, umem_3_id, mvq->umem3.id);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	MLX5_SET(virtio_q, vq_ctx, umem_3_size, mvq->umem3.size);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		MLX5_SET(virtio_q, vq_ctx, counter_set_id, mvq->counter_set_id);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	mvq->fw_state = MLX5_VIRTIO_NET_Q_OBJECT_STATE_INIT;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	mvq->virtq_id = MLX5_GET(general_obj_out_cmd_hdr, out, obj_id);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	MLX5_SET(destroy_virtio_net_q_in, in, general_obj_out_cmd_hdr.obj_id, mvq->virtq_id);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		mlx5_vdpa_warn(&ndev->mvdev, "destroy virtqueue 0x%x\n", mvq->virtq_id);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	mvq->fw_state = MLX5_VIRTIO_NET_Q_OBJECT_NONE;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	return fw ? mvq->vqqp.mqp.qpn : mvq->fwqp.mqp.qpn;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	return fw ? mvq->fwqp.mqp.qpn : mvq->vqqp.mqp.qpn;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	MLX5_SET(general_obj_in_cmd_hdr, cmd_hdr, obj_id, mvq->virtq_id);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	if (mvq->fw_state == MLX5_VIRTIO_NET_Q_OBJECT_NONE)
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	if (!is_valid_state_change(mvq->fw_state, state))
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	MLX5_SET(general_obj_in_cmd_hdr, cmd_hdr, obj_id, mvq->virtq_id);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		mvq->fw_state = state;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	mvq->counter_set_id = MLX5_GET(general_obj_out_cmd_hdr, out, obj_id);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	MLX5_SET(destroy_virtio_q_counters_in, in, hdr.obj_id, mvq->counter_set_id);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		mlx5_vdpa_warn(&ndev->mvdev, "dealloc counter set 0x%x\n", mvq->counter_set_id);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	u16 idx = mvq->index;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	if (!mvq->num_ent)
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	if (mvq->initialized)
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	err = cq_create(ndev, idx, mvq->num_ent);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	err = qp_create(ndev, mvq, &mvq->fwqp);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	err = qp_create(ndev, mvq, &mvq->vqqp);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	if (mvq->ready) {
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	mvq->initialized = true;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	qp_destroy(ndev, &mvq->vqqp);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	qp_destroy(ndev, &mvq->fwqp);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	if (!mvq->initialized)
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	if (mvq->fw_state != MLX5_VIRTIO_NET_Q_OBJECT_STATE_RDY)
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	mvq->avail_idx = attr.available_index;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	mvq->used_idx = attr.used_index;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	if (!mvq->initialized)
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	qp_destroy(ndev, &mvq->vqqp);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	qp_destroy(ndev, &mvq->fwqp);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	cq_destroy(ndev, mvq->index);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	mvq->initialized = false;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		read = vringh_iov_pull_iotlb(&cvq->vring, &cvq->riov, (void *)mac, ETH_ALEN);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		read = vringh_iov_pull_iotlb(&cvq->vring, &cvq->riov, (void *)&mq, sizeof(mq));
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		read = vringh_iov_pull_iotlb(&cvq->vring, &cvq->riov, &vlan, sizeof(vlan));
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		read = vringh_iov_pull_iotlb(&cvq->vring, &cvq->riov, &vlan, sizeof(vlan));
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	if (!cvq->ready)
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		err = vringh_getdesc_iotlb(&cvq->vring, &cvq->riov, &cvq->wiov, &cvq->head,
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		read = vringh_iov_pull_iotlb(&cvq->vring, &cvq->riov, &ctrl, sizeof(ctrl));
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		cvq->received_desc++;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		write = vringh_iov_push_iotlb(&cvq->vring, &cvq->wiov, &status, sizeof(status));
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		vringh_complete_iotlb(&cvq->vring, cvq->head, write);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		vringh_kiov_cleanup(&cvq->riov);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		vringh_kiov_cleanup(&cvq->wiov);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		if (vringh_need_notify_iotlb(&cvq->vring))
+drivers/vdpa/mlx5/net/mlx5_vnet.c:			vringh_notify(&cvq->vring);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		cvq->completed_desc++;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	if (unlikely(!mvq->ready))
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	mvq->desc_addr = desc_area;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	mvq->device_addr = device_area;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	mvq->driver_addr = driver_area;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	mvq->num_ent = num;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	if (!cvq->event_cb.callback)
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	cvq->event_cb.callback(cvq->event_cb.private);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	cvq->ready = ready;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	cvq->vring.notify = mlx5_cvq_notify;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	mvq->ready = ready;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	if (mvq->fw_state == MLX5_VIRTIO_NET_Q_OBJECT_STATE_RDY) {
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	mvq->used_idx = state->split.avail_index;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	mvq->avail_idx = state->split.avail_index;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	if (!mvq->initialized) {
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		state->split.avail_index = mvq->used_idx;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		if (!mvq->initialized)
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	struct mlx5_vq_restore_info *ri = &mvq->ri;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	if (mvq->initialized) {
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	ri->ready = mvq->ready;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	ri->num_ent = mvq->num_ent;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	ri->desc_addr = mvq->desc_addr;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	ri->device_addr = mvq->device_addr;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	ri->driver_addr = mvq->driver_addr;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		ri = &mvq->ri;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		mvq->avail_idx = ri->avail_index;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		mvq->used_idx = ri->used_index;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		mvq->ready = ri->ready;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		mvq->num_ent = ri->num_ent;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		mvq->desc_addr = ri->desc_addr;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		mvq->device_addr = ri->device_addr;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		mvq->driver_addr = ri->driver_addr;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		err = vringh_init_iotlb(&cvq->vring, mvdev->actual_features,
+drivers/vdpa/mlx5/net/mlx5_vnet.c:					(struct vring_desc *)(uintptr_t)cvq->desc_addr,
+drivers/vdpa/mlx5/net/mlx5_vnet.c:					(struct vring_avail *)(uintptr_t)cvq->driver_addr,
+drivers/vdpa/mlx5/net/mlx5_vnet.c:					(struct vring_used *)(uintptr_t)cvq->device_addr);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	if (mvq->fw_state != MLX5_VIRTIO_NET_Q_OBJECT_STATE_RDY)
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	MLX5_SET(general_obj_in_cmd_hdr, cmd_hdr, obj_id, mvq->counter_set_id);
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		received_desc = cvq->received_desc;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		completed_desc = cvq->completed_desc;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:	cvq->ready = false;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		mvq->index = i;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		mvq->ndev = ndev;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		mvq->fwqp.fw = true;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		mvq->fw_state = MLX5_VIRTIO_NET_Q_OBJECT_NONE;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		mvq->index = i;
+drivers/vdpa/mlx5/net/mlx5_vnet.c:		mvq->ndev = ndev;
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	if (!vq->cb)
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	vq->cb(vq->private);
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	vringh_init_iotlb(&vq->vring, vdpasim->dev_attr.supported_features,
+drivers/vdpa/vdpa_sim/vdpa_sim.c:			  (struct vring_desc *)(uintptr_t)vq->desc_addr,
+drivers/vdpa/vdpa_sim/vdpa_sim.c:			  (uintptr_t)vq->driver_addr,
+drivers/vdpa/vdpa_sim/vdpa_sim.c:			  (uintptr_t)vq->device_addr);
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	vq->vring.notify = vdpasim_vq_notify;
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	vq->ready = false;
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	vq->desc_addr = 0;
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	vq->driver_addr = 0;
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	vq->device_addr = 0;
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	vq->cb = NULL;
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	vq->private = NULL;
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	vringh_init_iotlb(&vq->vring, vdpasim->dev_attr.supported_features,
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	vq->vring.notify = NULL;
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	vq->desc_addr = desc_area;
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	vq->driver_addr = driver_area;
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	vq->device_addr = device_area;
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	vq->num = num;
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	if (vq->ready)
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	vq->cb = cb->callback;
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	vq->private = cb->private;
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	old_ready = vq->ready;
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	vq->ready = ready;
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	if (vq->ready && !old_ready) {
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	return vq->ready;
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	struct vringh *vrh = &vq->vring;
+drivers/vdpa/vdpa_sim/vdpa_sim.c:	struct vringh *vrh = &vq->vring;
+drivers/vdpa/vdpa_sim/vdpa_sim_blk.c:	ret = vringh_getdesc_iotlb(&vq->vring, &vq->out_iov, &vq->in_iov,
+drivers/vdpa/vdpa_sim/vdpa_sim_blk.c:				   &vq->head, GFP_ATOMIC);
+drivers/vdpa/vdpa_sim/vdpa_sim_blk.c:	if (vq->out_iov.used < 1 || vq->in_iov.used < 1) {
+drivers/vdpa/vdpa_sim/vdpa_sim_blk.c:			vq->out_iov.used, vq->in_iov.used);
+drivers/vdpa/vdpa_sim/vdpa_sim_blk.c:	if (vq->in_iov.iov[vq->in_iov.used - 1].iov_len < 1) {
+drivers/vdpa/vdpa_sim/vdpa_sim_blk.c:	to_push = vringh_kiov_length(&vq->in_iov) - 1;
+drivers/vdpa/vdpa_sim/vdpa_sim_blk.c:	to_pull = vringh_kiov_length(&vq->out_iov);
+drivers/vdpa/vdpa_sim/vdpa_sim_blk.c:	bytes = vringh_iov_pull_iotlb(&vq->vring, &vq->out_iov, &hdr,
+drivers/vdpa/vdpa_sim/vdpa_sim_blk.c:		bytes = vringh_iov_push_iotlb(&vq->vring, &vq->in_iov,
+drivers/vdpa/vdpa_sim/vdpa_sim_blk.c:		bytes = vringh_iov_pull_iotlb(&vq->vring, &vq->out_iov,
+drivers/vdpa/vdpa_sim/vdpa_sim_blk.c:		bytes = vringh_iov_push_iotlb(&vq->vring, &vq->in_iov,
+drivers/vdpa/vdpa_sim/vdpa_sim_blk.c:		bytes = vringh_iov_pull_iotlb(&vq->vring, &vq->out_iov, &range,
+drivers/vdpa/vdpa_sim/vdpa_sim_blk.c:		vringh_kiov_advance(&vq->in_iov, to_push - pushed);
+drivers/vdpa/vdpa_sim/vdpa_sim_blk.c:	bytes = vringh_iov_push_iotlb(&vq->vring, &vq->in_iov, &status, 1);
+drivers/vdpa/vdpa_sim/vdpa_sim_blk.c:	vringh_complete_iotlb(&vq->vring, vq->head, pushed);
+drivers/vdpa/vdpa_sim/vdpa_sim_blk.c:		if (!vq->ready)
+drivers/vdpa/vdpa_sim/vdpa_sim_blk.c:			if (vringh_need_notify_iotlb(&vq->vring) > 0)
+drivers/vdpa/vdpa_sim/vdpa_sim_blk.c:				vringh_notify(&vq->vring);
+drivers/vdpa/vdpa_sim/vdpa_sim_net.c:	vringh_complete_iotlb(&vq->vring, vq->head, len);
+drivers/vdpa/vdpa_sim/vdpa_sim_net.c:	if (vringh_need_notify_iotlb(&vq->vring) > 0)
+drivers/vdpa/vdpa_sim/vdpa_sim_net.c:		vringh_notify(&vq->vring);
+drivers/vdpa/vdpa_sim/vdpa_sim_net.c:		read = vringh_iov_pull_iotlb(&cvq->vring, &cvq->in_iov,
+drivers/vdpa/vdpa_sim/vdpa_sim_net.c:	if (!cvq->ready)
+drivers/vdpa/vdpa_sim/vdpa_sim_net.c:		err = vringh_getdesc_iotlb(&cvq->vring, &cvq->in_iov,
+drivers/vdpa/vdpa_sim/vdpa_sim_net.c:					   &cvq->out_iov,
+drivers/vdpa/vdpa_sim/vdpa_sim_net.c:					   &cvq->head, GFP_ATOMIC);
+drivers/vdpa/vdpa_sim/vdpa_sim_net.c:		read = vringh_iov_pull_iotlb(&cvq->vring, &cvq->in_iov, &ctrl,
+drivers/vdpa/vdpa_sim/vdpa_sim_net.c:		write = vringh_iov_push_iotlb(&cvq->vring, &cvq->out_iov,
+drivers/vdpa/vdpa_sim/vdpa_sim_net.c:		vringh_complete_iotlb(&cvq->vring, cvq->head, write);
+drivers/vdpa/vdpa_sim/vdpa_sim_net.c:		vringh_kiov_cleanup(&cvq->in_iov);
+drivers/vdpa/vdpa_sim/vdpa_sim_net.c:		vringh_kiov_cleanup(&cvq->out_iov);
+drivers/vdpa/vdpa_sim/vdpa_sim_net.c:		if (cvq->cb)
+drivers/vdpa/vdpa_sim/vdpa_sim_net.c:			cvq->cb(cvq->private);
+drivers/vdpa/vdpa_user/vduse_dev.c:	msg.req.vq_state.index = vq->index;
+drivers/vdpa/vdpa_user/vduse_dev.c:	msg.req.vq_state.index = vq->index;
+drivers/vdpa/vdpa_user/vduse_dev.c:		vq->ready = false;
+drivers/vdpa/vdpa_user/vduse_dev.c:		vq->desc_addr = 0;
+drivers/vdpa/vdpa_user/vduse_dev.c:		vq->driver_addr = 0;
+drivers/vdpa/vdpa_user/vduse_dev.c:		vq->device_addr = 0;
+drivers/vdpa/vdpa_user/vduse_dev.c:		vq->num = 0;
+drivers/vdpa/vdpa_user/vduse_dev.c:		memset(&vq->state, 0, sizeof(vq->state));
+drivers/vdpa/vdpa_user/vduse_dev.c:		spin_lock(&vq->kick_lock);
+drivers/vdpa/vdpa_user/vduse_dev.c:		vq->kicked = false;
+drivers/vdpa/vdpa_user/vduse_dev.c:		if (vq->kickfd)
+drivers/vdpa/vdpa_user/vduse_dev.c:			eventfd_ctx_put(vq->kickfd);
+drivers/vdpa/vdpa_user/vduse_dev.c:		vq->kickfd = NULL;
+drivers/vdpa/vdpa_user/vduse_dev.c:		spin_unlock(&vq->kick_lock);
+drivers/vdpa/vdpa_user/vduse_dev.c:		spin_lock(&vq->irq_lock);
+drivers/vdpa/vdpa_user/vduse_dev.c:		vq->cb.callback = NULL;
+drivers/vdpa/vdpa_user/vduse_dev.c:		vq->cb.private = NULL;
+drivers/vdpa/vdpa_user/vduse_dev.c:		spin_unlock(&vq->irq_lock);
+drivers/vdpa/vdpa_user/vduse_dev.c:		flush_work(&vq->inject);
+drivers/vdpa/vdpa_user/vduse_dev.c:		flush_work(&vq->kick);
+drivers/vdpa/vdpa_user/vduse_dev.c:	vq->desc_addr = desc_area;
+drivers/vdpa/vdpa_user/vduse_dev.c:	vq->driver_addr = driver_area;
+drivers/vdpa/vdpa_user/vduse_dev.c:	vq->device_addr = device_area;
+drivers/vdpa/vdpa_user/vduse_dev.c:	spin_lock(&vq->kick_lock);
+drivers/vdpa/vdpa_user/vduse_dev.c:	if (!vq->ready)
+drivers/vdpa/vdpa_user/vduse_dev.c:	if (vq->kickfd)
+drivers/vdpa/vdpa_user/vduse_dev.c:		eventfd_signal(vq->kickfd, 1);
+drivers/vdpa/vdpa_user/vduse_dev.c:		vq->kicked = true;
+drivers/vdpa/vdpa_user/vduse_dev.c:	spin_unlock(&vq->kick_lock);
+drivers/vdpa/vdpa_user/vduse_dev.c:		schedule_work(&vq->kick);
+drivers/vdpa/vdpa_user/vduse_dev.c:	spin_lock(&vq->irq_lock);
+drivers/vdpa/vdpa_user/vduse_dev.c:	vq->cb.callback = cb->callback;
+drivers/vdpa/vdpa_user/vduse_dev.c:	vq->cb.private = cb->private;
+drivers/vdpa/vdpa_user/vduse_dev.c:	spin_unlock(&vq->irq_lock);
+drivers/vdpa/vdpa_user/vduse_dev.c:	vq->num = num;
+drivers/vdpa/vdpa_user/vduse_dev.c:	vq->ready = ready;
+drivers/vdpa/vdpa_user/vduse_dev.c:	return vq->ready;
+drivers/vdpa/vdpa_user/vduse_dev.c:		vq->state.packed.last_avail_counter =
+drivers/vdpa/vdpa_user/vduse_dev.c:		vq->state.packed.last_avail_idx = state->packed.last_avail_idx;
+drivers/vdpa/vdpa_user/vduse_dev.c:		vq->state.packed.last_used_counter =
+drivers/vdpa/vdpa_user/vduse_dev.c:		vq->state.packed.last_used_idx = state->packed.last_used_idx;
+drivers/vdpa/vdpa_user/vduse_dev.c:		vq->state.split.avail_index = state->split.avail_index;
+drivers/vdpa/vdpa_user/vduse_dev.c:	spin_lock(&vq->kick_lock);
+drivers/vdpa/vdpa_user/vduse_dev.c:	if (vq->kickfd)
+drivers/vdpa/vdpa_user/vduse_dev.c:		eventfd_ctx_put(vq->kickfd);
+drivers/vdpa/vdpa_user/vduse_dev.c:	vq->kickfd = ctx;
+drivers/vdpa/vdpa_user/vduse_dev.c:	if (vq->ready && vq->kicked && vq->kickfd) {
+drivers/vdpa/vdpa_user/vduse_dev.c:		eventfd_signal(vq->kickfd, 1);
+drivers/vdpa/vdpa_user/vduse_dev.c:		vq->kicked = false;
+drivers/vdpa/vdpa_user/vduse_dev.c:	spin_unlock(&vq->kick_lock);
+drivers/vdpa/vdpa_user/vduse_dev.c:	spin_lock_irq(&vq->irq_lock);
+drivers/vdpa/vdpa_user/vduse_dev.c:	if (vq->ready && vq->cb.callback)
+drivers/vdpa/vdpa_user/vduse_dev.c:		vq->cb.callback(vq->cb.private);
+drivers/vdpa/vdpa_user/vduse_dev.c:	spin_unlock_irq(&vq->irq_lock);
+drivers/vdpa/vdpa_user/vduse_dev.c:		vq_info.desc_addr = vq->desc_addr;
+drivers/vdpa/vdpa_user/vduse_dev.c:		vq_info.driver_addr = vq->driver_addr;
+drivers/vdpa/vdpa_user/vduse_dev.c:		vq_info.device_addr = vq->device_addr;
+drivers/vdpa/vdpa_user/vduse_dev.c:		vq_info.num = vq->num;
+drivers/vdpa/vdpa_user/vduse_dev.c:				vq->state.packed.last_avail_counter;
+drivers/vdpa/vdpa_user/vduse_dev.c:				vq->state.packed.last_avail_idx;
+drivers/vdpa/vdpa_user/vduse_dev.c:				vq->state.packed.last_used_counter;
+drivers/vdpa/vdpa_user/vduse_dev.c:				vq->state.packed.last_used_idx;
+drivers/vdpa/vdpa_user/vduse_dev.c:				vq->state.split.avail_index;
+drivers/vdpa/vdpa_user/vduse_dev.c:		vq_info.ready = vq->ready;
+drivers/vhost/net.c:	struct vhost_net_buf *rxq = &nvq->rxq;
+drivers/vhost/net.c:	rxq->tail = ptr_ring_consume_batched(nvq->rx_ring, rxq->queue,
+drivers/vhost/net.c:	struct vhost_net_buf *rxq = &nvq->rxq;
+drivers/vhost/net.c:	if (nvq->rx_ring && !vhost_net_buf_is_empty(rxq)) {
+drivers/vhost/net.c:		ptr_ring_unconsume(nvq->rx_ring, rxq->queue + rxq->head,
+drivers/vhost/net.c:	struct vhost_net_buf *rxq = &nvq->rxq;
+drivers/vhost/net.c:	for (i = nvq->done_idx; i != nvq->upend_idx; i = (i + 1) % UIO_MAXIOV) {
+drivers/vhost/net.c:		if (vq->heads[i].len == VHOST_DMA_FAILED_LEN)
+drivers/vhost/net.c:		if (VHOST_DMA_IS_DONE(vq->heads[i].len)) {
+drivers/vhost/net.c:			vq->heads[i].len = VHOST_DMA_CLEAR_LEN;
+drivers/vhost/net.c:		add = min(UIO_MAXIOV - nvq->done_idx, j);
+drivers/vhost/net.c:		vhost_add_used_and_signal_n(vq->dev, vq,
+drivers/vhost/net.c:					    &vq->heads[nvq->done_idx], add);
+drivers/vhost/net.c:		nvq->done_idx = (nvq->done_idx + add) % UIO_MAXIOV;
+drivers/vhost/net.c:	vq->heads[ubuf->desc].len = success ?
+drivers/vhost/net.c:		vhost_poll_queue(&vq->poll);
+drivers/vhost/net.c:	struct vhost_virtqueue *vq = &nvq->vq;
+drivers/vhost/net.c:	struct vhost_dev *dev = vq->dev;
+drivers/vhost/net.c:	if (!nvq->done_idx)
+drivers/vhost/net.c:	vhost_add_used_and_signal_n(dev, vq, vq->heads, nvq->done_idx);
+drivers/vhost/net.c:	nvq->done_idx = 0;
+drivers/vhost/net.c:		.num = nvq->batched_xdp,
+drivers/vhost/net.c:		.ptr = nvq->xdp,
+drivers/vhost/net.c:	if (nvq->batched_xdp == 0)
+drivers/vhost/net.c:		vq_err(&nvq->vq, "Fail to batch sending packets\n");
+drivers/vhost/net.c:		for (i = 0; i < nvq->batched_xdp; ++i)
+drivers/vhost/net.c:			put_page(virt_to_head_page(nvq->xdp[i].data));
+drivers/vhost/net.c:		nvq->batched_xdp = 0;
+drivers/vhost/net.c:		nvq->done_idx = 0;
+drivers/vhost/net.c:	nvq->batched_xdp = 0;
+drivers/vhost/net.c:		vhost_poll_queue(&vq->poll);
+drivers/vhost/net.c:		vhost_poll_queue(&vq->poll);
+drivers/vhost/net.c:	if (!mutex_trylock(&vq->mutex))
+drivers/vhost/net.c:	busyloop_timeout = poll_rx ? rvq->busyloop_timeout:
+drivers/vhost/net.c:				     tvq->busyloop_timeout;
+drivers/vhost/net.c:	mutex_unlock(&vq->mutex);
+drivers/vhost/net.c:	struct vhost_virtqueue *rvq = &rnvq->vq;
+drivers/vhost/net.c:	struct vhost_virtqueue *tvq = &tnvq->vq;
+drivers/vhost/net.c:	int r = vhost_get_vq_desc(tvq, tvq->iov, ARRAY_SIZE(tvq->iov),
+drivers/vhost/net.c:	if (r == tvq->num && tvq->busyloop_timeout) {
+drivers/vhost/net.c:		r = vhost_get_vq_desc(tvq, tvq->iov, ARRAY_SIZE(tvq->iov),
+drivers/vhost/net.c:	struct vhost_virtqueue *vq = &nvq->vq;
+drivers/vhost/net.c:	return (nvq->upend_idx + UIO_MAXIOV - nvq->done_idx) % UIO_MAXIOV >
+drivers/vhost/net.c:	       min_t(unsigned int, VHOST_MAX_PEND, vq->num >> 2);
+drivers/vhost/net.c:	size_t len = iov_length(vq->iov, out);
+drivers/vhost/net.c:	iov_iter_init(iter, WRITE, vq->iov, out, len);
+drivers/vhost/net.c:	struct vhost_virtqueue *vq = &nvq->vq;
+drivers/vhost/net.c:	if (ret < 0 || ret == vq->num)
+drivers/vhost/net.c:	*len = init_iov_iter(vq, &msg->msg_iter, nvq->vhost_hlen, *out);
+drivers/vhost/net.c:			*len, nvq->vhost_hlen);
+drivers/vhost/net.c:	       !vhost_vq_avail_empty(vq->dev, vq);
+drivers/vhost/net.c:	struct vhost_virtqueue *vq = &nvq->vq;
+drivers/vhost/net.c:	struct vhost_net *net = container_of(vq->dev, struct vhost_net,
+drivers/vhost/net.c:	struct xdp_buff *xdp = &nvq->xdp[nvq->batched_xdp];
+drivers/vhost/net.c:	int pad = SKB_DATA_ALIGN(VHOST_NET_RX_PAD + headroom + nvq->sock_hlen);
+drivers/vhost/net.c:	int sock_hlen = nvq->sock_hlen;
+drivers/vhost/net.c:	if (unlikely(len < nvq->sock_hlen))
+drivers/vhost/net.c:	++nvq->batched_xdp;
+drivers/vhost/net.c:	struct vhost_virtqueue *vq = &nvq->vq;
+drivers/vhost/net.c:		if (nvq->done_idx == VHOST_NET_BATCH)
+drivers/vhost/net.c:		if (head == vq->num) {
+drivers/vhost/net.c:				vhost_poll_queue(&vq->poll);
+drivers/vhost/net.c:		vq->heads[nvq->done_idx].id = cpu_to_vhost32(vq, head);
+drivers/vhost/net.c:		vq->heads[nvq->done_idx].len = 0;
+drivers/vhost/net.c:		++nvq->done_idx;
+drivers/vhost/net.c:	struct vhost_virtqueue *vq = &nvq->vq;
+drivers/vhost/net.c:		if (head == vq->num) {
+drivers/vhost/net.c:				vhost_poll_queue(&vq->poll);
+drivers/vhost/net.c:			ubuf = nvq->ubuf_info + nvq->upend_idx;
+drivers/vhost/net.c:			vq->heads[nvq->upend_idx].id = cpu_to_vhost32(vq, head);
+drivers/vhost/net.c:			vq->heads[nvq->upend_idx].len = VHOST_DMA_IN_PROGRESS;
+drivers/vhost/net.c:			ubuf->ctx = nvq->ubufs;
+drivers/vhost/net.c:			ubuf->desc = nvq->upend_idx;
+drivers/vhost/net.c:			ubufs = nvq->ubufs;
+drivers/vhost/net.c:			nvq->upend_idx = (nvq->upend_idx + 1) % UIO_MAXIOV;
+drivers/vhost/net.c:				if (vq->heads[ubuf->desc].len == VHOST_DMA_IN_PROGRESS)
+drivers/vhost/net.c:				nvq->upend_idx = ((unsigned)nvq->upend_idx - 1)
+drivers/vhost/net.c:	struct vhost_virtqueue *vq = &nvq->vq;
+drivers/vhost/net.c:	mutex_lock_nested(&vq->mutex, VHOST_NET_VQ_TX);
+drivers/vhost/net.c:	mutex_unlock(&vq->mutex);
+drivers/vhost/net.c:	if (rvq->rx_ring)
+drivers/vhost/net.c:	struct vhost_virtqueue *rvq = &rnvq->vq;
+drivers/vhost/net.c:	struct vhost_virtqueue *tvq = &tnvq->vq;
+drivers/vhost/net.c:	if (!len && rvq->busyloop_timeout) {
+drivers/vhost/net.c:		r = vhost_get_vq_desc(vq, vq->iov + seg,
+drivers/vhost/net.c:				      ARRAY_SIZE(vq->iov) - seg, &out,
+drivers/vhost/net.c:		if (d == vq->num) {
+drivers/vhost/net.c:		len = iov_length(vq->iov + seg, in);
+drivers/vhost/net.c:	struct vhost_virtqueue *vq = &nvq->vq;
+drivers/vhost/net.c:	mutex_lock_nested(&vq->mutex, VHOST_NET_VQ_RX);
+drivers/vhost/net.c:	vhost_hlen = nvq->vhost_hlen;
+drivers/vhost/net.c:	sock_hlen = nvq->sock_hlen;
+drivers/vhost/net.c:		vq->log : NULL;
+drivers/vhost/net.c:		headcount = get_rx_bufs(vq, vq->heads + nvq->done_idx,
+drivers/vhost/net.c:				vhost_poll_queue(&vq->poll);
+drivers/vhost/net.c:		if (nvq->rx_ring)
+drivers/vhost/net.c:			msg.msg_control = vhost_net_buf_consume(&nvq->rxq);
+drivers/vhost/net.c:			iov_iter_init(&msg.msg_iter, READ, vq->iov, 1, 1);
+drivers/vhost/net.c:		iov_iter_init(&msg.msg_iter, READ, vq->iov, in, vhost_len);
+drivers/vhost/net.c:				       "at addr %p\n", vq->iov->iov_base);
+drivers/vhost/net.c:		nvq->done_idx += headcount;
+drivers/vhost/net.c:		if (nvq->done_idx > VHOST_NET_BATCH)
+drivers/vhost/net.c:					vq->iov, in);
+drivers/vhost/net.c:		vhost_poll_queue(&vq->poll);
+drivers/vhost/net.c:	mutex_unlock(&vq->mutex);
+drivers/vhost/net.c:	struct vhost_net *net = container_of(vq->dev, struct vhost_net, dev);
+drivers/vhost/net.c:	struct vhost_net *net = container_of(vq->dev, struct vhost_net, dev);
+drivers/vhost/net.c:	mutex_lock(&vq->mutex);
+drivers/vhost/net.c:	nvq->rx_ring = NULL;
+drivers/vhost/net.c:	mutex_unlock(&vq->mutex);
+drivers/vhost/net.c:	mutex_lock(&vq->mutex);
+drivers/vhost/net.c:				nvq->rx_ring = get_tap_ptr_ring(sock->file);
+drivers/vhost/net.c:				nvq->rx_ring = NULL;
+drivers/vhost/net.c:		oldubufs = nvq->ubufs;
+drivers/vhost/net.c:		nvq->ubufs = ubufs;
+drivers/vhost/net.c:	mutex_unlock(&vq->mutex);
+drivers/vhost/net.c:		mutex_lock(&vq->mutex);
+drivers/vhost/net.c:		mutex_unlock(&vq->mutex);
+drivers/vhost/net.c:	mutex_unlock(&vq->mutex);
+drivers/vhost/scsi.c:	 * Indicate current inflight in use, protected by vq->mutex.
+drivers/vhost/scsi.c:	bool vs_events_missed; /* any missed events, protected by vq->mutex */
+drivers/vhost/scsi.c:	int vs_events_nr; /* num of pending events, protected by vq->mutex */
+drivers/vhost/scsi.c:		mutex_lock(&vq->mutex);
+drivers/vhost/scsi.c:		mutex_unlock(&vq->mutex);
+drivers/vhost/scsi.c:	inflight = &svq->inflights[svq->inflight_idx];
+drivers/vhost/scsi.c:	sbitmap_clear_bit(&svq->scsi_tags, se_cmd->map_tag);
+drivers/vhost/scsi.c:	head = vhost_get_vq_desc(vq, vq->iov,
+drivers/vhost/scsi.c:			ARRAY_SIZE(vq->iov), &out, &in,
+drivers/vhost/scsi.c:	if (head == vq->num) {
+drivers/vhost/scsi.c:	if ((vq->iov[out].iov_len != sizeof(struct virtio_scsi_event))) {
+drivers/vhost/scsi.c:				vq->iov[out].iov_len);
+drivers/vhost/scsi.c:	eventp = vq->iov[out].iov_base;
+drivers/vhost/scsi.c:	mutex_lock(&vq->mutex);
+drivers/vhost/scsi.c:	mutex_unlock(&vq->mutex);
+drivers/vhost/scsi.c:	tag = sbitmap_get(&svq->scsi_tags);
+drivers/vhost/scsi.c:	cmd = &svq->scsi_cmds[tag];
+drivers/vhost/scsi.c:	resp = vq->iov[out].iov_base;
+drivers/vhost/scsi.c:	vc->head = vhost_get_vq_desc(vq, vq->iov,
+drivers/vhost/scsi.c:				     ARRAY_SIZE(vq->iov), &vc->out, &vc->in,
+drivers/vhost/scsi.c:	if (vc->head == vq->num) {
+drivers/vhost/scsi.c:	vc->out_size = iov_length(vq->iov, vc->out);
+drivers/vhost/scsi.c:	vc->in_size = iov_length(&vq->iov[vc->out], vc->in);
+drivers/vhost/scsi.c:	iov_iter_init(&vc->out_iter, WRITE, vq->iov, vc->out, vc->out_size);
+drivers/vhost/scsi.c:	mutex_lock(&vq->mutex);
+drivers/vhost/scsi.c:			iov_iter_init(&in_iter, READ, &vq->iov[vc.out], vc.in,
+drivers/vhost/scsi.c:		cmd->tvc_resp_iov = vq->iov[vc.out];
+drivers/vhost/scsi.c:	mutex_unlock(&vq->mutex);
+drivers/vhost/scsi.c:	vhost_scsi_send_tmf_resp(tmf->vhost, &tmf->svq->vq, tmf->in_iovs,
+drivers/vhost/scsi.c:	tmf->resp_iov = vq->iov[vc->out];
+drivers/vhost/scsi.c:	vhost_scsi_send_tmf_resp(vs, vq, vc->in, vc->head, &vq->iov[vc->out],
+drivers/vhost/scsi.c:	iov_iter_init(&iov_iter, READ, &vq->iov[vc->out], vc->in, sizeof(rsp));
+drivers/vhost/scsi.c:	mutex_lock(&vq->mutex);
+drivers/vhost/scsi.c:	mutex_unlock(&vq->mutex);
+drivers/vhost/scsi.c:	struct vhost_scsi *vs = container_of(vq->dev, struct vhost_scsi, dev);
+drivers/vhost/scsi.c:	struct vhost_scsi *vs = container_of(vq->dev, struct vhost_scsi, dev);
+drivers/vhost/scsi.c:	mutex_lock(&vq->mutex);
+drivers/vhost/scsi.c:	mutex_unlock(&vq->mutex);
+drivers/vhost/scsi.c:	struct vhost_scsi *vs = container_of(vq->dev, struct vhost_scsi, dev);
+drivers/vhost/scsi.c:	if (!svq->scsi_cmds)
+drivers/vhost/scsi.c:	for (i = 0; i < svq->max_cmds; i++) {
+drivers/vhost/scsi.c:		tv_cmd = &svq->scsi_cmds[i];
+drivers/vhost/scsi.c:	sbitmap_free(&svq->scsi_tags);
+drivers/vhost/scsi.c:	kfree(svq->scsi_cmds);
+drivers/vhost/scsi.c:	svq->scsi_cmds = NULL;
+drivers/vhost/scsi.c:	if (svq->scsi_cmds)
+drivers/vhost/scsi.c:	if (sbitmap_init_node(&svq->scsi_tags, max_cmds, -1, GFP_KERNEL,
+drivers/vhost/scsi.c:	svq->max_cmds = max_cmds;
+drivers/vhost/scsi.c:	svq->scsi_cmds = kcalloc(max_cmds, sizeof(*tv_cmd), GFP_KERNEL);
+drivers/vhost/scsi.c:	if (!svq->scsi_cmds) {
+drivers/vhost/scsi.c:		sbitmap_free(&svq->scsi_tags);
+drivers/vhost/scsi.c:		tv_cmd = &svq->scsi_cmds[i];
+drivers/vhost/scsi.c: *    vhost_scsi_mutex -> vs->dev.mutex -> tpg->tv_tpg_mutex -> vq->mutex
+drivers/vhost/scsi.c:			ret = vhost_scsi_setup_vq_cmds(vq, vq->num);
+drivers/vhost/scsi.c:			mutex_lock(&vq->mutex);
+drivers/vhost/scsi.c:			mutex_unlock(&vq->mutex);
+drivers/vhost/scsi.c:			mutex_lock(&vq->mutex);
+drivers/vhost/scsi.c:			mutex_unlock(&vq->mutex);
+drivers/vhost/scsi.c:		mutex_lock(&vq->mutex);
+drivers/vhost/scsi.c:		vq->acked_features = features;
+drivers/vhost/scsi.c:		mutex_unlock(&vq->mutex);
+drivers/vhost/scsi.c:		mutex_lock(&vq->mutex);
+drivers/vhost/scsi.c:		mutex_unlock(&vq->mutex);
+drivers/vhost/scsi.c:		mutex_lock(&vq->mutex);
+drivers/vhost/scsi.c:		mutex_unlock(&vq->mutex);
+drivers/vhost/scsi.c:	mutex_lock(&vq->mutex);
+drivers/vhost/scsi.c:	mutex_unlock(&vq->mutex);
+drivers/vhost/test.c:	mutex_lock(&vq->mutex);
+drivers/vhost/test.c:		mutex_unlock(&vq->mutex);
+drivers/vhost/test.c:		head = vhost_get_vq_desc(vq, vq->iov,
+drivers/vhost/test.c:					 ARRAY_SIZE(vq->iov),
+drivers/vhost/test.c:		if (head == vq->num) {
+drivers/vhost/test.c:		len = iov_length(vq->iov, out);
+drivers/vhost/test.c:	mutex_unlock(&vq->mutex);
+drivers/vhost/test.c:	struct vhost_test *n = container_of(vq->dev, struct vhost_test, dev);
+drivers/vhost/test.c:	mutex_lock(&vq->mutex);
+drivers/vhost/test.c:	mutex_unlock(&vq->mutex);
+drivers/vhost/test.c:		mutex_lock(&vq->mutex);
+drivers/vhost/test.c:		mutex_unlock(&vq->mutex);
+drivers/vhost/test.c:	mutex_lock(&vq->mutex);
+drivers/vhost/test.c:	vq->acked_features = features;
+drivers/vhost/test.c:	mutex_unlock(&vq->mutex);
+drivers/vhost/test.c:	mutex_lock(&vq->mutex);
+drivers/vhost/test.c:		vhost_poll_stop(&vq->poll);
+drivers/vhost/test.c:			r = vhost_poll_start(&vq->poll, vq->kick);
+drivers/vhost/test.c:	mutex_unlock(&vq->mutex);
+drivers/vhost/test.c:	mutex_unlock(&vq->mutex);
+drivers/vhost/vdpa.c:	struct vhost_vdpa *v = container_of(vq->dev, struct vhost_vdpa, vdev);
+drivers/vhost/vdpa.c:	struct eventfd_ctx *call_ctx = vq->call_ctx.ctx;
+drivers/vhost/vdpa.c:	irq_bypass_unregister_producer(&vq->call_ctx.producer);
+drivers/vhost/vdpa.c:	if (!vq->call_ctx.ctx)
+drivers/vhost/vdpa.c:	vq->call_ctx.producer.token = vq->call_ctx.ctx;
+drivers/vhost/vdpa.c:	vq->call_ctx.producer.irq = irq;
+drivers/vhost/vdpa.c:	ret = irq_bypass_register_producer(&vq->call_ctx.producer);
+drivers/vhost/vdpa.c:			 qid, vq->call_ctx.producer.token, ret);
+drivers/vhost/vdpa.c:	irq_bypass_unregister_producer(&vq->call_ctx.producer);
+drivers/vhost/vdpa.c:		vq->last_avail_idx = vq_state.split.avail_index;
+drivers/vhost/vdpa.c:					(u64)(uintptr_t)vq->desc,
+drivers/vhost/vdpa.c:					(u64)(uintptr_t)vq->avail,
+drivers/vhost/vdpa.c:					(u64)(uintptr_t)vq->used))
+drivers/vhost/vdpa.c:		vq_state.split.avail_index = vq->last_avail_idx;
+drivers/vhost/vdpa.c:		if (vq->call_ctx.ctx) {
+drivers/vhost/vdpa.c:		ops->set_vq_num(vdpa, idx, vq->num);
+drivers/vhost/vhost.c:#define vhost_used_event(vq) ((__virtio16 __user *)&vq->avail->ring[vq->num])
+drivers/vhost/vhost.c:#define vhost_avail_event(vq) ((__virtio16 __user *)&vq->used->ring[vq->num])
+drivers/vhost/vhost.c:	vq->user_be = !virtio_legacy_is_little_endian();
+drivers/vhost/vhost.c:	vq->user_be = true;
+drivers/vhost/vhost.c:	vq->user_be = false;
+drivers/vhost/vhost.c:	if (vq->private_data)
+drivers/vhost/vhost.c:		.num = vq->user_be
+drivers/vhost/vhost.c:	vq->is_le = vhost_has_feature(vq, VIRTIO_F_VERSION_1) || !vq->user_be;
+drivers/vhost/vhost.c:	vq->is_le = vhost_has_feature(vq, VIRTIO_F_VERSION_1)
+drivers/vhost/vhost.c:		vq->meta_iotlb[j] = NULL;
+drivers/vhost/vhost.c:	return vq->avail && vq->desc && vq->used && vhost_vq_access_ok(vq);
+drivers/vhost/vhost.c:	vq->num = 1;
+drivers/vhost/vhost.c:	vq->desc = NULL;
+drivers/vhost/vhost.c:	vq->avail = NULL;
+drivers/vhost/vhost.c:	vq->used = NULL;
+drivers/vhost/vhost.c:	vq->last_avail_idx = 0;
+drivers/vhost/vhost.c:	vq->avail_idx = 0;
+drivers/vhost/vhost.c:	vq->last_used_idx = 0;
+drivers/vhost/vhost.c:	vq->signalled_used = 0;
+drivers/vhost/vhost.c:	vq->signalled_used_valid = false;
+drivers/vhost/vhost.c:	vq->used_flags = 0;
+drivers/vhost/vhost.c:	vq->log_used = false;
+drivers/vhost/vhost.c:	vq->log_addr = -1ull;
+drivers/vhost/vhost.c:	vq->private_data = NULL;
+drivers/vhost/vhost.c:	vq->acked_features = 0;
+drivers/vhost/vhost.c:	vq->acked_backend_features = 0;
+drivers/vhost/vhost.c:	vq->log_base = NULL;
+drivers/vhost/vhost.c:	vq->error_ctx = NULL;
+drivers/vhost/vhost.c:	vq->kick = NULL;
+drivers/vhost/vhost.c:	vq->log_ctx = NULL;
+drivers/vhost/vhost.c:	vq->busyloop_timeout = 0;
+drivers/vhost/vhost.c:	vq->umem = NULL;
+drivers/vhost/vhost.c:	vq->iotlb = NULL;
+drivers/vhost/vhost.c:	vhost_vring_call_reset(&vq->call_ctx);
+drivers/vhost/vhost.c:	kfree(vq->indirect);
+drivers/vhost/vhost.c:	vq->indirect = NULL;
+drivers/vhost/vhost.c:	kfree(vq->log);
+drivers/vhost/vhost.c:	vq->log = NULL;
+drivers/vhost/vhost.c:	kfree(vq->heads);
+drivers/vhost/vhost.c:	vq->heads = NULL;
+drivers/vhost/vhost.c:		vq->indirect = kmalloc_array(UIO_MAXIOV,
+drivers/vhost/vhost.c:					     sizeof(*vq->indirect),
+drivers/vhost/vhost.c:		vq->log = kmalloc_array(dev->iov_limit, sizeof(*vq->log),
+drivers/vhost/vhost.c:		vq->heads = kmalloc_array(dev->iov_limit, sizeof(*vq->heads),
+drivers/vhost/vhost.c:		if (!vq->indirect || !vq->log || !vq->heads)
+drivers/vhost/vhost.c:	struct vhost_dev *dev = vq->dev;
+drivers/vhost/vhost.c:		vhost_poll_queue(&vq->poll);
+drivers/vhost/vhost.c:	return sizeof(*vq->avail) +
+drivers/vhost/vhost.c:	       sizeof(*vq->avail->ring) * num + event;
+drivers/vhost/vhost.c:	return sizeof(*vq->used) +
+drivers/vhost/vhost.c:	       sizeof(*vq->used->ring) * num + event;
+drivers/vhost/vhost.c:	return sizeof(*vq->desc) * num;
+drivers/vhost/vhost.c:		vq->log = NULL;
+drivers/vhost/vhost.c:		vq->indirect = NULL;
+drivers/vhost/vhost.c:		vq->heads = NULL;
+drivers/vhost/vhost.c:		vq->dev = dev;
+drivers/vhost/vhost.c:		mutex_init(&vq->mutex);
+drivers/vhost/vhost.c:		if (vq->handle_kick)
+drivers/vhost/vhost.c:			vhost_poll_init(&vq->poll, vq->handle_kick,
+drivers/vhost/vhost.c:	const struct vhost_iotlb_map *map = vq->meta_iotlb[type];
+drivers/vhost/vhost.c:	if (!vq->iotlb)
+drivers/vhost/vhost.c:		ret = translate_desc(vq, (u64)(uintptr_t)to, size, vq->iotlb_iov,
+drivers/vhost/vhost.c:				     ARRAY_SIZE(vq->iotlb_iov),
+drivers/vhost/vhost.c:		iov_iter_init(&t, WRITE, vq->iotlb_iov, ret, size);
+drivers/vhost/vhost.c:	if (!vq->iotlb)
+drivers/vhost/vhost.c:		ret = translate_desc(vq, (u64)(uintptr_t)from, size, vq->iotlb_iov,
+drivers/vhost/vhost.c:				     ARRAY_SIZE(vq->iotlb_iov),
+drivers/vhost/vhost.c:		iov_iter_init(&f, READ, vq->iotlb_iov, ret, size);
+drivers/vhost/vhost.c:	ret = translate_desc(vq, (u64)(uintptr_t)addr, size, vq->iotlb_iov,
+drivers/vhost/vhost.c:			     ARRAY_SIZE(vq->iotlb_iov),
+drivers/vhost/vhost.c:	if (ret != 1 || vq->iotlb_iov[0].iov_len != size) {
+drivers/vhost/vhost.c:	return vq->iotlb_iov[0].iov_base;
+drivers/vhost/vhost.c:	if (!vq->iotlb) { \
+drivers/vhost/vhost.c:	return vhost_put_user(vq, cpu_to_vhost16(vq, vq->avail_idx),
+drivers/vhost/vhost.c:	return vhost_copy_to_user(vq, vq->used->ring + idx, head,
+drivers/vhost/vhost.c:	return vhost_put_user(vq, cpu_to_vhost16(vq, vq->used_flags),
+drivers/vhost/vhost.c:			      &vq->used->flags);
+drivers/vhost/vhost.c:	return vhost_put_user(vq, cpu_to_vhost16(vq, vq->last_used_idx),
+drivers/vhost/vhost.c:			      &vq->used->idx);
+drivers/vhost/vhost.c:	if (!vq->iotlb) { \
+drivers/vhost/vhost.c:	return vhost_get_avail(vq, *idx, &vq->avail->idx);
+drivers/vhost/vhost.c:			       &vq->avail->ring[idx & (vq->num - 1)]);
+drivers/vhost/vhost.c:	return vhost_get_avail(vq, *flags, &vq->avail->flags);
+drivers/vhost/vhost.c:	return vhost_get_used(vq, *idx, &vq->used->idx);
+drivers/vhost/vhost.c:	return vhost_copy_from_user(vq, desc, vq->desc + idx, sizeof(*desc));
+drivers/vhost/vhost.c:			vhost_poll_queue(&node->vq->poll);
+drivers/vhost/vhost.c:	struct vhost_dev *dev = vq->dev;
+drivers/vhost/vhost.c:	if (vq->iotlb)
+drivers/vhost/vhost.c:		vq->meta_iotlb[type] = map;
+drivers/vhost/vhost.c:	struct vhost_iotlb *umem = vq->iotlb;
+drivers/vhost/vhost.c:	unsigned int num = vq->num;
+drivers/vhost/vhost.c:	if (!vq->iotlb)
+drivers/vhost/vhost.c:	return iotlb_access_ok(vq, VHOST_MAP_RO, (u64)(uintptr_t)vq->desc,
+drivers/vhost/vhost.c:	       iotlb_access_ok(vq, VHOST_MAP_RO, (u64)(uintptr_t)vq->avail,
+drivers/vhost/vhost.c:	       iotlb_access_ok(vq, VHOST_MAP_WO, (u64)(uintptr_t)vq->used,
+drivers/vhost/vhost.c:	if (vq->iotlb)
+drivers/vhost/vhost.c:					  vhost_get_used_size(vq, vq->num));
+drivers/vhost/vhost.c:	return vq_memory_access_ok(log_base, vq->umem,
+drivers/vhost/vhost.c:		vq_log_used_access_ok(vq, log_base, vq->log_used, vq->log_addr);
+drivers/vhost/vhost.c:	if (!vq_log_access_ok(vq, vq->log_base))
+drivers/vhost/vhost.c:	return vq_access_ok(vq, vq->num, vq->desc, vq->avail, vq->used);
+drivers/vhost/vhost.c:	if (vq->private_data)
+drivers/vhost/vhost.c:	vq->num = s.num;
+drivers/vhost/vhost.c:	BUILD_BUG_ON(__alignof__ *vq->avail > VRING_AVAIL_ALIGN_SIZE);
+drivers/vhost/vhost.c:	BUILD_BUG_ON(__alignof__ *vq->used > VRING_USED_ALIGN_SIZE);
+drivers/vhost/vhost.c:	if (vq->private_data) {
+drivers/vhost/vhost.c:		if (!vq_access_ok(vq, vq->num,
+drivers/vhost/vhost.c:		if (!vq_log_used_access_ok(vq, vq->log_base,
+drivers/vhost/vhost.c:	vq->log_used = !!(a.flags & (0x1 << VHOST_VRING_F_LOG));
+drivers/vhost/vhost.c:	vq->desc = (void __user *)(unsigned long)a.desc_user_addr;
+drivers/vhost/vhost.c:	vq->avail = (void __user *)(unsigned long)a.avail_user_addr;
+drivers/vhost/vhost.c:	vq->log_addr = a.log_guest_addr;
+drivers/vhost/vhost.c:	vq->used = (void __user *)(unsigned long)a.used_user_addr;
+drivers/vhost/vhost.c:	mutex_lock(&vq->mutex);
+drivers/vhost/vhost.c:	mutex_unlock(&vq->mutex);
+drivers/vhost/vhost.c:	mutex_lock(&vq->mutex);
+drivers/vhost/vhost.c:		if (vq->private_data) {
+drivers/vhost/vhost.c:		vq->last_avail_idx = s.num;
+drivers/vhost/vhost.c:		vq->avail_idx = vq->last_avail_idx;
+drivers/vhost/vhost.c:		s.num = vq->last_avail_idx;
+drivers/vhost/vhost.c:		if (eventfp != vq->kick) {
+drivers/vhost/vhost.c:			pollstop = (filep = vq->kick) != NULL;
+drivers/vhost/vhost.c:			pollstart = (vq->kick = eventfp) != NULL;
+drivers/vhost/vhost.c:		swap(ctx, vq->call_ctx.ctx);
+drivers/vhost/vhost.c:		swap(ctx, vq->error_ctx);
+drivers/vhost/vhost.c:		vq->busyloop_timeout = s.num;
+drivers/vhost/vhost.c:		s.num = vq->busyloop_timeout;
+drivers/vhost/vhost.c:	if (pollstop && vq->handle_kick)
+drivers/vhost/vhost.c:		vhost_poll_stop(&vq->poll);
+drivers/vhost/vhost.c:	if (pollstart && vq->handle_kick)
+drivers/vhost/vhost.c:		r = vhost_poll_start(&vq->poll, vq->kick);
+drivers/vhost/vhost.c:	mutex_unlock(&vq->mutex);
+drivers/vhost/vhost.c:	if (pollstop && vq->handle_kick)
+drivers/vhost/vhost.c:		vhost_dev_flush(vq->poll.dev);
+drivers/vhost/vhost.c:		mutex_lock(&vq->mutex);
+drivers/vhost/vhost.c:		vq->iotlb = niotlb;
+drivers/vhost/vhost.c:		mutex_unlock(&vq->mutex);
+drivers/vhost/vhost.c:			mutex_lock(&vq->mutex);
+drivers/vhost/vhost.c:			if (vq->private_data && !vq_log_access_ok(vq, base))
+drivers/vhost/vhost.c:				vq->log_base = base;
+drivers/vhost/vhost.c:			mutex_unlock(&vq->mutex);
+drivers/vhost/vhost.c:	struct vhost_iotlb *umem = vq->umem;
+drivers/vhost/vhost.c:			r = log_write(vq->log_base,
+drivers/vhost/vhost.c:	struct iovec *iov = vq->log_iov;
+drivers/vhost/vhost.c:	if (!vq->iotlb)
+drivers/vhost/vhost.c:		return log_write(vq->log_base, vq->log_addr + used_offset, len);
+drivers/vhost/vhost.c:	ret = translate_desc(vq, (uintptr_t)vq->used + used_offset,
+drivers/vhost/vhost.c:	if (vq->iotlb) {
+drivers/vhost/vhost.c:		r = log_write(vq->log_base, log[i].addr, l);
+drivers/vhost/vhost.c:			if (vq->log_ctx)
+drivers/vhost/vhost.c:				eventfd_signal(vq->log_ctx, 1);
+drivers/vhost/vhost.c:	if (unlikely(vq->log_used)) {
+drivers/vhost/vhost.c:		used = &vq->used->flags;
+drivers/vhost/vhost.c:		log_used(vq, (used - (void __user *)vq->used),
+drivers/vhost/vhost.c:			 sizeof vq->used->flags);
+drivers/vhost/vhost.c:		if (vq->log_ctx)
+drivers/vhost/vhost.c:			eventfd_signal(vq->log_ctx, 1);
+drivers/vhost/vhost.c:	if (unlikely(vq->log_used)) {
+drivers/vhost/vhost.c:		log_used(vq, (used - (void __user *)vq->used),
+drivers/vhost/vhost.c:		if (vq->log_ctx)
+drivers/vhost/vhost.c:			eventfd_signal(vq->log_ctx, 1);
+drivers/vhost/vhost.c:	bool is_le = vq->is_le;
+drivers/vhost/vhost.c:	if (!vq->private_data)
+drivers/vhost/vhost.c:	vq->signalled_used_valid = false;
+drivers/vhost/vhost.c:	if (!vq->iotlb &&
+drivers/vhost/vhost.c:	    !access_ok(&vq->used->idx, sizeof vq->used->idx)) {
+drivers/vhost/vhost.c:		       &vq->used->idx);
+drivers/vhost/vhost.c:	vq->last_used_idx = vhost16_to_cpu(vq, last_used_idx);
+drivers/vhost/vhost.c:	vq->is_le = is_le;
+drivers/vhost/vhost.c:	struct vhost_dev *dev = vq->dev;
+drivers/vhost/vhost.c:	ret = translate_desc(vq, vhost64_to_cpu(vq, indirect->addr), len, vq->indirect,
+drivers/vhost/vhost.c:	iov_iter_init(&from, READ, vq->indirect, ret, len);
+drivers/vhost/vhost.c: * This function returns the descriptor number found, or vq->num (which is
+drivers/vhost/vhost.c:	last_avail_idx = vq->last_avail_idx;
+drivers/vhost/vhost.c:	if (vq->avail_idx == vq->last_avail_idx) {
+drivers/vhost/vhost.c:				&vq->avail->idx);
+drivers/vhost/vhost.c:		vq->avail_idx = vhost16_to_cpu(vq, avail_idx);
+drivers/vhost/vhost.c:		if (unlikely((u16)(vq->avail_idx - last_avail_idx) > vq->num)) {
+drivers/vhost/vhost.c:				last_avail_idx, vq->avail_idx);
+drivers/vhost/vhost.c:		if (vq->avail_idx == last_avail_idx)
+drivers/vhost/vhost.c:			return vq->num;
+drivers/vhost/vhost.c:		       &vq->avail->ring[last_avail_idx % vq->num]);
+drivers/vhost/vhost.c:	if (unlikely(head >= vq->num)) {
+drivers/vhost/vhost.c:		       head, vq->num);
+drivers/vhost/vhost.c:		if (unlikely(i >= vq->num)) {
+drivers/vhost/vhost.c:			       i, vq->num, head);
+drivers/vhost/vhost.c:		if (unlikely(++found > vq->num)) {
+drivers/vhost/vhost.c:			       i, vq->num, head);
+drivers/vhost/vhost.c:			       i, vq->desc + i);
+drivers/vhost/vhost.c:	vq->last_avail_idx++;
+drivers/vhost/vhost.c:	BUG_ON(!(vq->used_flags & VRING_USED_F_NO_NOTIFY));
+drivers/vhost/vhost.c:	vq->last_avail_idx -= n;
+drivers/vhost/vhost.c:	start = vq->last_used_idx & (vq->num - 1);
+drivers/vhost/vhost.c:	used = vq->used->ring + start;
+drivers/vhost/vhost.c:	if (unlikely(vq->log_used)) {
+drivers/vhost/vhost.c:		log_used(vq, ((void __user *)used - (void __user *)vq->used),
+drivers/vhost/vhost.c:	old = vq->last_used_idx;
+drivers/vhost/vhost.c:	new = (vq->last_used_idx += count);
+drivers/vhost/vhost.c:	if (unlikely((u16)(new - vq->signalled_used) < (u16)(new - old)))
+drivers/vhost/vhost.c:		vq->signalled_used_valid = false;
+drivers/vhost/vhost.c:	start = vq->last_used_idx & (vq->num - 1);
+drivers/vhost/vhost.c:	n = vq->num - start;
+drivers/vhost/vhost.c:	if (unlikely(vq->log_used)) {
+drivers/vhost/vhost.c:			 sizeof vq->used->idx);
+drivers/vhost/vhost.c:		if (vq->log_ctx)
+drivers/vhost/vhost.c:			eventfd_signal(vq->log_ctx, 1);
+drivers/vhost/vhost.c:	    unlikely(vq->avail_idx == vq->last_avail_idx))
+drivers/vhost/vhost.c:	old = vq->signalled_used;
+drivers/vhost/vhost.c:	v = vq->signalled_used_valid;
+drivers/vhost/vhost.c:	new = vq->signalled_used = vq->last_used_idx;
+drivers/vhost/vhost.c:	vq->signalled_used_valid = true;
+drivers/vhost/vhost.c:	if (vq->call_ctx.ctx && vhost_notify(dev, vq))
+drivers/vhost/vhost.c:		eventfd_signal(vq->call_ctx.ctx, 1);
+drivers/vhost/vhost.c:	if (vq->avail_idx != vq->last_avail_idx)
+drivers/vhost/vhost.c:	vq->avail_idx = vhost16_to_cpu(vq, avail_idx);
+drivers/vhost/vhost.c:	return vq->avail_idx == vq->last_avail_idx;
+drivers/vhost/vhost.c:	if (!(vq->used_flags & VRING_USED_F_NO_NOTIFY))
+drivers/vhost/vhost.c:	vq->used_flags &= ~VRING_USED_F_NO_NOTIFY;
+drivers/vhost/vhost.c:			       &vq->used->flags, r);
+drivers/vhost/vhost.c:		       &vq->avail->idx, r);
+drivers/vhost/vhost.c:	vq->avail_idx = vhost16_to_cpu(vq, avail_idx);
+drivers/vhost/vhost.c:	return vq->avail_idx != vq->last_avail_idx;
+drivers/vhost/vhost.c:	if (vq->used_flags & VRING_USED_F_NO_NOTIFY)
+drivers/vhost/vhost.c:	vq->used_flags |= VRING_USED_F_NO_NOTIFY;
+drivers/vhost/vhost.c:			       &vq->used->flags, r);
+drivers/vhost/vhost.c:		mutex_lock(&vq->mutex);
+drivers/vhost/vhost.c:		vq->acked_backend_features = features;
+drivers/vhost/vhost.c:		mutex_unlock(&vq->mutex);
+drivers/vhost/vhost.h: * Context: Need to call with vq->mutex acquired.
+drivers/vhost/vhost.h:	vq->private_data = private_data;
+drivers/vhost/vhost.h: * Context: Need to call with vq->mutex acquired.
+drivers/vhost/vhost.h:	return vq->private_data;
+drivers/vhost/vhost.h:	return vq->acked_features & (1ULL << bit);
+drivers/vhost/vhost.h:	return vq->acked_backend_features & (1ULL << bit);
+drivers/vhost/vhost.h:	return vq->is_le;
+drivers/vhost/vhost.h:	return virtio_legacy_is_little_endian() || vq->is_le;
+drivers/vhost/vsock.c:	mutex_lock(&vq->mutex);
+drivers/vhost/vsock.c:		head = vhost_get_vq_desc(vq, vq->iov, ARRAY_SIZE(vq->iov),
+drivers/vhost/vsock.c:		if (head == vq->num) {
+drivers/vhost/vsock.c:		iov_len = iov_length(&vq->iov[out], in);
+drivers/vhost/vsock.c:		iov_iter_init(&iov_iter, READ, &vq->iov[out], in, iov_len);
+drivers/vhost/vsock.c:				if (val + 1 == tx_vq->num)
+drivers/vhost/vsock.c:	mutex_unlock(&vq->mutex);
+drivers/vhost/vsock.c:		vhost_poll_queue(&tx_vq->poll);
+drivers/vhost/vsock.c:		if (new_cnt + cnt >= tx_vq->num && new_cnt < tx_vq->num)
+drivers/vhost/vsock.c:			vhost_poll_queue(&tx_vq->poll);
+drivers/vhost/vsock.c:	len = iov_length(vq->iov, out);
+drivers/vhost/vsock.c:	iov_iter_init(&iov_iter, WRITE, vq->iov, out, len);
+drivers/vhost/vsock.c:	return val < vq->num;
+drivers/vhost/vsock.c:	struct vhost_vsock *vsock = container_of(vq->dev, struct vhost_vsock,
+drivers/vhost/vsock.c:	mutex_lock(&vq->mutex);
+drivers/vhost/vsock.c:		head = vhost_get_vq_desc(vq, vq->iov, ARRAY_SIZE(vq->iov),
+drivers/vhost/vsock.c:		if (head == vq->num) {
+drivers/vhost/vsock.c:	mutex_unlock(&vq->mutex);
+drivers/vhost/vsock.c:	struct vhost_vsock *vsock = container_of(vq->dev, struct vhost_vsock,
+drivers/vhost/vsock.c:		mutex_lock(&vq->mutex);
+drivers/vhost/vsock.c:		mutex_unlock(&vq->mutex);
+drivers/vhost/vsock.c:	mutex_unlock(&vq->mutex);
+drivers/vhost/vsock.c:		mutex_lock(&vq->mutex);
+drivers/vhost/vsock.c:		mutex_unlock(&vq->mutex);
+drivers/vhost/vsock.c:		mutex_lock(&vq->mutex);
+drivers/vhost/vsock.c:		mutex_unlock(&vq->mutex);
+drivers/vhost/vsock.c:		mutex_lock(&vq->mutex);
+drivers/vhost/vsock.c:		vq->acked_features = features;
+drivers/vhost/vsock.c:		mutex_unlock(&vq->mutex);
+drivers/virtio/virtio.c:	 * vq->broken as true.
+drivers/virtio/virtio_balloon.c:	struct virtio_balloon *vb = vq->vdev->priv;
+drivers/virtio/virtio_balloon.c:	struct virtio_balloon *vb = vq->vdev->priv;
+drivers/virtio/virtio_balloon.c:	if (vq->num_free > 1) {
+drivers/virtio/virtio_input.c:	struct virtio_input *vi = vq->vdev->priv;
+drivers/virtio/virtio_input.c:	struct virtio_input *vi = vq->vdev->priv;
+drivers/virtio/virtio_mem.c:	struct virtio_mem *vm = vq->vdev->priv;
+drivers/virtio/virtio_mmio.c:	struct virtio_mmio_device *vm_dev = to_virtio_mmio_device(vq->vdev);
+drivers/virtio/virtio_mmio.c:	writel(vq->index, vm_dev->base + VIRTIO_MMIO_QUEUE_NOTIFY);
+drivers/virtio/virtio_mmio.c:	struct virtio_mmio_device *vm_dev = to_virtio_mmio_device(vq->vdev);
+drivers/virtio/virtio_mmio.c:	struct virtio_mmio_vq_info *info = vq->priv;
+drivers/virtio/virtio_mmio.c:	unsigned int index = vq->index;
+drivers/virtio/virtio_mmio.c:	vq->num_max = num;
+drivers/virtio/virtio_mmio.c:	vq->priv = info;
+drivers/virtio/virtio_pci_common.c:	iowrite16(vq->index, (void __iomem *)vq->priv);
+drivers/virtio/virtio_pci_common.c:	struct virtio_pci_device *vp_dev = to_vp_device(vq->vdev);
+drivers/virtio/virtio_pci_common.c:	struct virtio_pci_vq_info *info = vp_dev->vqs[vq->index];
+drivers/virtio/virtio_pci_common.c:	if (!vq->reset) {
+drivers/virtio/virtio_pci_common.c:			int v = vp_dev->vqs[vq->index]->msix_vector;
+drivers/virtio/virtio_pci_common.c:	struct virtio_device *vdev = vq->vdev;
+drivers/virtio/virtio_pci_common.c:	struct virtio_pci_vq_info *info = vp_dev->vqs[vq->index];
+drivers/virtio/virtio_pci_common.c:	if (!vq->callback)
+drivers/virtio/virtio_pci_legacy.c:	vq->num_max = num;
+drivers/virtio/virtio_pci_legacy.c:	vq->priv = (void __force *)vp_dev->ldev.ioaddr + VIRTIO_PCI_QUEUE_NOTIFY;
+drivers/virtio/virtio_pci_legacy.c:	struct virtio_pci_device *vp_dev = to_vp_device(vq->vdev);
+drivers/virtio/virtio_pci_legacy.c:		vp_legacy_queue_vector(&vp_dev->ldev, vq->index,
+drivers/virtio/virtio_pci_legacy.c:	vp_legacy_set_queue_address(&vp_dev->ldev, vq->index, 0);
+drivers/virtio/virtio_pci_modern.c:	struct virtio_pci_device *vp_dev = to_vp_device(vq->vdev);
+drivers/virtio/virtio_pci_modern.c:	index = vq->index;
+drivers/virtio/virtio_pci_modern.c:	struct virtio_pci_device *vp_dev = to_vp_device(vq->vdev);
+drivers/virtio/virtio_pci_modern.c:	if (!virtio_has_feature(vq->vdev, VIRTIO_F_RING_RESET))
+drivers/virtio/virtio_pci_modern.c:	vp_modern_set_queue_reset(mdev, vq->index);
+drivers/virtio/virtio_pci_modern.c:	info = vp_dev->vqs[vq->index];
+drivers/virtio/virtio_pci_modern.c:	vq->reset = true;
+drivers/virtio/virtio_pci_modern.c:	struct virtio_pci_device *vp_dev = to_vp_device(vq->vdev);
+drivers/virtio/virtio_pci_modern.c:	if (!vq->reset)
+drivers/virtio/virtio_pci_modern.c:	index = vq->index;
+drivers/virtio/virtio_pci_modern.c:	if (vq->callback) {
+drivers/virtio/virtio_pci_modern.c:	vq->reset = false;
+drivers/virtio/virtio_pci_modern.c:	vq->num_max = num;
+drivers/virtio/virtio_pci_modern.c:	vq->priv = (void __force *)vp_modern_map_vq_notify(mdev, index, NULL);
+drivers/virtio/virtio_pci_modern.c:	if (!vq->priv) {
+drivers/virtio/virtio_pci_modern.c:		vp_modern_set_queue_enable(&vp_dev->mdev, vq->index, true);
+drivers/virtio/virtio_pci_modern.c:	struct virtio_pci_device *vp_dev = to_vp_device(vq->vdev);
+drivers/virtio/virtio_pci_modern.c:		vp_modern_queue_vector(mdev, vq->index,
+drivers/virtio/virtio_pci_modern.c:		pci_iounmap(mdev->pci_dev, (void __force __iomem *)vq->priv);
+drivers/virtio/virtio_ring.c:		dev_err(&_vq->vq.vdev->dev,			\
+drivers/virtio/virtio_ring.c:	return (vq->indirect && total_sg > 1 && vq->vq.num_free);
+drivers/virtio/virtio_ring.c:	return vq->vq.vdev->dev.parent;
+drivers/virtio/virtio_ring.c:	if (!vq->use_dma_api) {
+drivers/virtio/virtio_ring.c:	if (!vq->use_dma_api)
+drivers/virtio/virtio_ring.c:	if (!vq->use_dma_api)
+drivers/virtio/virtio_ring.c:	vq->vq.num_free = num;
+drivers/virtio/virtio_ring.c:	if (vq->packed_ring)
+drivers/virtio/virtio_ring.c:		vq->last_used_idx = 0 | (1 << VRING_PACKED_EVENT_F_WRAP_CTR);
+drivers/virtio/virtio_ring.c:		vq->last_used_idx = 0;
+drivers/virtio/virtio_ring.c:	vq->event_triggered = false;
+drivers/virtio/virtio_ring.c:	vq->num_added = 0;
+drivers/virtio/virtio_ring.c:	vq->in_use = false;
+drivers/virtio/virtio_ring.c:	vq->last_add_time_valid = false;
+drivers/virtio/virtio_ring.c:	if (!vq->use_dma_api)
+drivers/virtio/virtio_ring.c:	flags = virtio16_to_cpu(vq->vq.vdev, desc->flags);
+drivers/virtio/virtio_ring.c:		       virtio64_to_cpu(vq->vq.vdev, desc->addr),
+drivers/virtio/virtio_ring.c:		       virtio32_to_cpu(vq->vq.vdev, desc->len),
+drivers/virtio/virtio_ring.c:	struct vring_desc_extra *extra = vq->split.desc_extra;
+drivers/virtio/virtio_ring.c:	if (!vq->use_dma_api)
+drivers/virtio/virtio_ring.c:		desc[i].next = cpu_to_virtio16(_vq->vdev, i + 1);
+drivers/virtio/virtio_ring.c:	desc[i].flags = cpu_to_virtio16(vq->vdev, flags);
+drivers/virtio/virtio_ring.c:	desc[i].addr = cpu_to_virtio64(vq->vdev, addr);
+drivers/virtio/virtio_ring.c:	desc[i].len = cpu_to_virtio32(vq->vdev, len);
+drivers/virtio/virtio_ring.c:		desc[i].next = cpu_to_virtio16(vq->vdev, next);
+drivers/virtio/virtio_ring.c:		next = virtio16_to_cpu(vq->vdev, desc[i].next);
+drivers/virtio/virtio_ring.c:	BUG_ON(ctx && vq->indirect);
+drivers/virtio/virtio_ring.c:	if (unlikely(vq->broken)) {
+drivers/virtio/virtio_ring.c:	head = vq->free_head;
+drivers/virtio/virtio_ring.c:		WARN_ON_ONCE(total_sg > vq->split.vring.num && !vq->indirect);
+drivers/virtio/virtio_ring.c:		desc = vq->split.vring.desc;
+drivers/virtio/virtio_ring.c:	if (unlikely(vq->vq.num_free < descs_used)) {
+drivers/virtio/virtio_ring.c:			 descs_used, vq->vq.num_free);
+drivers/virtio/virtio_ring.c:			vq->notify(&vq->vq);
+drivers/virtio/virtio_ring.c:	desc[prev].flags &= cpu_to_virtio16(_vq->vdev, ~VRING_DESC_F_NEXT);
+drivers/virtio/virtio_ring.c:	if (!indirect && vq->use_dma_api)
+drivers/virtio/virtio_ring.c:		vq->split.desc_extra[prev & (vq->split.vring.num - 1)].flags &=
+drivers/virtio/virtio_ring.c:		virtqueue_add_desc_split(_vq, vq->split.vring.desc,
+drivers/virtio/virtio_ring.c:	vq->vq.num_free -= descs_used;
+drivers/virtio/virtio_ring.c:		vq->free_head = vq->split.desc_extra[head].next;
+drivers/virtio/virtio_ring.c:		vq->free_head = i;
+drivers/virtio/virtio_ring.c:	vq->split.desc_state[head].data = data;
+drivers/virtio/virtio_ring.c:		vq->split.desc_state[head].indir_desc = desc;
+drivers/virtio/virtio_ring.c:		vq->split.desc_state[head].indir_desc = ctx;
+drivers/virtio/virtio_ring.c:	avail = vq->split.avail_idx_shadow & (vq->split.vring.num - 1);
+drivers/virtio/virtio_ring.c:	vq->split.vring.avail->ring[avail] = cpu_to_virtio16(_vq->vdev, head);
+drivers/virtio/virtio_ring.c:	virtio_wmb(vq->weak_barriers);
+drivers/virtio/virtio_ring.c:	vq->split.avail_idx_shadow++;
+drivers/virtio/virtio_ring.c:	vq->split.vring.avail->idx = cpu_to_virtio16(_vq->vdev,
+drivers/virtio/virtio_ring.c:						vq->split.avail_idx_shadow);
+drivers/virtio/virtio_ring.c:	vq->num_added++;
+drivers/virtio/virtio_ring.c:	if (unlikely(vq->num_added == (1 << 16) - 1))
+drivers/virtio/virtio_ring.c:			i = virtio16_to_cpu(_vq->vdev, desc[i].next);
+drivers/virtio/virtio_ring.c:	virtio_mb(vq->weak_barriers);
+drivers/virtio/virtio_ring.c:	old = vq->split.avail_idx_shadow - vq->num_added;
+drivers/virtio/virtio_ring.c:	new = vq->split.avail_idx_shadow;
+drivers/virtio/virtio_ring.c:	vq->num_added = 0;
+drivers/virtio/virtio_ring.c:	if (vq->event) {
+drivers/virtio/virtio_ring.c:		needs_kick = vring_need_event(virtio16_to_cpu(_vq->vdev,
+drivers/virtio/virtio_ring.c:					vring_avail_event(&vq->split.vring)),
+drivers/virtio/virtio_ring.c:		needs_kick = !(vq->split.vring.used->flags &
+drivers/virtio/virtio_ring.c:					cpu_to_virtio16(_vq->vdev,
+drivers/virtio/virtio_ring.c:	__virtio16 nextflag = cpu_to_virtio16(vq->vq.vdev, VRING_DESC_F_NEXT);
+drivers/virtio/virtio_ring.c:	vq->split.desc_state[head].data = NULL;
+drivers/virtio/virtio_ring.c:	while (vq->split.vring.desc[i].flags & nextflag) {
+drivers/virtio/virtio_ring.c:		i = vq->split.desc_extra[i].next;
+drivers/virtio/virtio_ring.c:		vq->vq.num_free++;
+drivers/virtio/virtio_ring.c:	vq->split.desc_extra[i].next = vq->free_head;
+drivers/virtio/virtio_ring.c:	vq->free_head = head;
+drivers/virtio/virtio_ring.c:	vq->vq.num_free++;
+drivers/virtio/virtio_ring.c:	if (vq->indirect) {
+drivers/virtio/virtio_ring.c:				vq->split.desc_state[head].indir_desc;
+drivers/virtio/virtio_ring.c:		len = vq->split.desc_extra[head].len;
+drivers/virtio/virtio_ring.c:		BUG_ON(!(vq->split.desc_extra[head].flags &
+drivers/virtio/virtio_ring.c:		vq->split.desc_state[head].indir_desc = NULL;
+drivers/virtio/virtio_ring.c:		*ctx = vq->split.desc_state[head].indir_desc;
+drivers/virtio/virtio_ring.c:	return vq->last_used_idx != virtio16_to_cpu(vq->vq.vdev,
+drivers/virtio/virtio_ring.c:			vq->split.vring.used->idx);
+drivers/virtio/virtio_ring.c:	if (unlikely(vq->broken)) {
+drivers/virtio/virtio_ring.c:	virtio_rmb(vq->weak_barriers);
+drivers/virtio/virtio_ring.c:	last_used = (vq->last_used_idx & (vq->split.vring.num - 1));
+drivers/virtio/virtio_ring.c:	i = virtio32_to_cpu(_vq->vdev,
+drivers/virtio/virtio_ring.c:			vq->split.vring.used->ring[last_used].id);
+drivers/virtio/virtio_ring.c:	*len = virtio32_to_cpu(_vq->vdev,
+drivers/virtio/virtio_ring.c:			vq->split.vring.used->ring[last_used].len);
+drivers/virtio/virtio_ring.c:	if (unlikely(i >= vq->split.vring.num)) {
+drivers/virtio/virtio_ring.c:	if (unlikely(!vq->split.desc_state[i].data)) {
+drivers/virtio/virtio_ring.c:	ret = vq->split.desc_state[i].data;
+drivers/virtio/virtio_ring.c:	vq->last_used_idx++;
+drivers/virtio/virtio_ring.c:	if (!(vq->split.avail_flags_shadow & VRING_AVAIL_F_NO_INTERRUPT))
+drivers/virtio/virtio_ring.c:		virtio_store_mb(vq->weak_barriers,
+drivers/virtio/virtio_ring.c:				&vring_used_event(&vq->split.vring),
+drivers/virtio/virtio_ring.c:				cpu_to_virtio16(_vq->vdev, vq->last_used_idx));
+drivers/virtio/virtio_ring.c:	if (!(vq->split.avail_flags_shadow & VRING_AVAIL_F_NO_INTERRUPT)) {
+drivers/virtio/virtio_ring.c:		vq->split.avail_flags_shadow |= VRING_AVAIL_F_NO_INTERRUPT;
+drivers/virtio/virtio_ring.c:		if (vq->event)
+drivers/virtio/virtio_ring.c:			vring_used_event(&vq->split.vring) = 0x0;
+drivers/virtio/virtio_ring.c:			vq->split.vring.avail->flags =
+drivers/virtio/virtio_ring.c:				cpu_to_virtio16(_vq->vdev,
+drivers/virtio/virtio_ring.c:						vq->split.avail_flags_shadow);
+drivers/virtio/virtio_ring.c:	if (vq->split.avail_flags_shadow & VRING_AVAIL_F_NO_INTERRUPT) {
+drivers/virtio/virtio_ring.c:		vq->split.avail_flags_shadow &= ~VRING_AVAIL_F_NO_INTERRUPT;
+drivers/virtio/virtio_ring.c:		if (!vq->event)
+drivers/virtio/virtio_ring.c:			vq->split.vring.avail->flags =
+drivers/virtio/virtio_ring.c:				cpu_to_virtio16(_vq->vdev,
+drivers/virtio/virtio_ring.c:						vq->split.avail_flags_shadow);
+drivers/virtio/virtio_ring.c:	vring_used_event(&vq->split.vring) = cpu_to_virtio16(_vq->vdev,
+drivers/virtio/virtio_ring.c:			last_used_idx = vq->last_used_idx);
+drivers/virtio/virtio_ring.c:	return (u16)last_used_idx != virtio16_to_cpu(_vq->vdev,
+drivers/virtio/virtio_ring.c:			vq->split.vring.used->idx);
+drivers/virtio/virtio_ring.c:	if (vq->split.avail_flags_shadow & VRING_AVAIL_F_NO_INTERRUPT) {
+drivers/virtio/virtio_ring.c:		vq->split.avail_flags_shadow &= ~VRING_AVAIL_F_NO_INTERRUPT;
+drivers/virtio/virtio_ring.c:		if (!vq->event)
+drivers/virtio/virtio_ring.c:			vq->split.vring.avail->flags =
+drivers/virtio/virtio_ring.c:				cpu_to_virtio16(_vq->vdev,
+drivers/virtio/virtio_ring.c:						vq->split.avail_flags_shadow);
+drivers/virtio/virtio_ring.c:	bufs = (u16)(vq->split.avail_idx_shadow - vq->last_used_idx) * 3 / 4;
+drivers/virtio/virtio_ring.c:	virtio_store_mb(vq->weak_barriers,
+drivers/virtio/virtio_ring.c:			&vring_used_event(&vq->split.vring),
+drivers/virtio/virtio_ring.c:			cpu_to_virtio16(_vq->vdev, vq->last_used_idx + bufs));
+drivers/virtio/virtio_ring.c:	if (unlikely((u16)(virtio16_to_cpu(_vq->vdev, vq->split.vring.used->idx)
+drivers/virtio/virtio_ring.c:					- vq->last_used_idx) > bufs)) {
+drivers/virtio/virtio_ring.c:	for (i = 0; i < vq->split.vring.num; i++) {
+drivers/virtio/virtio_ring.c:		if (!vq->split.desc_state[i].data)
+drivers/virtio/virtio_ring.c:		buf = vq->split.desc_state[i].data;
+drivers/virtio/virtio_ring.c:		vq->split.avail_idx_shadow--;
+drivers/virtio/virtio_ring.c:		vq->split.vring.avail->idx = cpu_to_virtio16(_vq->vdev,
+drivers/virtio/virtio_ring.c:				vq->split.avail_idx_shadow);
+drivers/virtio/virtio_ring.c:	BUG_ON(vq->vq.num_free != vq->split.vring.num);
+drivers/virtio/virtio_ring.c:	vdev = vq->vq.vdev;
+drivers/virtio/virtio_ring.c:	if (!vq->vq.callback) {
+drivers/virtio/virtio_ring.c:		if (!vq->event)
+drivers/virtio/virtio_ring.c:	num = vq->split.vring.num;
+drivers/virtio/virtio_ring.c:	vq->split.vring.avail->flags = 0;
+drivers/virtio/virtio_ring.c:	vq->split.vring.avail->idx = 0;
+drivers/virtio/virtio_ring.c:	vq->split.vring.avail->ring[num] = 0;
+drivers/virtio/virtio_ring.c:	vq->split.vring.used->flags = 0;
+drivers/virtio/virtio_ring.c:	vq->split.vring.used->idx = 0;
+drivers/virtio/virtio_ring.c:	*(__virtio16 *)&(vq->split.vring.used->ring[num]) = 0;
+drivers/virtio/virtio_ring.c:	virtqueue_vring_init_split(&vq->split, vq);
+drivers/virtio/virtio_ring.c:	vq->split = *vring_split;
+drivers/virtio/virtio_ring.c:	vq->free_head = 0;
+drivers/virtio/virtio_ring.c:	struct virtio_device *vdev = _vq->vdev;
+drivers/virtio/virtio_ring.c:				      vq->split.vring_align,
+drivers/virtio/virtio_ring.c:				      vq->split.may_reduce_num);
+drivers/virtio/virtio_ring.c:	vring_free(&vq->vq);
+drivers/virtio/virtio_ring.c:	if (!vq->use_dma_api)
+drivers/virtio/virtio_ring.c:	if (!vq->use_dma_api)
+drivers/virtio/virtio_ring.c:	head = vq->packed.next_avail_idx;
+drivers/virtio/virtio_ring.c:	if (unlikely(vq->vq.num_free < 1)) {
+drivers/virtio/virtio_ring.c:	id = vq->free_head;
+drivers/virtio/virtio_ring.c:	BUG_ON(id == vq->packed.vring.num);
+drivers/virtio/virtio_ring.c:	vq->packed.vring.desc[head].addr = cpu_to_le64(addr);
+drivers/virtio/virtio_ring.c:	vq->packed.vring.desc[head].len = cpu_to_le32(total_sg *
+drivers/virtio/virtio_ring.c:	vq->packed.vring.desc[head].id = cpu_to_le16(id);
+drivers/virtio/virtio_ring.c:	if (vq->use_dma_api) {
+drivers/virtio/virtio_ring.c:		vq->packed.desc_extra[id].addr = addr;
+drivers/virtio/virtio_ring.c:		vq->packed.desc_extra[id].len = total_sg *
+drivers/virtio/virtio_ring.c:		vq->packed.desc_extra[id].flags = VRING_DESC_F_INDIRECT |
+drivers/virtio/virtio_ring.c:						  vq->packed.avail_used_flags;
+drivers/virtio/virtio_ring.c:	virtio_wmb(vq->weak_barriers);
+drivers/virtio/virtio_ring.c:	vq->packed.vring.desc[head].flags = cpu_to_le16(VRING_DESC_F_INDIRECT |
+drivers/virtio/virtio_ring.c:						vq->packed.avail_used_flags);
+drivers/virtio/virtio_ring.c:	vq->vq.num_free -= 1;
+drivers/virtio/virtio_ring.c:	if (n >= vq->packed.vring.num) {
+drivers/virtio/virtio_ring.c:		vq->packed.avail_wrap_counter ^= 1;
+drivers/virtio/virtio_ring.c:		vq->packed.avail_used_flags ^=
+drivers/virtio/virtio_ring.c:	vq->packed.next_avail_idx = n;
+drivers/virtio/virtio_ring.c:	vq->free_head = vq->packed.desc_extra[id].next;
+drivers/virtio/virtio_ring.c:	vq->packed.desc_state[id].num = 1;
+drivers/virtio/virtio_ring.c:	vq->packed.desc_state[id].data = data;
+drivers/virtio/virtio_ring.c:	vq->packed.desc_state[id].indir_desc = desc;
+drivers/virtio/virtio_ring.c:	vq->packed.desc_state[id].last = id;
+drivers/virtio/virtio_ring.c:	vq->num_added += 1;
+drivers/virtio/virtio_ring.c:	BUG_ON(ctx && vq->indirect);
+drivers/virtio/virtio_ring.c:	if (unlikely(vq->broken)) {
+drivers/virtio/virtio_ring.c:	head = vq->packed.next_avail_idx;
+drivers/virtio/virtio_ring.c:	avail_used_flags = vq->packed.avail_used_flags;
+drivers/virtio/virtio_ring.c:	WARN_ON_ONCE(total_sg > vq->packed.vring.num && !vq->indirect);
+drivers/virtio/virtio_ring.c:	desc = vq->packed.vring.desc;
+drivers/virtio/virtio_ring.c:	if (unlikely(vq->vq.num_free < descs_used)) {
+drivers/virtio/virtio_ring.c:			 descs_used, vq->vq.num_free);
+drivers/virtio/virtio_ring.c:	id = vq->free_head;
+drivers/virtio/virtio_ring.c:	BUG_ON(id == vq->packed.vring.num);
+drivers/virtio/virtio_ring.c:			flags = cpu_to_le16(vq->packed.avail_used_flags |
+drivers/virtio/virtio_ring.c:			if (unlikely(vq->use_dma_api)) {
+drivers/virtio/virtio_ring.c:				vq->packed.desc_extra[curr].addr = addr;
+drivers/virtio/virtio_ring.c:				vq->packed.desc_extra[curr].len = sg->length;
+drivers/virtio/virtio_ring.c:				vq->packed.desc_extra[curr].flags =
+drivers/virtio/virtio_ring.c:			curr = vq->packed.desc_extra[curr].next;
+drivers/virtio/virtio_ring.c:			if ((unlikely(++i >= vq->packed.vring.num))) {
+drivers/virtio/virtio_ring.c:				vq->packed.avail_used_flags ^=
+drivers/virtio/virtio_ring.c:		vq->packed.avail_wrap_counter ^= 1;
+drivers/virtio/virtio_ring.c:	vq->vq.num_free -= descs_used;
+drivers/virtio/virtio_ring.c:	vq->packed.next_avail_idx = i;
+drivers/virtio/virtio_ring.c:	vq->free_head = curr;
+drivers/virtio/virtio_ring.c:	vq->packed.desc_state[id].num = descs_used;
+drivers/virtio/virtio_ring.c:	vq->packed.desc_state[id].data = data;
+drivers/virtio/virtio_ring.c:	vq->packed.desc_state[id].indir_desc = ctx;
+drivers/virtio/virtio_ring.c:	vq->packed.desc_state[id].last = prev;
+drivers/virtio/virtio_ring.c:	virtio_wmb(vq->weak_barriers);
+drivers/virtio/virtio_ring.c:	vq->packed.vring.desc[head].flags = head_flags;
+drivers/virtio/virtio_ring.c:	vq->num_added += descs_used;
+drivers/virtio/virtio_ring.c:	curr = vq->free_head;
+drivers/virtio/virtio_ring.c:	vq->packed.avail_used_flags = avail_used_flags;
+drivers/virtio/virtio_ring.c:		vring_unmap_extra_packed(vq, &vq->packed.desc_extra[curr]);
+drivers/virtio/virtio_ring.c:		curr = vq->packed.desc_extra[curr].next;
+drivers/virtio/virtio_ring.c:		if (i >= vq->packed.vring.num)
+drivers/virtio/virtio_ring.c:	virtio_mb(vq->weak_barriers);
+drivers/virtio/virtio_ring.c:	old = vq->packed.next_avail_idx - vq->num_added;
+drivers/virtio/virtio_ring.c:	new = vq->packed.next_avail_idx;
+drivers/virtio/virtio_ring.c:	vq->num_added = 0;
+drivers/virtio/virtio_ring.c:	snapshot.u32 = *(u32 *)vq->packed.vring.device;
+drivers/virtio/virtio_ring.c:	if (wrap_counter != vq->packed.avail_wrap_counter)
+drivers/virtio/virtio_ring.c:		event_idx -= vq->packed.vring.num;
+drivers/virtio/virtio_ring.c:	state = &vq->packed.desc_state[id];
+drivers/virtio/virtio_ring.c:	vq->packed.desc_extra[state->last].next = vq->free_head;
+drivers/virtio/virtio_ring.c:	vq->free_head = id;
+drivers/virtio/virtio_ring.c:	vq->vq.num_free += state->num;
+drivers/virtio/virtio_ring.c:	if (unlikely(vq->use_dma_api)) {
+drivers/virtio/virtio_ring.c:						 &vq->packed.desc_extra[curr]);
+drivers/virtio/virtio_ring.c:			curr = vq->packed.desc_extra[curr].next;
+drivers/virtio/virtio_ring.c:	if (vq->indirect) {
+drivers/virtio/virtio_ring.c:		if (vq->use_dma_api) {
+drivers/virtio/virtio_ring.c:			len = vq->packed.desc_extra[id].len;
+drivers/virtio/virtio_ring.c:	flags = le16_to_cpu(vq->packed.vring.desc[idx].flags);
+drivers/virtio/virtio_ring.c:	last_used_idx = READ_ONCE(vq->last_used_idx);
+drivers/virtio/virtio_ring.c:	if (unlikely(vq->broken)) {
+drivers/virtio/virtio_ring.c:	virtio_rmb(vq->weak_barriers);
+drivers/virtio/virtio_ring.c:	last_used_idx = READ_ONCE(vq->last_used_idx);
+drivers/virtio/virtio_ring.c:	id = le16_to_cpu(vq->packed.vring.desc[last_used].id);
+drivers/virtio/virtio_ring.c:	*len = le32_to_cpu(vq->packed.vring.desc[last_used].len);
+drivers/virtio/virtio_ring.c:	if (unlikely(id >= vq->packed.vring.num)) {
+drivers/virtio/virtio_ring.c:	if (unlikely(!vq->packed.desc_state[id].data)) {
+drivers/virtio/virtio_ring.c:	ret = vq->packed.desc_state[id].data;
+drivers/virtio/virtio_ring.c:	last_used += vq->packed.desc_state[id].num;
+drivers/virtio/virtio_ring.c:	if (unlikely(last_used >= vq->packed.vring.num)) {
+drivers/virtio/virtio_ring.c:		last_used -= vq->packed.vring.num;
+drivers/virtio/virtio_ring.c:	WRITE_ONCE(vq->last_used_idx, last_used);
+drivers/virtio/virtio_ring.c:	if (vq->packed.event_flags_shadow == VRING_PACKED_EVENT_FLAG_DESC)
+drivers/virtio/virtio_ring.c:		virtio_store_mb(vq->weak_barriers,
+drivers/virtio/virtio_ring.c:				&vq->packed.vring.driver->off_wrap,
+drivers/virtio/virtio_ring.c:				cpu_to_le16(vq->last_used_idx));
+drivers/virtio/virtio_ring.c:	if (vq->packed.event_flags_shadow != VRING_PACKED_EVENT_FLAG_DISABLE) {
+drivers/virtio/virtio_ring.c:		vq->packed.event_flags_shadow = VRING_PACKED_EVENT_FLAG_DISABLE;
+drivers/virtio/virtio_ring.c:		vq->packed.vring.driver->flags =
+drivers/virtio/virtio_ring.c:			cpu_to_le16(vq->packed.event_flags_shadow);
+drivers/virtio/virtio_ring.c:	if (vq->event) {
+drivers/virtio/virtio_ring.c:		vq->packed.vring.driver->off_wrap =
+drivers/virtio/virtio_ring.c:			cpu_to_le16(vq->last_used_idx);
+drivers/virtio/virtio_ring.c:		virtio_wmb(vq->weak_barriers);
+drivers/virtio/virtio_ring.c:	if (vq->packed.event_flags_shadow == VRING_PACKED_EVENT_FLAG_DISABLE) {
+drivers/virtio/virtio_ring.c:		vq->packed.event_flags_shadow = vq->event ?
+drivers/virtio/virtio_ring.c:		vq->packed.vring.driver->flags =
+drivers/virtio/virtio_ring.c:				cpu_to_le16(vq->packed.event_flags_shadow);
+drivers/virtio/virtio_ring.c:	return vq->last_used_idx;
+drivers/virtio/virtio_ring.c:	if (vq->event) {
+drivers/virtio/virtio_ring.c:		bufs = (vq->packed.vring.num - vq->vq.num_free) * 3 / 4;
+drivers/virtio/virtio_ring.c:		last_used_idx = READ_ONCE(vq->last_used_idx);
+drivers/virtio/virtio_ring.c:		if (used_idx >= vq->packed.vring.num) {
+drivers/virtio/virtio_ring.c:			used_idx -= vq->packed.vring.num;
+drivers/virtio/virtio_ring.c:		vq->packed.vring.driver->off_wrap = cpu_to_le16(used_idx |
+drivers/virtio/virtio_ring.c:		virtio_wmb(vq->weak_barriers);
+drivers/virtio/virtio_ring.c:	if (vq->packed.event_flags_shadow == VRING_PACKED_EVENT_FLAG_DISABLE) {
+drivers/virtio/virtio_ring.c:		vq->packed.event_flags_shadow = vq->event ?
+drivers/virtio/virtio_ring.c:		vq->packed.vring.driver->flags =
+drivers/virtio/virtio_ring.c:				cpu_to_le16(vq->packed.event_flags_shadow);
+drivers/virtio/virtio_ring.c:	virtio_mb(vq->weak_barriers);
+drivers/virtio/virtio_ring.c:	last_used_idx = READ_ONCE(vq->last_used_idx);
+drivers/virtio/virtio_ring.c:	for (i = 0; i < vq->packed.vring.num; i++) {
+drivers/virtio/virtio_ring.c:		if (!vq->packed.desc_state[i].data)
+drivers/virtio/virtio_ring.c:		buf = vq->packed.desc_state[i].data;
+drivers/virtio/virtio_ring.c:	BUG_ON(vq->vq.num_free != vq->packed.vring.num);
+drivers/virtio/virtio_ring.c:	vq->packed = *vring_packed;
+drivers/virtio/virtio_ring.c:	vq->free_head = 0;
+drivers/virtio/virtio_ring.c:	memset(vq->packed.vring.device, 0, vq->packed.event_size_in_bytes);
+drivers/virtio/virtio_ring.c:	memset(vq->packed.vring.driver, 0, vq->packed.event_size_in_bytes);
+drivers/virtio/virtio_ring.c:	memset(vq->packed.vring.desc, 0, vq->packed.ring_size_in_bytes);
+drivers/virtio/virtio_ring.c:	virtqueue_init(vq, vq->packed.vring.num);
+drivers/virtio/virtio_ring.c:	virtqueue_vring_init_packed(&vq->packed, !!vq->vq.callback);
+drivers/virtio/virtio_ring.c:	struct virtio_device *vdev = _vq->vdev;
+drivers/virtio/virtio_ring.c:	vring_free(&vq->vq);
+drivers/virtio/virtio_ring.c:	virtqueue_vring_init_packed(&vring_packed, !!vq->vq.callback);
+drivers/virtio/virtio_ring.c:	return vq->packed_ring ? virtqueue_add_packed(_vq, sgs, total_sg,
+drivers/virtio/virtio_ring.c:	return vq->packed_ring ? virtqueue_kick_prepare_packed(_vq) :
+drivers/virtio/virtio_ring.c:	if (unlikely(vq->broken))
+drivers/virtio/virtio_ring.c:	if (!vq->notify(_vq)) {
+drivers/virtio/virtio_ring.c:		vq->broken = true;
+drivers/virtio/virtio_ring.c:	return vq->packed_ring ? virtqueue_get_buf_ctx_packed(_vq, len, ctx) :
+drivers/virtio/virtio_ring.c:	if (vq->event_triggered)
+drivers/virtio/virtio_ring.c:	if (vq->packed_ring)
+drivers/virtio/virtio_ring.c:	if (vq->event_triggered)
+drivers/virtio/virtio_ring.c:		vq->event_triggered = false;
+drivers/virtio/virtio_ring.c:	return vq->packed_ring ? virtqueue_enable_cb_prepare_packed(_vq) :
+drivers/virtio/virtio_ring.c:	if (unlikely(vq->broken))
+drivers/virtio/virtio_ring.c:	virtio_mb(vq->weak_barriers);
+drivers/virtio/virtio_ring.c:	return vq->packed_ring ? virtqueue_poll_packed(_vq, last_used_idx) :
+drivers/virtio/virtio_ring.c:	if (vq->event_triggered)
+drivers/virtio/virtio_ring.c:		vq->event_triggered = false;
+drivers/virtio/virtio_ring.c:	return vq->packed_ring ? virtqueue_enable_cb_delayed_packed(_vq) :
+drivers/virtio/virtio_ring.c:	return vq->packed_ring ? virtqueue_detach_unused_buf_packed(_vq) :
+drivers/virtio/virtio_ring.c:	return vq->packed_ring ? more_used_packed(vq) : more_used_split(vq);
+drivers/virtio/virtio_ring.c:	if (unlikely(vq->broken)) {
+drivers/virtio/virtio_ring.c:		dev_warn_once(&vq->vq.vdev->dev,
+drivers/virtio/virtio_ring.c:	if (vq->event)
+drivers/virtio/virtio_ring.c:		vq->event_triggered = true;
+drivers/virtio/virtio_ring.c:	pr_debug("virtqueue callback for %p (%p)\n", vq, vq->vq.callback);
+drivers/virtio/virtio_ring.c:	if (vq->vq.callback)
+drivers/virtio/virtio_ring.c:		vq->vq.callback(&vq->vq);
+drivers/virtio/virtio_ring.c:	vq->packed_ring = virtio_has_feature(vdev, VIRTIO_F_RING_PACKED);
+drivers/virtio/virtio_ring.c:	vq->vq.callback = callback;
+drivers/virtio/virtio_ring.c:	vq->vq.vdev = vdev;
+drivers/virtio/virtio_ring.c:	vq->vq.name = name;
+drivers/virtio/virtio_ring.c:	vq->vq.index = index;
+drivers/virtio/virtio_ring.c:	vq->vq.reset = false;
+drivers/virtio/virtio_ring.c:	vq->we_own_ring = vq->packed_ring;
+drivers/virtio/virtio_ring.c:	vq->notify = notify;
+drivers/virtio/virtio_ring.c:	vq->weak_barriers = weak_barriers;
+drivers/virtio/virtio_ring.c:	vq->broken = true;
+drivers/virtio/virtio_ring.c:	vq->broken = false;
+drivers/virtio/virtio_ring.c:	vq->use_dma_api = vring_use_dma_api(vdev);
+drivers/virtio/virtio_ring.c:	vq->indirect = virtio_has_feature(vdev, VIRTIO_RING_F_INDIRECT_DESC) &&
+drivers/virtio/virtio_ring.c:	vq->event = virtio_has_feature(vdev, VIRTIO_RING_F_EVENT_IDX);
+drivers/virtio/virtio_ring.c:		vq->weak_barriers = false;
+drivers/virtio/virtio_ring.c:	if (vq->packed_ring)
+drivers/virtio/virtio_ring.c:	if (vq->packed_ring) {
+drivers/virtio/virtio_ring.c:	list_add_tail(&vq->vq.list, &vdev->vqs);
+drivers/virtio/virtio_ring.c:	return &vq->vq;
+drivers/virtio/virtio_ring.c:	struct virtio_device *vdev = vq->vq.vdev;
+drivers/virtio/virtio_ring.c:	if (!vq->we_own_ring)
+drivers/virtio/virtio_ring.c:	if (num > vq->vq.num_max)
+drivers/virtio/virtio_ring.c:	if ((vq->packed_ring ? vq->packed.vring.num : vq->split.vring.num) == num)
+drivers/virtio/virtio_ring.c:	if (vq->packed_ring)
+drivers/virtio/virtio_ring.c:	if (vq->we_own_ring) {
+drivers/virtio/virtio_ring.c:		if (vq->packed_ring) {
+drivers/virtio/virtio_ring.c:			vring_free_queue(vq->vq.vdev,
+drivers/virtio/virtio_ring.c:					 vq->packed.ring_size_in_bytes,
+drivers/virtio/virtio_ring.c:					 vq->packed.vring.desc,
+drivers/virtio/virtio_ring.c:					 vq->packed.ring_dma_addr);
+drivers/virtio/virtio_ring.c:			vring_free_queue(vq->vq.vdev,
+drivers/virtio/virtio_ring.c:					 vq->packed.event_size_in_bytes,
+drivers/virtio/virtio_ring.c:					 vq->packed.vring.driver,
+drivers/virtio/virtio_ring.c:					 vq->packed.driver_event_dma_addr);
+drivers/virtio/virtio_ring.c:			vring_free_queue(vq->vq.vdev,
+drivers/virtio/virtio_ring.c:					 vq->packed.event_size_in_bytes,
+drivers/virtio/virtio_ring.c:					 vq->packed.vring.device,
+drivers/virtio/virtio_ring.c:					 vq->packed.device_event_dma_addr);
+drivers/virtio/virtio_ring.c:			kfree(vq->packed.desc_state);
+drivers/virtio/virtio_ring.c:			kfree(vq->packed.desc_extra);
+drivers/virtio/virtio_ring.c:			vring_free_queue(vq->vq.vdev,
+drivers/virtio/virtio_ring.c:					 vq->split.queue_size_in_bytes,
+drivers/virtio/virtio_ring.c:					 vq->split.vring.desc,
+drivers/virtio/virtio_ring.c:					 vq->split.queue_dma_addr);
+drivers/virtio/virtio_ring.c:	if (!vq->packed_ring) {
+drivers/virtio/virtio_ring.c:		kfree(vq->split.desc_state);
+drivers/virtio/virtio_ring.c:		kfree(vq->split.desc_extra);
+drivers/virtio/virtio_ring.c:	spin_lock(&vq->vq.vdev->vqs_list_lock);
+drivers/virtio/virtio_ring.c:	list_del(&_vq->list);
+drivers/virtio/virtio_ring.c:	spin_unlock(&vq->vq.vdev->vqs_list_lock);
+drivers/virtio/virtio_ring.c:	return vq->packed_ring ? vq->packed.vring.num : vq->split.vring.num;
+drivers/virtio/virtio_ring.c:	WRITE_ONCE(vq->broken, true);
+drivers/virtio/virtio_ring.c:	WRITE_ONCE(vq->broken, false);
+drivers/virtio/virtio_ring.c:	return READ_ONCE(vq->broken);
+drivers/virtio/virtio_ring.c:		WRITE_ONCE(vq->broken, true);
+drivers/virtio/virtio_ring.c: * vq->broken. This should only be used in some specific case e.g
+drivers/virtio/virtio_ring.c:		WRITE_ONCE(vq->broken, false);
+drivers/virtio/virtio_ring.c:	BUG_ON(!vq->we_own_ring);
+drivers/virtio/virtio_ring.c:	if (vq->packed_ring)
+drivers/virtio/virtio_ring.c:		return vq->packed.ring_dma_addr;
+drivers/virtio/virtio_ring.c:	return vq->split.queue_dma_addr;
+drivers/virtio/virtio_ring.c:	BUG_ON(!vq->we_own_ring);
+drivers/virtio/virtio_ring.c:	if (vq->packed_ring)
+drivers/virtio/virtio_ring.c:		return vq->packed.driver_event_dma_addr;
+drivers/virtio/virtio_ring.c:	return vq->split.queue_dma_addr +
+drivers/virtio/virtio_ring.c:		((char *)vq->split.vring.avail - (char *)vq->split.vring.desc);
+drivers/virtio/virtio_ring.c:	BUG_ON(!vq->we_own_ring);
+drivers/virtio/virtio_ring.c:	if (vq->packed_ring)
+drivers/virtio/virtio_ring.c:		return vq->packed.device_event_dma_addr;
+drivers/virtio/virtio_ring.c:	return vq->split.queue_dma_addr +
+drivers/virtio/virtio_ring.c:		((char *)vq->split.vring.used - (char *)vq->split.vring.desc);
+drivers/virtio/virtio_vdpa.c:	struct vdpa_device *vdpa = vd_get_vdpa(vq->vdev);
+drivers/virtio/virtio_vdpa.c:	ops->kick_vq(vdpa, vq->index);
+drivers/virtio/virtio_vdpa.c:	vq->num_max = max_num;
+drivers/virtio/virtio_vdpa.c:	vq->priv = info;
+drivers/virtio/virtio_vdpa.c:	struct virtio_vdpa_device *vd_dev = to_virtio_vdpa_device(vq->vdev);
+drivers/virtio/virtio_vdpa.c:	struct virtio_vdpa_vq_info *info = vq->priv;
+drivers/virtio/virtio_vdpa.c:	unsigned int index = vq->index;
+fs/fuse/virtio_fs.c:	struct virtio_fs *fs = vq->vdev->priv;
+fs/fuse/virtio_fs.c:	return &fs->vqs[vq->index];
+fs/fuse/virtio_fs.c:/* Should be called with fsvq->lock held. */
+fs/fuse/virtio_fs.c:	fsvq->in_flight++;
+fs/fuse/virtio_fs.c:/* Should be called with fsvq->lock held. */
+fs/fuse/virtio_fs.c:	WARN_ON(fsvq->in_flight <= 0);
+fs/fuse/virtio_fs.c:	fsvq->in_flight--;
+fs/fuse/virtio_fs.c:	if (!fsvq->in_flight)
+fs/fuse/virtio_fs.c:		complete(&fsvq->in_flight_zero);
+fs/fuse/virtio_fs.c:	WARN_ON(fsvq->in_flight < 0);
+fs/fuse/virtio_fs.c:	spin_lock(&fsvq->lock);
+fs/fuse/virtio_fs.c:	if (fsvq->in_flight) {
+fs/fuse/virtio_fs.c:		reinit_completion(&fsvq->in_flight_zero);
+fs/fuse/virtio_fs.c:		spin_unlock(&fsvq->lock);
+fs/fuse/virtio_fs.c:		wait_for_completion(&fsvq->in_flight_zero);
+fs/fuse/virtio_fs.c:		spin_unlock(&fsvq->lock);
+fs/fuse/virtio_fs.c:	flush_work(&fsvq->done_work);
+fs/fuse/virtio_fs.c:	flush_delayed_work(&fsvq->dispatch_work);
+fs/fuse/virtio_fs.c:		spin_lock(&fsvq->lock);
+fs/fuse/virtio_fs.c:		fsvq->connected = true;
+fs/fuse/virtio_fs.c:		spin_unlock(&fsvq->lock);
+fs/fuse/virtio_fs.c:		if (!fsvq->fud)
+fs/fuse/virtio_fs.c:		fuse_dev_free(fsvq->fud);
+fs/fuse/virtio_fs.c:		fsvq->fud = NULL;
+fs/fuse/virtio_fs.c:	struct virtqueue *vq = fsvq->vq;
+fs/fuse/virtio_fs.c:	spin_lock(&fsvq->lock);
+fs/fuse/virtio_fs.c:	spin_unlock(&fsvq->lock);
+fs/fuse/virtio_fs.c:		spin_lock(&fsvq->lock);
+fs/fuse/virtio_fs.c:		req = list_first_entry_or_null(&fsvq->end_reqs, struct fuse_req,
+fs/fuse/virtio_fs.c:			spin_unlock(&fsvq->lock);
+fs/fuse/virtio_fs.c:		spin_unlock(&fsvq->lock);
+fs/fuse/virtio_fs.c:		spin_lock(&fsvq->lock);
+fs/fuse/virtio_fs.c:		req = list_first_entry_or_null(&fsvq->queued_reqs,
+fs/fuse/virtio_fs.c:			spin_unlock(&fsvq->lock);
+fs/fuse/virtio_fs.c:		spin_unlock(&fsvq->lock);
+fs/fuse/virtio_fs.c:				spin_lock(&fsvq->lock);
+fs/fuse/virtio_fs.c:				list_add_tail(&req->list, &fsvq->queued_reqs);
+fs/fuse/virtio_fs.c:				schedule_delayed_work(&fsvq->dispatch_work,
+fs/fuse/virtio_fs.c:				spin_unlock(&fsvq->lock);
+fs/fuse/virtio_fs.c:			spin_lock(&fsvq->lock);
+fs/fuse/virtio_fs.c:			spin_unlock(&fsvq->lock);
+fs/fuse/virtio_fs.c:	spin_lock(&fsvq->lock);
+fs/fuse/virtio_fs.c:	if (!fsvq->connected) {
+fs/fuse/virtio_fs.c:	vq = fsvq->vq;
+fs/fuse/virtio_fs.c:	dev_dbg(&vq->vdev->dev, "%s\n", __func__);
+fs/fuse/virtio_fs.c:			list_add_tail(&forget->list, &fsvq->queued_reqs);
+fs/fuse/virtio_fs.c:			schedule_delayed_work(&fsvq->dispatch_work,
+fs/fuse/virtio_fs.c:	spin_unlock(&fsvq->lock);
+fs/fuse/virtio_fs.c:	spin_unlock(&fsvq->lock);
+fs/fuse/virtio_fs.c:		spin_lock(&fsvq->lock);
+fs/fuse/virtio_fs.c:		forget = list_first_entry_or_null(&fsvq->queued_reqs,
+fs/fuse/virtio_fs.c:			spin_unlock(&fsvq->lock);
+fs/fuse/virtio_fs.c:		spin_unlock(&fsvq->lock);
+fs/fuse/virtio_fs.c:	struct fuse_pqueue *fpq = &fsvq->fud->pq;
+fs/fuse/virtio_fs.c:	spin_lock(&fsvq->lock);
+fs/fuse/virtio_fs.c:	spin_unlock(&fsvq->lock);
+fs/fuse/virtio_fs.c:	struct fuse_pqueue *fpq = &fsvq->fud->pq;
+fs/fuse/virtio_fs.c:	struct virtqueue *vq = fsvq->vq;
+fs/fuse/virtio_fs.c:	spin_lock(&fsvq->lock);
+fs/fuse/virtio_fs.c:	spin_unlock(&fsvq->lock);
+fs/fuse/virtio_fs.c:	dev_dbg(&vq->vdev->dev, "%s %s\n", __func__, fsvq->name);
+fs/fuse/virtio_fs.c:	schedule_work(&fsvq->done_work);
+fs/fuse/virtio_fs.c:	strscpy(fsvq->name, name, VQ_NAME_LEN);
+fs/fuse/virtio_fs.c:	spin_lock_init(&fsvq->lock);
+fs/fuse/virtio_fs.c:	INIT_LIST_HEAD(&fsvq->queued_reqs);
+fs/fuse/virtio_fs.c:	INIT_LIST_HEAD(&fsvq->end_reqs);
+fs/fuse/virtio_fs.c:	init_completion(&fsvq->in_flight_zero);
+fs/fuse/virtio_fs.c:		INIT_WORK(&fsvq->done_work, virtio_fs_requests_done_work);
+fs/fuse/virtio_fs.c:		INIT_DELAYED_WORK(&fsvq->dispatch_work,
+fs/fuse/virtio_fs.c:		INIT_WORK(&fsvq->done_work, virtio_fs_hiprio_done_work);
+fs/fuse/virtio_fs.c:		INIT_DELAYED_WORK(&fsvq->dispatch_work,
+fs/fuse/virtio_fs.c:		spin_lock(&fsvq->lock);
+fs/fuse/virtio_fs.c:		fsvq->connected = false;
+fs/fuse/virtio_fs.c:		spin_unlock(&fsvq->lock);
+fs/fuse/virtio_fs.c:	spin_lock(&fsvq->lock);
+fs/fuse/virtio_fs.c:	if (!fsvq->connected) {
+fs/fuse/virtio_fs.c:		spin_unlock(&fsvq->lock);
+fs/fuse/virtio_fs.c:	vq = fsvq->vq;
+fs/fuse/virtio_fs.c:		spin_unlock(&fsvq->lock);
+fs/fuse/virtio_fs.c:	fpq = &fsvq->fud->pq;
+fs/fuse/virtio_fs.c:	spin_unlock(&fsvq->lock);
+fs/fuse/virtio_fs.c:			spin_lock(&fsvq->lock);
+fs/fuse/virtio_fs.c:			list_add_tail(&req->list, &fsvq->queued_reqs);
+fs/fuse/virtio_fs.c:			schedule_delayed_work(&fsvq->dispatch_work,
+fs/fuse/virtio_fs.c:			spin_unlock(&fsvq->lock);
+fs/fuse/virtio_fs.c:		spin_lock(&fsvq->lock);
+fs/fuse/virtio_fs.c:		list_add_tail(&req->list, &fsvq->end_reqs);
+fs/fuse/virtio_fs.c:		schedule_delayed_work(&fsvq->dispatch_work, 0);
+fs/fuse/virtio_fs.c:		spin_unlock(&fsvq->lock);
+fs/fuse/virtio_fs.c:		fsvq->fud = fuse_dev_alloc();
+fs/fuse/virtio_fs.c:		if (!fsvq->fud)
+fs/fuse/virtio_fs.c:		fuse_dev_install(fsvq->fud, fc);
+fs/fuse/virtio_fs.c:	spin_lock(&fsvq->lock);
+fs/fuse/virtio_fs.c:	fsvq->connected = false;
+fs/fuse/virtio_fs.c:	spin_unlock(&fsvq->lock);
+include/linux/virtio_config.h:	 * will see the driver specific setup if it sees vq->broken
+include/linux/virtio_config.h:	 * The transport should ensure the visibility of vq->broken
+include/linux/virtio_config.h:	 * memory write that set vq->broken as false which is done by
+include/linux/virtio_config.h:	 * driver's vring_interrupt() will see vq->broken as false so
+include/linux/virtio_config.h:	struct virtio_device *vdev = vq->vdev;
+include/media/videobuf2-v4l2.h: * ..note:: only use if vq->lock is non-NULL.
+include/media/videobuf2-v4l2.h: * ..note:: only use if vq->lock is non-NULL.
+net/9p/trans_virtio.c:	struct virtio_chan *chan = vq->vdev->priv;
+net/9p/trans_virtio.c:	chan->vq->vdev->priv = chan;
+net/ipv4/udp.c:	spin_lock_bh(&rcvq->lock);
+net/ipv4/udp.c:	spin_unlock_bh(&rcvq->lock);
+net/vmw_vsock/virtio_transport.c:	} while (vq->num_free);
+net/vmw_vsock/virtio_transport.c:	struct virtio_vsock *vsock = vq->vdev->priv;
+net/vmw_vsock/virtio_transport.c:	struct virtio_vsock *vsock = vq->vdev->priv;
+net/vmw_vsock/virtio_transport.c:	struct virtio_vsock *vsock = vq->vdev->priv;
+net/vmw_vsock/virtio_transport_common.c:/* We are under the virtio-vsock's vsock->rx_lock or vhost-vsock's vq->mutex
+samples/v4l/v4l2-pci-skeleton.c:	if (vq->num_buffers + *nbuffers < 3)
+samples/v4l/v4l2-pci-skeleton.c:		*nbuffers = 3 - vq->num_buffers;
+tools/virtio/virtio_test.c:	struct vq_info *info = vq->priv;
+tools/virtio/virtio_test.c:	info->vq->priv = info;
+tools/virtio/virtio_test.c:		virtqueue_disable_cb(vq->vq);
+tools/virtio/virtio_test.c:				batch = (random() % vq->vring.num) + 1;
+tools/virtio/virtio_test.c:				r = virtqueue_add_outbuf(vq->vq, &sl, 1,
+tools/virtio/virtio_test.c:				if (unlikely(!virtqueue_kick(vq->vq))) {
+tools/virtio/virtio_test.c:			while (virtqueue_get_buf(vq->vq, &len)) {
+tools/virtio/virtio_test.c:				vq_reset(vq, vq->vring.num, &dev->vdev);
+tools/virtio/virtio_test.c:			if (virtqueue_enable_cb_delayed(vq->vq))
+tools/virtio/virtio_test.c:			if (virtqueue_enable_cb(vq->vq))
+tools/virtio/vringh_test.c:	gvdev = container_of(vq->vdev, struct guest_virtio_device, vdev);

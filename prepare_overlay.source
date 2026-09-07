@@ -1,0 +1,27 @@
+#!/bin/bash
+
+# 載入 overlay 模組
+if ! modprobe overlay; then
+    echo "Error: Failed to load overlay module" >&2
+    exit 1
+fi
+
+# 清空目錄
+if ! rm -rf /root/upper/* /root/working/*; then
+    echo "Error: Failed to clean directories" >&2
+    exit 1
+fi
+
+# 設定當前目錄
+KER_DIR=$PWD
+
+# 掛載 overlay 文件系統
+if ! mount -t overlay overlay -o lowerdir=$KER_DIR,upperdir=/root/upper,workdir=/root/working $KER_DIR; then
+    echo "Error: Failed to mount overlay filesystem" >&2
+    exit 1
+fi
+
+cd .
+
+echo "All operations completed successfully"
+

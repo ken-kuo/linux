@@ -784,17 +784,32 @@ wait_sock:
 			ret = pcache_handle_rs_data_recv(peer, sock, &hdr);
 			if (ret) {
 				/*
-				 * Leave the loop, do not just log. We did not
-				 * ACK this chunk, so the source is now blocked
-				 * in its ACK read and would sit there for the
-				 * full 300 s socket timeout. Dropping the
-				 * connection here makes it fail immediately;
+				 * Drop the connection, do not just log. We did
+				 * not ACK this chunk, so the source is now
+				 * blocked in its ACK read and would sit there
+				 * for the full 300 s socket timeout. Failing
+				 * the connection makes it fail immediately;
 				 * its error path restores the chunk's dirty
 				 * range and the resync resumes on reconnect.
+				 *
+				 * Go back to wait_sock, not out: "resumes on
+				 * reconnect" needs this worker to still be
+				 * here to accept that reconnect. Exiting the
+				 * thread instead left peer->state at
+				 * CONNECTED with nobody servicing it, so the
+				 * accept thread rejected every new inbound
+				 * socket as a duplicate and replication with
+				 * this peer was dead for the life of the
+				 * device -- while the stored task_struct
+				 * pointer dangled until teardown tripped over
+				 * it. Same treatment as "connection lost"
+				 * above.
 				 */
 				pcache_err("secondary: RS_DATA recv failed: %d -- dropping connection\n",
 					   ret);
-				goto out;
+				peer->state = PCACHE_C_CONNECTING;
+				pcache_set_repl_state(peer, PCACHE_R_OFF);
+				goto wait_sock;
 			}
 			break;
 		case PCACHE_P_BITMAP_DONE: {
@@ -811,9 +826,14 @@ wait_sock:
 			if (blen >= sizeof(dp)) {
 				ret = pcache_recv_all(sock, &dp, sizeof(dp));
 				if (ret) {
+					/* Socket error, not a protocol error:
+					 * reconnect rather than retiring the
+					 * worker. See the RS_DATA case above. */
 					pcache_err("secondary: BITMAP_DONE body recv: %d\n",
 						   ret);
-					goto out;
+					peer->state = PCACHE_C_CONNECTING;
+					pcache_set_repl_state(peer, PCACHE_R_OFF);
+					goto wait_sock;
 				}
 			}
 			if (!le64_to_cpu(dp.left)) {
@@ -867,7 +887,11 @@ wait_sock:
 		}
 	}
 
-out:
+	/*
+	 * Only reachable through kthread_should_stop(): every error path above
+	 * goes back to wait_sock instead, so this worker lives as long as the
+	 * peer does.
+	 */
 	pcache_data_streams_down(peer);
 	pcache_conn_drop(cst);
 	pcache_conn_put(conn);
@@ -1530,6 +1554,46 @@ static int pcache_data_secondary(void *arg)
 	return 0;
 }
 
+/*
+ * Stop a peer's control-stream worker(s), exactly once.
+ *
+ * Two rules, both needed:
+ *
+ * 1. Every task_struct stored in a peer or stream holds a reference taken with
+ *    get_task_struct() right after kthread_run(). kthread_create_on_node()
+ *    hands back a bare pointer -- it takes no reference for the creator -- so
+ *    without one the pointer is only valid while the thread is still running.
+ *    pcache_secondary_worker() and the data-stream workers all return on their
+ *    own on an I/O error, after which the task_struct is reaped and the stored
+ *    pointer dangles. Holding a reference also makes kthread_stop() legal on a
+ *    thread that already exited: struct kthread is freed from free_task(), and
+ *    kthread->exited is already complete, so the call returns immediately.
+ *
+ * 2. The pointers are *claimed* (read and cleared) before the stop, so exactly
+ *    one caller stops a given task and exactly one drops its reference. Every
+ *    other caller sees NULL and skips.
+ *
+ * Because a redundant stop is now safe, there is no "the sender owns its
+ * receiver" special case any more: claim both fields and stop whatever we got.
+ *
+ * Caller holds net->peers_lock for write and has already shut the socket down
+ * so the worker can leave its blocking recv/send.
+ */
+static void pcache_peer_workers_stop(struct pcache_peer *peer)
+{
+	struct task_struct *snd, *rcv;
+
+	snd = peer->streams[0].sender;
+	peer->streams[0].sender = NULL;
+	rcv = peer->streams[0].receiver;
+	peer->streams[0].receiver = NULL;
+
+	if (snd)
+		kthread_stop_put(snd);
+	if (rcv)
+		kthread_stop_put(rcv);
+}
+
 /* Spawn the per-stream worker(s) for an already-connected data stream. */
 static int pcache_data_stream_start(struct pcache_stream *st)
 {
@@ -1542,21 +1606,27 @@ static int pcache_data_stream_start(struct pcache_stream *st)
 				dev, st->stream_id);
 		if (IS_ERR(t))
 			return PTR_ERR(t);
+		get_task_struct(t);
 		st->sender = t;
 
 		t = kthread_run(pcache_data_receiver, st, "pcache-drecv-%s-%d",
 				dev, st->stream_id);
 		if (IS_ERR(t)) {
-			kthread_stop(st->sender);
+			struct task_struct *snd = st->sender;
+
 			st->sender = NULL;
+			if (snd)
+				kthread_stop_put(snd);
 			return PTR_ERR(t);
 		}
+		get_task_struct(t);
 		st->receiver = t;
 	} else {
 		t = kthread_run(pcache_data_secondary, st, "pcache-dsec-%s-%d",
 				dev, st->stream_id);
 		if (IS_ERR(t))
 			return PTR_ERR(t);
+		get_task_struct(t);
 		st->receiver = t;
 	}
 	return 0;
@@ -1565,17 +1635,21 @@ static int pcache_data_stream_start(struct pcache_stream *st)
 /* Stop a data stream's worker(s), release its socket, flush its pending list. */
 static void pcache_data_stream_stop(struct pcache_stream *st)
 {
+	struct task_struct *snd, *rcv;
+
 	/* Wake any blocked recv/send so the threads can exit. */
 	pcache_conn_shutdown(st);
 
-	if (st->sender) {
-		kthread_stop(st->sender);
-		st->sender = NULL;
-	}
-	if (st->receiver) {
-		kthread_stop(st->receiver);
-		st->receiver = NULL;
-	}
+	/* Claim before stopping -- see pcache_peer_workers_stop(). */
+	snd = st->sender;
+	st->sender = NULL;
+	rcv = st->receiver;
+	st->receiver = NULL;
+
+	if (snd)
+		kthread_stop_put(snd);
+	if (rcv)
+		kthread_stop_put(rcv);
 
 	/* Detach + drop the install ref (refcount frees the socket). */
 	pcache_conn_drop(st);
@@ -1643,6 +1717,7 @@ static int pcache_primary_worker(void *arg)
 	struct pcache_stream *cst = &peer->streams[0];
 	struct pcache_conn *conn = NULL;
 	struct socket *sock = NULL;
+	struct task_struct *rcv_task;
 	bool initiator = pcache_peer_is_initiator(peer);
 	int ret;
 
@@ -1653,10 +1728,14 @@ connect:
 		pcache_set_repl_state(peer, PCACHE_R_OFF);
 		pcache_data_streams_down(peer);
 
-		if (peer->streams[0].receiver) {
-			pcache_conn_shutdown(cst);
-			kthread_stop(peer->streams[0].receiver);
-			peer->streams[0].receiver = NULL;
+		{
+			struct task_struct *rcv = peer->streams[0].receiver;
+
+			peer->streams[0].receiver = NULL;	/* claim */
+			if (rcv) {
+				pcache_conn_shutdown(cst);
+				kthread_stop_put(rcv);
+			}
 		}
 		pcache_conn_put(conn);
 		conn = NULL;
@@ -1844,15 +1923,16 @@ connect:
 			pcache_set_repl_state(peer, PCACHE_R_ESTABLISHED);
 		}
 
-		peer->streams[0].receiver = kthread_run(pcache_primary_receiver, peer,
+		rcv_task = kthread_run(pcache_primary_receiver, peer,
 				"pcache-recv-%s",
 				peer->pcache->ti->table->md->name);
-		if (IS_ERR(peer->streams[0].receiver)) {
+		if (IS_ERR(rcv_task)) {
 			pcache_err("primary: failed to spawn receiver: %ld\n",
-				   PTR_ERR(peer->streams[0].receiver));
-			peer->streams[0].receiver = NULL;
+				   PTR_ERR(rcv_task));
 			continue;
 		}
+		get_task_struct(rcv_task);
+		peer->streams[0].receiver = rcv_task;
 
 		/* Re-mark unsent any requests that were in flight before the
 		 * (re)connect so the new receiver can ACK them. */
@@ -1993,10 +2073,14 @@ connect:
 
 exit:
 	pcache_data_streams_down(peer);
-	if (peer->streams[0].receiver) {
-		pcache_conn_shutdown(cst);
-		kthread_stop(peer->streams[0].receiver);
-		peer->streams[0].receiver = NULL;
+	{
+		struct task_struct *rcv = peer->streams[0].receiver;
+
+		peer->streams[0].receiver = NULL;	/* claim */
+		if (rcv) {
+			pcache_conn_shutdown(cst);
+			kthread_stop_put(rcv);
+		}
 	}
 	pcache_conn_put(conn);
 	conn = NULL;
@@ -2021,6 +2105,7 @@ static int pcache_start_secondary(struct pcache_peer *peer)
 			peer->pcache->ti->table->md->name);
 	if (IS_ERR(t))
 		return PTR_ERR(t);
+	get_task_struct(t);
 	peer->streams[0].receiver = t;
 	return 0;
 }
@@ -2033,6 +2118,7 @@ static int pcache_start_primary(struct pcache_peer *peer)
 			peer->pcache->ti->table->md->name);
 	if (IS_ERR(t))
 		return PTR_ERR(t);
+	get_task_struct(t);
 	peer->streams[0].sender = t;
 	return 0;
 }
@@ -2426,6 +2512,7 @@ int pcache_net_init(struct dm_pcache *pcache, unsigned int argc, char **argv)
 				"failed to start accept thread: %d\n", ret);
 			goto fail;
 		}
+		get_task_struct(net->accept_thread);
 	}
 
 	pcache_dev_info(pcache,
@@ -2459,11 +2546,15 @@ void pcache_net_stop(struct dm_pcache *pcache)
 
 	/* Stop accept_thread first so no new inbound sockets land on peers
 	 * while we're tearing them down. */
-	if (net->accept_thread) {
-		if (net->listen_sock)
-			kernel_sock_shutdown(net->listen_sock, SHUT_RDWR);
-		kthread_stop(net->accept_thread);
-		net->accept_thread = NULL;
+	{
+		struct task_struct *acc = net->accept_thread;
+
+		net->accept_thread = NULL;	/* claim, as everywhere else */
+		if (acc) {
+			if (net->listen_sock)
+				kernel_sock_shutdown(net->listen_sock, SHUT_RDWR);
+			kthread_stop_put(acc);
+		}
 	}
 	if (net->listen_sock) {
 		sock_release(net->listen_sock);
@@ -2480,14 +2571,7 @@ void pcache_net_stop(struct dm_pcache *pcache)
 		 * exit path; for Secondary there is only secondary_worker
 		 * (stored in peer->streams[0].receiver).
 		 */
-		if (peer->streams[0].sender) {
-			kthread_stop(peer->streams[0].sender);
-			peer->streams[0].sender = NULL;
-			peer->streams[0].receiver = NULL;
-		} else if (peer->streams[0].receiver) {
-			kthread_stop(peer->streams[0].receiver);
-			peer->streams[0].receiver = NULL;
-		}
+		pcache_peer_workers_stop(peer);
 		/*
 		 * Cut C — the control worker's exit tears down the data streams,
 		 * but make it explicit so no data kthread can outlive the peer
@@ -2691,14 +2775,7 @@ static void pcache_set_role_swap_workers(struct pcache_network *net,
 		 * internally -- must NOT hold sock_lock here.) */
 		pcache_conn_shutdown(&peer->streams[0]);
 
-		if (peer->streams[0].sender) {
-			kthread_stop(peer->streams[0].sender);
-			peer->streams[0].sender = NULL;
-			peer->streams[0].receiver = NULL;	/* primary_receiver owned by sender */
-		} else if (peer->streams[0].receiver) {
-			kthread_stop(peer->streams[0].receiver);
-			peer->streams[0].receiver = NULL;
-		}
+		pcache_peer_workers_stop(peer);
 
 		/* Drop any lingering connection so the new worker starts clean. */
 		pcache_conn_drop(&peer->streams[0]);
@@ -2882,14 +2959,7 @@ int pcache_resolve_split_brain(struct dm_pcache *pcache, u32 peer_node_id,
 
 		pcache_conn_shutdown(&p2->streams[0]);
 
-		if (p2->streams[0].sender) {
-			kthread_stop(p2->streams[0].sender);
-			p2->streams[0].sender = NULL;
-			p2->streams[0].receiver = NULL;
-		} else if (p2->streams[0].receiver) {
-			kthread_stop(p2->streams[0].receiver);
-			p2->streams[0].receiver = NULL;
-		}
+		pcache_peer_workers_stop(p2);
 
 		pcache_conn_drop(&p2->streams[0]);
 		p2->state = PCACHE_C_CONNECTING;
@@ -2994,14 +3064,7 @@ int pcache_remove_peer(struct dm_pcache *pcache, u32 peer_node_id)
 	 * worker so kthread_stop returns promptly. */
 	pcache_conn_shutdown(&peer->streams[0]);
 
-	if (peer->streams[0].sender) {
-		kthread_stop(peer->streams[0].sender);
-		peer->streams[0].sender = NULL;
-		peer->streams[0].receiver = NULL;
-	} else if (peer->streams[0].receiver) {
-		kthread_stop(peer->streams[0].receiver);
-		peer->streams[0].receiver = NULL;
-	}
+	pcache_peer_workers_stop(peer);
 	/*
 	 * Complete in-flight replicated writes with success, not -EIO.
 	 * remove-peer is an explicit operator action meaning "stop replicating

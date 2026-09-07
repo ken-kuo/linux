@@ -1,0 +1,25 @@
+b ken_trace_stop_here
+b dump_page_owner
+#set ken_enable_skb_try_coalesce_debug=1
+#set ken_enable_tcp_queue_rcv_debug=1
+#set ken_enable_attempt_deffer_rx_debug=1
+#set ken_enable_tcp_queue_rcv_coalesce_debug=1
+#set ken_enable_skb_insert_debug=1
+#set ken_enable_skb_record=1
+
+set ken_enable_put_page_debug=1
+set ken_enable_skb_cloned_check=1
+set ken_enable_check_coalesce_skb=1
+#set ken_enable_skip_coalesce=1
+
+#set ken_enable_no_head_no_clone_check=1
+#set ken_enable_watch_skb_dataref=1
+#set ken_watchpoint_stop=1
+#set ken_wp_test=1
+
+set ken_enable_delay=1
+
+set ken_save_shinfo=1
+
+#set ken_pp_coalesce_condition=1
+set no_hash_pointers=true
