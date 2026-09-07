@@ -2279,12 +2279,20 @@ static int pcache_accept_thread(void *arg)
 			 * here instead would race the per-peer worker's own
 			 * teardown, which drops whatever is installed at the
 			 * time and would take the fresh connection with it.
+			 *
+			 * The drop happens under peers_lock: that lock is what
+			 * keeps this peer slot from being freed underneath us by
+			 * remove-peer, so touching peer->streams[] after
+			 * releasing it is a use-after-free -- the same class as
+			 * fix-history #1. pcache_conn_drop() may sleep, which is
+			 * fine here: peers_lock is a percpu_rwsem and the
+			 * install path below already sleeps under it.
 			 */
+			pcache_conn_drop(&peer->streams[stream_id]);
 			percpu_up_write(&net->peers_lock);
 			pcache_dev_info(pcache,
-				"accept: peer node_id=%d stream=%d reconnected; dropping the connection we still held (stale)\n",
+				"accept: peer node_id=%d stream=%d reconnected; dropped the connection we still held (stale)\n",
 				peer_node_id, stream_id);
-			pcache_conn_drop(&peer->streams[stream_id]);
 			sock_release(sock);
 			continue;
 		}
