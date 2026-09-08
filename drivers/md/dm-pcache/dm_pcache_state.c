@@ -2254,6 +2254,25 @@ connect:
 				spin_unlock(&peer->streams[0].pending_lock);
 			}
 
+			/*
+			 * Cut C — bring the data streams up *before* anything
+			 * can replicate, not after ESTABLISHED.
+			 *
+			 * pcache_net_submit_write() picks a stream with
+			 * hash(sector) and falls back to stream 0 when that
+			 * data stream has no connection yet. Since #19 lets
+			 * writes replicate across SYNC_SOURCE, doing this
+			 * afterwards meant a region's writes went out on
+			 * stream 0 during the resync and on stream N once the
+			 * data streams appeared -- two sockets, no ordering
+			 * between them, so the peer could apply the older
+			 * write last. Both writes were replicated, so nothing
+			 * was left owed and the divergence was invisible
+			 * (fix-history #21a: F40 "per-region ordering held
+			 * under overlapping writes" with bm_dirty=0).
+			 */
+			pcache_data_streams_up(peer);
+
 			if (role == PCACHE_R_SYNC_SOURCE) {
 				pcache_set_repl_state(peer, PCACHE_R_SYNC_SOURCE);
 
@@ -2330,9 +2349,6 @@ connect:
 	if (kthread_should_stop())
 		goto exit;	/* exit: stops the receiver we just spawned */
 
-	/* Cut C — control stream is up; bring up the extra data streams. */
-	pcache_data_streams_up(peer);
-
 	while (!kthread_should_stop()) {
 		struct pcache_pending_req *req, *tmp;
 		bool any_timed_out = false;
@@ -2356,7 +2372,26 @@ connect:
 				 * resync covers this range. */
 				pcache_bm_set_range(peer->bm,
 						    req->sector, req->size);
-				pcache_req_put(req->pcache_req, -ETIMEDOUT);
+				/*
+				 * Status 0, not -ETIMEDOUT. The payload is
+				 * already committed to the local cache and the
+				 * range is marked dirty right above, so the
+				 * resync carries it: this is owed data, not a
+				 * failed write, and the user has no way to act
+				 * on the error anyway.
+				 *
+				 * Third instance of the same mistake in this
+				 * driver -- see fix-history #4 (a peer going
+				 * away turned a good write into EIO) and #13
+				 * (a NACK did). Here it was an ACK that merely
+				 * arrived late: since #19 an application write
+				 * shares the control stream with resync
+				 * payload, and the secondary's receive loop is
+				 * single-threaded, so an ACK can queue behind a
+				 * 256 KiB chunk and blow the 30s deadline while
+				 * the link is perfectly healthy.
+				 */
+				pcache_req_put(req->pcache_req, 0);
 				pcache_pending_req_free(peer, req);
 				any_timed_out = true;
 			}
