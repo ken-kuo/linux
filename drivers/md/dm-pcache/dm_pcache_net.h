@@ -138,6 +138,21 @@ struct pcache_peer {
 	 */
 	struct completion	rs_ack_done;
 	u64			rs_ack_block_id;
+
+	/*
+	 * A DEMOTE_REQ the receiver has seen and the control worker still owes
+	 * an ACK for.
+	 *
+	 * The receiver must not put it on the wire itself: the worker is the
+	 * only sender on this socket, and a second one splices its bytes into
+	 * the middle of whatever payload the worker is streaming. The peer then
+	 * reads the remains as a packet header -- "unknown packet type: 6688"
+	 * -- and the connection is corrupt from there on. Serialising the two
+	 * with a lock would be worse: the receiver would stop reading while it
+	 * waited, the socket would fill, and both ends would block on each
+	 * other.
+	 */
+	bool			demote_ack_owed;
 };
 
 struct pcache_network {

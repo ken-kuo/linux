@@ -990,7 +990,9 @@ static int pcache_primary_receiver(void *arg)
 			pcache_dev_info(peer->pcache,
 				"DEMOTE_REQ from node_id=%u (we are Primary); ACKing — operator should set-role secondary\n",
 				le32_to_cpu(body.initiator_node_id));
-			pcache_send_demote_ack(sock, 0);
+			/* Hand the reply to the worker; see demote_ack_owed. */
+			WRITE_ONCE(peer->demote_ack_owed, true);
+			wake_up(&peer->streams[0].wait_for_work);
 			break;
 		}
 		case PCACHE_P_DEMOTE_ACK: {
@@ -1090,6 +1092,21 @@ static int pcache_send_unsent(struct pcache_peer *peer, struct socket *sock)
 	struct pcache_pending_req *req;
 	bool found_unsent;
 	int ret;
+
+	/*
+	 * Any reply the receiver parked for us goes out from here, because this
+	 * thread is the socket's only writer. Every path that sends on stream 0
+	 * funnels through this function, so the ACK is never delayed by more
+	 * than one resync chunk.
+	 */
+	if (READ_ONCE(peer->demote_ack_owed)) {
+		WRITE_ONCE(peer->demote_ack_owed, false);
+		ret = pcache_send_demote_ack(sock, 0);
+		if (ret) {
+			pcache_err("primary: DEMOTE_ACK send failed: %d\n", ret);
+			return -ENOTCONN;
+		}
+	}
 
 	do {
 		struct pcache_packet_header phdr;
@@ -2721,6 +2738,7 @@ pcache_alloc_peer(struct dm_pcache *pcache, u32 peer_node_id, const char *addr)
 	peer->state	  = PCACHE_C_STANDALONE;
 	peer->repl_state  = PCACHE_R_OFF;
 	peer->split_brain = false;
+	peer->demote_ack_owed = false;
 	spin_lock_init(&peer->rs_win_lock);
 	peer->rs_win_sector = 0;
 	peer->rs_win_size = 0;
