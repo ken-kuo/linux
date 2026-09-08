@@ -1093,6 +1093,11 @@ static int pcache_send_unsent(struct pcache_peer *peer, struct socket *sock)
 
 	do {
 		struct pcache_packet_header phdr;
+		struct pcache_request *preq;
+		struct bio *bio;
+		u64 sector, block_id;
+		u32 size;
+		bool is_flush, fua;
 
 		found_unsent = false;
 		spin_lock(&st->pending_lock);
@@ -1101,6 +1106,29 @@ static int pcache_send_unsent(struct pcache_peer *peer, struct socket *sock)
 				req->sent = true;
 				req->send_time = jiffies;
 				atomic_dec(&st->unsent_cnt);
+				/*
+				 * Snapshot everything the send needs, and pin
+				 * the bio, before dropping the lock: this
+				 * request can be freed the moment we do.
+				 * pcache_handle_ack() frees it when the ACK
+				 * lands, and pcache_flush_stream() frees the
+				 * whole list when the link dies -- both run on
+				 * the receiver thread, concurrently with this
+				 * one. Touching req after the unlock is a
+				 * use-after-free, and F42 (which kills the
+				 * link mid-resync) hits it reliably.
+				 */
+				sector = req->sector;
+				block_id = req->block_id;
+				size = req->size;
+				is_flush = req->is_flush;
+				fua = req->fua;
+				preq = req->pcache_req;
+				if (preq)
+					pcache_req_get(preq);
+#if PCACHE_LAT_TRACE
+				req->t_send_start = ktime_get_ns();
+#endif
 				found_unsent = true;
 				break;
 			}
@@ -1109,35 +1137,31 @@ static int pcache_send_unsent(struct pcache_peer *peer, struct socket *sock)
 
 		if (!found_unsent)
 			return 0;
-		if (peer->state != PCACHE_C_CONNECTED)
-			return -ENOTCONN;
-
-		memset(&phdr, 0, sizeof(phdr));
-		phdr.type	= cpu_to_le16(PCACHE_P_DATA);
-		phdr.sector	= cpu_to_le64(req->sector);
-		phdr.block_id	= cpu_to_le64(req->block_id);
-		phdr.size	= cpu_to_le32(req->size);
-		phdr.flags	= cpu_to_le32(PCACHE_F_ACK |
-				(req->is_flush ? PCACHE_F_FLUSH : 0) |
-				(req->fua ? PCACHE_F_FUA : 0));
-
-#if PCACHE_LAT_TRACE
-		req->t_send_start = ktime_get_ns();
-#endif
-		ret = pcache_send_packet(sock, &phdr);
-		if (ret) {
-			pcache_err("primary: send header failed: %d\n", ret);
+		if (peer->state != PCACHE_C_CONNECTED) {
+			if (preq)
+				pcache_req_put(preq, 0);
 			return -ENOTCONN;
 		}
 
-		/* A flush carries no payload (size=0); only data reqs send
-		 * bio pages. */
-		if (!req->is_flush && req->pcache_req && req->pcache_req->bio) {
-			ret = pcache_send_bio_pages(sock, req->pcache_req->bio);
-			if (ret) {
-				pcache_err("primary: send data failed: %d\n", ret);
-				return -ENOTCONN;
-			}
+		memset(&phdr, 0, sizeof(phdr));
+		phdr.type	= cpu_to_le16(PCACHE_P_DATA);
+		phdr.sector	= cpu_to_le64(sector);
+		phdr.block_id	= cpu_to_le64(block_id);
+		phdr.size	= cpu_to_le32(size);
+		phdr.flags	= cpu_to_le32(PCACHE_F_ACK |
+				(is_flush ? PCACHE_F_FLUSH : 0) |
+				(fua ? PCACHE_F_FUA : 0));
+
+		bio = (!is_flush && preq) ? preq->bio : NULL;
+
+		ret = pcache_send_packet(sock, &phdr);
+		if (!ret && bio)
+			ret = pcache_send_bio_pages(sock, bio);
+		if (preq)
+			pcache_req_put(preq, 0);
+		if (ret) {
+			pcache_err("primary: send failed: %d\n", ret);
+			return -ENOTCONN;
 		}
 	} while (!kthread_should_stop());
 
@@ -1636,6 +1660,12 @@ static int pcache_data_sender(void *arg)
 		do {
 			struct pcache_packet_header phdr;
 
+			struct pcache_request *preq;
+			struct bio *bio;
+			u64 sector, block_id;
+			u32 size;
+			bool fua;
+
 			found_unsent = false;
 			spin_lock(&st->pending_lock);
 			list_for_each_entry(req, &st->pending_list, list) {
@@ -1643,6 +1673,17 @@ static int pcache_data_sender(void *arg)
 					req->sent = true;
 					req->send_time = jiffies;
 					atomic_dec(&st->unsent_cnt);
+					/* Snapshot and pin before the unlock --
+					 * this stream's receiver frees the
+					 * request on ACK and on link death.
+					 * Same hazard as pcache_send_unsent(). */
+					sector = req->sector;
+					block_id = req->block_id;
+					size = req->size;
+					fua = req->fua;
+					preq = req->pcache_req;
+					if (preq)
+						pcache_req_get(preq);
 					found_unsent = true;
 					break;
 				}
@@ -1652,26 +1693,29 @@ static int pcache_data_sender(void *arg)
 			if (!found_unsent)
 				break;
 
-			if (!sock || peer->state != PCACHE_C_CONNECTED)
+			if (!sock || peer->state != PCACHE_C_CONNECTED) {
+				if (preq)
+					pcache_req_put(preq, 0);
 				goto fault;
+			}
 
 			memset(&phdr, 0, sizeof(phdr));
 			phdr.type	= cpu_to_le16(PCACHE_P_DATA);
-			phdr.sector	= cpu_to_le64(req->sector);
-			phdr.block_id	= cpu_to_le64(req->block_id);
-			phdr.size	= cpu_to_le32(req->size);
+			phdr.sector	= cpu_to_le64(sector);
+			phdr.block_id	= cpu_to_le64(block_id);
+			phdr.size	= cpu_to_le32(size);
 			phdr.flags	= cpu_to_le32(PCACHE_F_ACK |
-					(req->fua ? PCACHE_F_FUA : 0));
+					(fua ? PCACHE_F_FUA : 0));
+
+			bio = preq ? preq->bio : NULL;
 
 			ret = pcache_send_packet(sock, &phdr);
+			if (!ret && bio)
+				ret = pcache_send_bio_pages(sock, bio);
+			if (preq)
+				pcache_req_put(preq, 0);
 			if (ret)
 				goto fault;
-			if (req->pcache_req && req->pcache_req->bio) {
-				ret = pcache_send_bio_pages(sock,
-							    req->pcache_req->bio);
-				if (ret)
-					goto fault;
-			}
 		} while (!kthread_should_stop());
 
 		pcache_conn_put(conn);
