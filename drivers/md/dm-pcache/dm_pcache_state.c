@@ -915,11 +915,20 @@ static int pcache_primary_receiver(void *arg)
 		struct socket *sock = conn ? conn->sock : NULL;
 
 		if (!sock || peer->state != PCACHE_C_CONNECTED) {
+			/*
+			 * One get, one put. This used to put twice -- once
+			 * before the sleep and once after -- so every pass
+			 * through here burned a reference that nobody had
+			 * taken. Once the install reference was gone the conn
+			 * was freed while st->conn still pointed at it, and
+			 * the next pcache_conn_get() did kref_get on freed
+			 * memory: "refcount_t: addition on 0", then underflow,
+			 * then a page fault in the receiver.
+			 */
 			pcache_conn_put(conn);
 			set_current_state(TASK_INTERRUPTIBLE);
 			schedule_timeout(HZ / 10);
 			__set_current_state(TASK_RUNNING);
-			pcache_conn_put(conn);
 			continue;
 		}
 
