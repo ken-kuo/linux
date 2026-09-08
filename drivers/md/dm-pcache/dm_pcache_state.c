@@ -964,6 +964,17 @@ static int pcache_primary_receiver(void *arg)
 		case PCACHE_P_NACK:
 			pcache_handle_ack(&peer->streams[0], &hdr, false);
 			break;
+		case PCACHE_P_RS_ACK:
+			/* A resync chunk landed. The sweep is waiting on the
+			 * completion rather than reading the socket itself --
+			 * see the rs_ack_* fields in struct pcache_peer. */
+			if (le64_to_cpu(hdr.block_id) == READ_ONCE(peer->rs_ack_block_id))
+				complete(&peer->rs_ack_done);
+			else
+				pcache_err("primary recv: stray RS_ACK block_id=%llu (waiting for %llu)\n",
+					   le64_to_cpu(hdr.block_id),
+					   READ_ONCE(peer->rs_ack_block_id));
+			break;
 		case PCACHE_P_DEMOTE_REQ: {
 			/* Phase 3.5 B1 — peer wants to promote; we (currently
 			 * Primary) ACK + flag for operator visibility. Actual
@@ -1020,6 +1031,15 @@ static int pcache_primary_receiver(void *arg)
 #define PCACHE_RS_WRITEBACK_TIMEOUT_MS	30000u
 /* Sweeps over the dirty bitmap before giving up on catching a live writer. */
 #define PCACHE_RS_MAX_PASSES		8u
+/* One chunk round trip. Generous: the peer may be writing the previous chunk
+ * to its own cache, and the link may be shaped. Shorter than the socket
+ * timeout so a stall is reported here rather than as a dead connection. */
+#define PCACHE_RS_ACK_TIMEOUT		(60 * HZ)
+/* Between sweeps when the bitmap still owes the peer. Short: writes are
+ * replicating throughout, so this only paces the sweeps. */
+#define PCACHE_RS_RETRY_DELAY		(HZ / 2)
+/* How long a chunk waits for writes already in flight to that region. */
+#define PCACHE_RS_QUIESCE_TIMEOUT	(5 * HZ)
 
 static int pcache_send_pages_inline(struct socket *sock, struct page **pages,
 				    u32 nr_pages, u32 total_size)
@@ -1050,6 +1070,172 @@ static int pcache_send_pages_inline(struct socket *sock, struct page **pages,
 		}
 	}
 	return 0;
+}
+
+/*
+ * Send whatever is queued and unsent on the control stream.
+ *
+ * Factored out of the ESTABLISHED loop because the resync sweep has to call it
+ * too. Application writes are replicated across SYNC_SOURCE now, and the sweep
+ * owns the sender thread for its whole duration, so without this every write
+ * queued during a resync would sit unsent -- and under Protocol C its bio
+ * would not complete -- until the sweep finished. Only one thread ever sends
+ * on a stream, so interleaving chunk payloads and P_DATA here is safe.
+ *
+ * Returns 0, or -ENOTCONN if the link went away and the caller must reconnect.
+ */
+static int pcache_send_unsent(struct pcache_peer *peer, struct socket *sock)
+{
+	struct pcache_stream *st = &peer->streams[0];
+	struct pcache_pending_req *req;
+	bool found_unsent;
+	int ret;
+
+	do {
+		struct pcache_packet_header phdr;
+
+		found_unsent = false;
+		spin_lock(&st->pending_lock);
+		list_for_each_entry(req, &st->pending_list, list) {
+			if (!req->sent) {
+				req->sent = true;
+				req->send_time = jiffies;
+				atomic_dec(&st->unsent_cnt);
+				found_unsent = true;
+				break;
+			}
+		}
+		spin_unlock(&st->pending_lock);
+
+		if (!found_unsent)
+			return 0;
+		if (peer->state != PCACHE_C_CONNECTED)
+			return -ENOTCONN;
+
+		memset(&phdr, 0, sizeof(phdr));
+		phdr.type	= cpu_to_le16(PCACHE_P_DATA);
+		phdr.sector	= cpu_to_le64(req->sector);
+		phdr.block_id	= cpu_to_le64(req->block_id);
+		phdr.size	= cpu_to_le32(req->size);
+		phdr.flags	= cpu_to_le32(PCACHE_F_ACK |
+				(req->is_flush ? PCACHE_F_FLUSH : 0) |
+				(req->fua ? PCACHE_F_FUA : 0));
+
+#if PCACHE_LAT_TRACE
+		req->t_send_start = ktime_get_ns();
+#endif
+		ret = pcache_send_packet(sock, &phdr);
+		if (ret) {
+			pcache_err("primary: send header failed: %d\n", ret);
+			return -ENOTCONN;
+		}
+
+		/* A flush carries no payload (size=0); only data reqs send
+		 * bio pages. */
+		if (!req->is_flush && req->pcache_req && req->pcache_req->bio) {
+			ret = pcache_send_bio_pages(sock, req->pcache_req->bio);
+			if (ret) {
+				pcache_err("primary: send data failed: %d\n", ret);
+				return -ENOTCONN;
+			}
+		}
+	} while (!kthread_should_stop());
+
+	return 0;
+}
+
+/*
+ * The resync window -- see the rs_win_* fields in struct pcache_peer.
+ * Cheap enough to consult on every replicated write: one spinlock and a
+ * range compare, against a window that is empty except while a resync is
+ * actually shipping a chunk.
+ */
+static void pcache_rs_window_set(struct pcache_peer *peer, u64 sector, u32 size)
+{
+	spin_lock(&peer->rs_win_lock);
+	peer->rs_win_sector = sector;
+	peer->rs_win_size = size;
+	spin_unlock(&peer->rs_win_lock);
+}
+
+static void pcache_rs_window_clear(struct pcache_peer *peer)
+{
+	spin_lock(&peer->rs_win_lock);
+	peer->rs_win_size = 0;
+	spin_unlock(&peer->rs_win_lock);
+}
+
+/*
+ * Wait until no already-queued write overlaps the window we just claimed.
+ *
+ * The window stops *new* writes from being replicated inline, but a write
+ * submitted just before it was claimed may still be in flight. At
+ * nr_streams == 1 that is harmless -- one thread sends everything on one
+ * socket, and pcache_send_unsent() has already pushed those writes ahead of
+ * this chunk, so the peer applies them in that order. With data streams they
+ * travel on different sockets and nothing orders them against the chunk, so
+ * the older copy the sweep is about to send could land last.
+ *
+ * Returns false if the region did not go quiet in time; the caller then skips
+ * the chunk and leaves its bits set rather than risk shipping stale data.
+ */
+static bool pcache_rs_wait_region_quiesced(struct pcache_peer *peer,
+					   u64 sector, u32 size)
+{
+	u64 r_start = sector, r_end = sector + (size >> SECTOR_SHIFT);
+	unsigned long deadline = jiffies + PCACHE_RS_QUIESCE_TIMEOUT;
+	int i;
+
+	for (;;) {
+		bool busy = false;
+
+		for (i = 0; i < peer->nr_streams && !busy; i++) {
+			struct pcache_stream *st = &peer->streams[i];
+			struct pcache_pending_req *req;
+
+			spin_lock(&st->pending_lock);
+			list_for_each_entry(req, &st->pending_list, list) {
+				u64 q_start = req->sector;
+				u64 q_end = req->sector + (req->size >> SECTOR_SHIFT);
+
+				if (q_start < r_end && r_start < q_end) {
+					busy = true;
+					break;
+				}
+			}
+			spin_unlock(&st->pending_lock);
+		}
+
+		if (!busy)
+			return true;
+		if (time_after(jiffies, deadline) || kthread_should_stop())
+			return false;
+
+		set_current_state(TASK_INTERRUPTIBLE);
+		schedule_timeout(HZ / 50);
+		__set_current_state(TASK_RUNNING);
+	}
+}
+
+static bool pcache_rs_window_overlaps(struct pcache_peer *peer, u64 sector, u32 size)
+{
+	u64 w_start, w_end, r_start, r_end;
+	bool hit;
+
+	spin_lock(&peer->rs_win_lock);
+	if (!peer->rs_win_size) {
+		spin_unlock(&peer->rs_win_lock);
+		return false;
+	}
+	w_start = peer->rs_win_sector;
+	w_end   = w_start + (peer->rs_win_size >> SECTOR_SHIFT);
+	spin_unlock(&peer->rs_win_lock);
+
+	r_start = sector;
+	r_end   = sector + (size >> SECTOR_SHIFT);
+	hit = r_start < w_end && w_start < r_end;
+
+	return hit;
 }
 
 static int pcache_do_resync(struct pcache_peer *peer, struct socket *sock,
@@ -1156,7 +1342,7 @@ static int pcache_do_resync(struct pcache_peer *peer, struct socket *sock,
 			u32 nr_pages = DIV_ROUND_UP(size, PAGE_SIZE);
 			u64 block_id;
 			struct bio *rbio;
-			struct pcache_packet_header rh, ah;
+			struct pcache_packet_header rh;
 			struct pcache_rs_data_pkt rs;
 			u8 buf[sizeof(rh) + sizeof(rs)];
 
@@ -1171,6 +1357,33 @@ static int pcache_do_resync(struct pcache_peer *peer, struct socket *sock,
 			 * iteration picks it up; the loop only ends once no dirty bit
 			 * is left. On failure the range is restored below.
 			 */
+			/*
+			 * Claim the range before the pre-clear and hold it
+			 * until the RS_ACK below. Application writes are
+			 * replicated across SYNC_SOURCE now, so without this a
+			 * write to this chunk could reach the peer either side
+			 * of the copy we are about to send -- on a multi-stream
+			 * peer over a different socket entirely, with nothing
+			 * ordering the two. Inside the window such a write
+			 * takes the bitmap path instead and a later pass
+			 * carries it.
+			 */
+			pcache_rs_window_set(peer, sector, size);
+
+			/*
+			 * New overlapping writes now take the bitmap path;
+			 * wait out the ones that were already in flight before
+			 * reading, so nothing older than this chunk can be
+			 * applied after it on a multi-stream peer.
+			 */
+			if (!pcache_rs_wait_region_quiesced(peer, sector, size)) {
+				pcache_rs_window_clear(peer);
+				pcache_info("primary: region at sector %llu stayed busy; leaving it owed\n",
+					    sector);
+				cursor += nr_bits;
+				continue;
+			}
+
 			pcache_bm_clear_range(bm, sector, size);
 
 			/*
@@ -1192,6 +1405,7 @@ static int pcache_do_resync(struct pcache_peer *peer, struct socket *sock,
 				 * here helped nobody.
 				 */
 				pcache_bm_set_range(bm, sector, size);
+				pcache_rs_window_clear(peer);
 				pcache_info("primary: writeback drain stalled at sector %llu (%d); ending this sweep\n",
 					    sector, ret);
 				ret = 0;
@@ -1203,6 +1417,7 @@ static int pcache_do_resync(struct pcache_peer *peer, struct socket *sock,
 			if (!rbio) {
 				ret = -ENOMEM;
 				pcache_bm_set_range(bm, sector, size);  /* undo the pre-clear */
+				pcache_rs_window_clear(peer);
 				goto out_free;
 			}
 			rbio->bi_iter.bi_sector = sector;
@@ -1214,6 +1429,7 @@ static int pcache_do_resync(struct pcache_peer *peer, struct socket *sock,
 					pcache_err("primary: bio_add_page failed\n");
 					ret = -EIO;
 					pcache_bm_set_range(bm, sector, size);  /* undo the pre-clear */
+				pcache_rs_window_clear(peer);
 					goto out_free;
 				}
 			}
@@ -1223,11 +1439,16 @@ static int pcache_do_resync(struct pcache_peer *peer, struct socket *sock,
 				pcache_err("primary: resync read failed sector=%llu size=%u ret=%d\n",
 					   sector, size, ret);
 				pcache_bm_set_range(bm, sector, size);  /* undo the pre-clear */
+				pcache_rs_window_clear(peer);
 				goto out_free;
 			}
 
-			/* 2. Send P_RS_DATA header + payload. */
+			/* 2. Send P_RS_DATA header + payload. Arm the ACK
+			 *    completion before the send, so the receiver
+			 *    cannot deliver it before we are waiting. */
 			block_id = (u64)atomic64_inc_return(&peer->streams[0].next_block_id);
+			reinit_completion(&peer->rs_ack_done);
+			WRITE_ONCE(peer->rs_ack_block_id, block_id);
 			memset(&rh, 0, sizeof(rh));
 			rh.type     = cpu_to_le16(PCACHE_P_RS_DATA);
 			rh.length   = cpu_to_le16(sizeof(rs));
@@ -1243,32 +1464,45 @@ static int pcache_do_resync(struct pcache_peer *peer, struct socket *sock,
 			ret = pcache_send_all(sock, buf, sizeof(buf));
 			if (ret) {
 				pcache_bm_set_range(bm, sector, size);  /* undo the pre-clear */
+				pcache_rs_window_clear(peer);
 				goto out_free;
 			}
 
 			ret = pcache_send_pages_inline(sock, pages, nr_pages, size);
 			if (ret) {
 				pcache_bm_set_range(bm, sector, size);  /* undo the pre-clear */
+				pcache_rs_window_clear(peer);
 				goto out_free;
 			}
 
-			/* 3. Wait for P_RS_ACK. */
-			ret = pcache_recv_all(sock, &ah, sizeof(ah));
-			if (ret) {
+			/* 3. Wait for P_RS_ACK, delivered by the receiver. */
+			if (!wait_for_completion_timeout(&peer->rs_ack_done,
+							 PCACHE_RS_ACK_TIMEOUT)) {
+				pcache_err("primary: RS_ACK timed out for block_id=%llu sector=%llu\n",
+					   block_id, sector);
+				ret = -ETIMEDOUT;
 				pcache_bm_set_range(bm, sector, size);  /* undo the pre-clear */
+				pcache_rs_window_clear(peer);
 				goto out_free;
 			}
-			if (le16_to_cpu(ah.type) != PCACHE_P_RS_ACK ||
-			    le64_to_cpu(ah.block_id) != block_id) {
-				pcache_err("primary: bad RS_ACK type=%u block_id=%llu expected=%llu\n",
-					   le16_to_cpu(ah.type),
-					   le64_to_cpu(ah.block_id), block_id);
-				ret = -EPROTO;
-				pcache_bm_set_range(bm, sector, size);  /* undo the pre-clear */
+			WRITE_ONCE(peer->rs_ack_block_id, 0);
+
+			/* 4. Range was cleared before the read (see above);
+			 *    the chunk is now on the peer, so drop the window
+			 *    and let writes to this range replicate inline
+			 *    again. */
+			pcache_rs_window_clear(peer);
+
+			/*
+			 * Let the writes that queued up while this chunk was
+			 * in flight go out before starting the next one.
+			 * Without this they wait for the whole sweep.
+			 */
+			if (pcache_send_unsent(peer, sock)) {
+				ret = -ENOTCONN;
 				goto out_free;
 			}
 
-			/* 4. Range was cleared before the read (see above). */
 			cursor += nr_bits;
 		}
 	}
@@ -1914,9 +2148,79 @@ connect:
 				}
 			}
 
+			/*
+			 * Spawn the receiver *before* the resync, not after
+			 * reaching ESTABLISHED. Negotiation is done, so there
+			 * is nothing left for it to race with, and from here
+			 * on it is required: the sweep waits for its chunk
+			 * ACKs through this thread, and application writes are
+			 * replicated across SYNC_SOURCE and need their ACKs
+			 * read. Both are fix-history #19.
+			 */
+			rcv_task = kthread_run(pcache_primary_receiver, peer,
+					"pcache-recv-%s",
+					peer->pcache->ti->table->md->name);
+			if (IS_ERR(rcv_task)) {
+				pcache_err("primary: failed to spawn receiver: %ld\n",
+					   PTR_ERR(rcv_task));
+				continue;
+			}
+			get_task_struct(rcv_task);
+			peer->streams[0].receiver = rcv_task;
+
+			/* Re-mark unsent any requests that were in flight
+			 * before the (re)connect so the new receiver can ACK
+			 * them. */
+			{
+				struct pcache_pending_req *p;
+
+				spin_lock(&peer->streams[0].pending_lock);
+				list_for_each_entry(p, &peer->streams[0].pending_list, list) {
+					if (p->sent) {
+						p->sent = false;
+						atomic_inc(&peer->streams[0].unsent_cnt);
+					}
+				}
+				spin_unlock(&peer->streams[0].pending_lock);
+			}
+
 			if (role == PCACHE_R_SYNC_SOURCE) {
 				pcache_set_repl_state(peer, PCACHE_R_SYNC_SOURCE);
-				sp_ret = pcache_do_resync(peer, sock, peer_gen);
+
+				/*
+				 * Sweep until the bitmap owes this peer
+				 * nothing. A single sweep is allowed to give
+				 * up -- a writeback drain can stall under load
+				 * -- and declaring ESTABLISHED anyway is what
+				 * left that debt with no drain at all: a resync
+				 * only ever starts on (re)connect, and nothing
+				 * else clears a bit (#19).
+				 *
+				 * Staying here is not an outage any more:
+				 * pcache_peer_can_replicate() accepts
+				 * SYNC_SOURCE, so writes keep reaching the peer
+				 * while we sweep, and each pass has less to
+				 * carry than the last.
+				 */
+				do {
+					sp_ret = pcache_do_resync(peer, sock,
+								  peer_gen);
+					if (sp_ret)
+						break;
+					if (!pcache_bm_dirty_count(peer->bm))
+						break;
+					pcache_info("primary: %llu bit(s) still owed after a sweep; sweeping again\n",
+						    pcache_bm_dirty_count(peer->bm));
+					if (pcache_send_unsent(peer, sock)) {
+						sp_ret = -ENOTCONN;
+						break;
+					}
+					set_current_state(TASK_INTERRUPTIBLE);
+					schedule_timeout(PCACHE_RS_RETRY_DELAY);
+					__set_current_state(TASK_RUNNING);
+				} while (!kthread_should_stop() &&
+					 peer->state == PCACHE_C_CONNECTED);
+
 				if (sp_ret) {
 					pcache_err("primary: resync failed: %d, reconnecting\n",
 						   sp_ret);
@@ -1950,31 +2254,6 @@ connect:
 			pcache_set_repl_state(peer, PCACHE_R_ESTABLISHED);
 		}
 
-		rcv_task = kthread_run(pcache_primary_receiver, peer,
-				"pcache-recv-%s",
-				peer->pcache->ti->table->md->name);
-		if (IS_ERR(rcv_task)) {
-			pcache_err("primary: failed to spawn receiver: %ld\n",
-				   PTR_ERR(rcv_task));
-			continue;
-		}
-		get_task_struct(rcv_task);
-		peer->streams[0].receiver = rcv_task;
-
-		/* Re-mark unsent any requests that were in flight before the
-		 * (re)connect so the new receiver can ACK them. */
-		{
-			struct pcache_pending_req *p;
-
-			spin_lock(&peer->streams[0].pending_lock);
-			list_for_each_entry(p, &peer->streams[0].pending_list, list) {
-				if (p->sent) {
-					p->sent = false;
-					atomic_inc(&peer->streams[0].unsent_cnt);
-				}
-			}
-			spin_unlock(&peer->streams[0].pending_lock);
-		}
 		break;
 	}
 
@@ -1986,7 +2265,6 @@ connect:
 
 	while (!kthread_should_stop()) {
 		struct pcache_pending_req *req, *tmp;
-		bool found_unsent;
 		bool any_timed_out = false;
 
 		/* Reap timed-out requests. */
@@ -2027,57 +2305,8 @@ connect:
 		}
 
 		/* Send all currently-unsent requests. */
-		do {
-			struct pcache_packet_header phdr;
-
-			found_unsent = false;
-			spin_lock(&peer->streams[0].pending_lock);
-			list_for_each_entry(req, &peer->streams[0].pending_list, list) {
-				if (!req->sent) {
-					req->sent = true;
-					req->send_time = jiffies;
-					atomic_dec(&peer->streams[0].unsent_cnt);
-					found_unsent = true;
-					break;
-				}
-			}
-			spin_unlock(&peer->streams[0].pending_lock);
-
-			if (!found_unsent)
-				break;
-
-			if (peer->state != PCACHE_C_CONNECTED)
-				goto connect;
-
-			memset(&phdr, 0, sizeof(phdr));
-			phdr.type	= cpu_to_le16(PCACHE_P_DATA);
-			phdr.sector	= cpu_to_le64(req->sector);
-			phdr.block_id	= cpu_to_le64(req->block_id);
-			phdr.size	= cpu_to_le32(req->size);
-			phdr.flags	= cpu_to_le32(PCACHE_F_ACK |
-					(req->is_flush ? PCACHE_F_FLUSH : 0) |
-					(req->fua ? PCACHE_F_FUA : 0));
-
-#if PCACHE_LAT_TRACE
-			req->t_send_start = ktime_get_ns();
-#endif
-			ret = pcache_send_packet(sock, &phdr);
-			if (ret) {
-				pcache_err("primary: send header failed: %d\n", ret);
-				goto connect;
-			}
-
-			/* A flush carries no payload (size=0); only data reqs
-			 * send bio pages. */
-			if (!req->is_flush && req->pcache_req && req->pcache_req->bio) {
-				ret = pcache_send_bio_pages(sock,
-					req->pcache_req->bio);
-				if (ret) {
-					pcache_err("primary: send data failed: %d\n", ret);
-					goto connect;
-				}
-			}
-		} while (!kthread_should_stop());
+		if (pcache_send_unsent(peer, sock))
+			goto connect;
 
 		/*
 		 * Wait for new work OR a state change OR stop OR a 5 s tick.
@@ -2448,6 +2677,11 @@ pcache_alloc_peer(struct dm_pcache *pcache, u32 peer_node_id, const char *addr)
 	peer->state	  = PCACHE_C_STANDALONE;
 	peer->repl_state  = PCACHE_R_OFF;
 	peer->split_brain = false;
+	spin_lock_init(&peer->rs_win_lock);
+	peer->rs_win_sector = 0;
+	peer->rs_win_size = 0;
+	init_completion(&peer->rs_ack_done);
+	peer->rs_ack_block_id = 0;
 	strscpy(peer->remote_addr, addr, sizeof(peer->remote_addr));
 
 	/* Cut C — N parallel streams (default 1 = legacy single connection). */
@@ -2644,10 +2878,30 @@ void pcache_net_stop(struct dm_pcache *pcache)
  * This is the preventive half; pcache_primary_worker also flushes the control
  * stream on its way back to connect: to catch reqs that raced the transition.
  */
+/*
+ * Can an application write go to this peer right now?
+ *
+ * SYNC_SOURCE counts. It used to not, and that was the third leg of
+ * fix-history #19: with replication switched off for the whole sweep, every
+ * write during a resync landed on the bitmap instead of the wire, so the debt
+ * grew faster than the sweep could carry it ("writer outran resync" was
+ * inevitable, not unlucky) and whatever was left when the sweep gave up had no
+ * drain at all.
+ *
+ * DRBD reaches the same conclusion in drbd_should_do_remote(): its condition
+ * spans L_WF_BITMAP_T..L_AHEAD, which includes L_SYNC_SOURCE, so application
+ * writes keep flowing to a peer that is being resynced; the peer simply stays
+ * D_INCONSISTENT until the resync really finishes.
+ *
+ * The ordering hazard this opens -- the sweep's copy of a range racing a newer
+ * inline write to the same range -- is closed by the resync window, not by
+ * refusing to replicate. See pcache_rs_window_overlaps().
+ */
 static bool pcache_peer_can_replicate(struct pcache_peer *peer)
 {
 	return peer->state == PCACHE_C_CONNECTED &&
-	       peer->repl_state == PCACHE_R_ESTABLISHED;
+	       (peer->repl_state == PCACHE_R_ESTABLISHED ||
+		peer->repl_state == PCACHE_R_SYNC_SOURCE);
 }
 
 bool pcache_peer_connected(struct dm_pcache *pcache)
@@ -3246,12 +3500,20 @@ int pcache_net_submit_write(struct dm_pcache *pcache,
 		struct pcache_stream *st;
 		u32 s;
 
-		if (!pcache_peer_can_replicate(peer)) {
+		if (!pcache_peer_can_replicate(peer) ||
+		    pcache_rs_window_overlaps(peer, sector, size)) {
 			/* Phase 3.5 — mark THIS peer's bitmap so its next
 			 * resync covers the range. Also covers a peer that is
 			 * connected but still negotiating: nothing would drain
 			 * its pending_list yet, so the bitmap is the right
-			 * carrier for this write. */
+			 * carrier for this write.
+			 *
+			 * The window case is different in kind: the peer *can*
+			 * replicate, but the resync is shipping this exact
+			 * range right now and the two copies would race. Set
+			 * the bit and let the sweep's next pass carry it --
+			 * the sweep only stops once no dirty bit is left, so
+			 * this defers the write, it does not drop it. */
 			if (peer->bm)
 				pcache_bm_set_range(peer->bm, sector, size);
 			any_skipped = true;

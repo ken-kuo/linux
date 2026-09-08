@@ -110,6 +110,34 @@ struct pcache_peer {
 	 * Tracks regions out of sync with THIS specific peer. Owns one slot
 	 * in the PMEM bitmap region (slot_idx = registry slot index). */
 	struct pcache_bitmap	*bm;
+
+	/*
+	 * The 256 KiB chunk pcache_do_resync() is shipping right now, empty
+	 * when rs_win_size is 0.
+	 *
+	 * Application writes are replicated across SYNC_SOURCE (see
+	 * pcache_peer_can_replicate), so for any one range the sweep's copy
+	 * and a newer inline write could otherwise reach the peer in either
+	 * order -- and on a multi-stream peer they travel on different
+	 * sockets, so nothing orders them at all. A write overlapping the
+	 * window is left to the sweep instead: it re-dirties the range and a
+	 * later pass carries it. The window is held from before the
+	 * pre-clear until the chunk's RS_ACK, i.e. one round trip.
+	 */
+	spinlock_t		rs_win_lock;
+	u64			rs_win_sector;
+	u32			rs_win_size;
+
+	/*
+	 * RS_ACK routing. The sweep used to read its chunk ACKs straight off
+	 * the control socket, which made it the socket's sole reader and so
+	 * forced replication to stop for the duration. Now the ACKs arrive
+	 * through pcache_primary_receiver() like every other ACK and the sweep
+	 * waits on this completion, so application writes keep flowing while
+	 * the resync runs.
+	 */
+	struct completion	rs_ack_done;
+	u64			rs_ack_block_id;
 };
 
 struct pcache_network {
