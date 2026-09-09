@@ -369,11 +369,28 @@ int pcache_recv_sync_params(struct socket *sock,
 }
 
 /**
- * pcache_send_bio_pages - Zero-copy transmission of a BIO payload.
+ * pcache_send_bio_pages - Transmit a BIO payload.
  *
- * Walks the bio segment-by-segment and pushes each page directly into the
- * TCP send queue via MSG_SPLICE_PAGES. No intermediate buffer, no memcpy.
- * Mirrors DRBD's _drbd_send_page() pattern.
+ * Walks the bio segment-by-segment and hands each page to TCP.
+ *
+ * This used to pass MSG_SPLICE_PAGES for a zero-copy send, which is only legal
+ * while the caller keeps the pages alive until the skb is released -- with an
+ * ITER_BVEC source the network stack takes no reference of its own
+ * (iov_iter_extract_bvec_pages() just copies the page pointers). These pages
+ * belong to a bio that is completed as soon as the request is retired, which
+ * can happen the moment sock_sendmsg() returns, so the NIC could be left
+ * transmitting from freed or reused memory (fix-history #20).
+ *
+ * That is not theoretical: regression 12 caught a single
+ * "enp1s0: bad gso: type: 1b, size: 0" 10 ms before the peer started reading
+ * the byte stream as garbage, and a VM_BUG_ON_PAGE(page_ref_count == 0) 37 s
+ * later. Without the flag TCP copies into its own buffers, so the pages are
+ * ours again the moment the call returns.
+ *
+ * Kept deliberately simple while the model is being tested: if this makes the
+ * corruption and the panics disappear, the next question is whether the
+ * zero-copy path can be brought back with a lifetime rule that actually holds
+ * (see #20's candidate A), not whether to paper over it here.
  */
 int pcache_send_bio_pages(struct socket *sock, struct bio *bio)
 {
@@ -387,7 +404,7 @@ int pcache_send_bio_pages(struct socket *sock, struct bio *bio)
 
 		while (len > 0) {
 			struct msghdr msg = {
-				.msg_flags = MSG_NOSIGNAL | MSG_SPLICE_PAGES,
+				.msg_flags = MSG_NOSIGNAL,
 			};
 			struct bio_vec out;
 			int sent;
