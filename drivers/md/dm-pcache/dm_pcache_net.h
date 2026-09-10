@@ -213,7 +213,8 @@ int pcache_send_sync_params(struct socket *sock, u64 generation,
 			    u64 peer_gen_at_sync, u64 bm_nr_bits, u32 flags);
 int pcache_recv_sync_params(struct socket *sock,
 			    struct pcache_sync_params_pkt *out);
-int pcache_send_bio_pages(struct socket *sock, struct bio *bio);
+int pcache_send_bio_pages(struct socket *sock, struct bio *bio,
+			  struct pcache_request *preq);
 
 /* Phase 3.5 — B1 coordinated demote */
 int pcache_send_demote_req(struct socket *sock, u32 initiator_node_id, u32 flags);

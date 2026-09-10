@@ -8,6 +8,7 @@
 #include <linux/uio.h>
 #include <linux/bvec.h>
 #include <linux/bio.h>
+#include <linux/skbuff.h>
 #include <net/sock.h>
 #include <net/inet_common.h>
 #include <net/tcp.h>
@@ -368,43 +369,155 @@ int pcache_recv_sync_params(struct socket *sock,
 	return pcache_recv_all(sock, out, sizeof(*out));
 }
 
+/*
+ * Zero-copy completion context, one per bio transmission.
+ *
+ * MSG_ZEROCOPY is the only flag that gives a kernel sender both halves of what
+ * this path needs:
+ *
+ *   - it takes a real page reference. Its fill routine is
+ *     zerocopy_fill_skb_from_iter() -> iov_iter_get_pages2(), whose bvec branch
+ *     does folio_get() on every page. MSG_SPLICE_PAGES goes through
+ *     iov_iter_extract_pages() instead, whose bvec branch only copies the
+ *     pointers -- that is fix-history #20;
+ *
+ *   - it says when transmission is done, through ubuf_info::ops->complete().
+ *     That is the signal this driver never had: sock_sendmsg() returning says
+ *     nothing about whether the NIC is finished with the pages.
+ *
+ * We hold a pcache_request reference for the whole transmission and drop it in
+ * the completion, so bio_endio() cannot run -- and the pages cannot be handed
+ * back to the submitter and rewritten -- while an skb still points at them.
+ * Every early-completion path (ACK timeout, flush on link death, teardown) is
+ * then safe by construction rather than by timing.
+ *
+ * Refcount contract, following io_uring's notif.c: initialise to 1 for
+ * ourselves, let the stack take its own reference per skb, and decrement in
+ * complete() -- net_zcopy_put() calls complete() directly, it does not
+ * decrement.
+ */
+struct pcache_zc {
+	struct ubuf_info	uarg;
+	struct pcache_request	*preq;
+};
+
+static void pcache_zc_complete(struct sk_buff *skb, struct ubuf_info *uarg,
+			       bool success)
+{
+	struct pcache_zc *zc = container_of(uarg, struct pcache_zc, uarg);
+
+	if (!refcount_dec_and_test(&uarg->refcnt))
+		return;
+
+	/*
+	 * Status 0 even when success is false: a failed transmission is not a
+	 * failed write. The payload is already in the local cache and the range
+	 * is on the dirty bitmap, so the resync carries it -- the same reasoning
+	 * as every other completion path here (fix-history #4, #13).
+	 */
+	pcache_req_put(zc->preq, 0);
+	kfree(zc);
+}
+
+static const struct ubuf_info_ops pcache_zc_ops = {
+	.complete = pcache_zc_complete,
+};
+
+/*
+ * Slab pages get no reference from iov_iter_get_pages2() -- it skips
+ * folio_get() for them -- so they must not go out zero-copy. DRBD checks the
+ * same thing in drbd_send_bio(): "e.g. XFS meta- & log-data is in slab pages".
+ */
+static bool pcache_bio_zc_ok(struct bio *bio)
+{
+	struct bvec_iter iter;
+	struct bio_vec bvec;
+
+	bio_for_each_segment(bvec, bio, iter)
+		if (!sendpage_ok(bvec.bv_page))
+			return false;
+	return true;
+}
+
 /**
  * pcache_send_bio_pages - Transmit a BIO payload.
  *
- * Walks the bio segment-by-segment and hands each page to TCP.
+ * Walks the bio segment-by-segment and hands each page to TCP, zero-copy when
+ * the bio allows it.
  *
- * This used to pass MSG_SPLICE_PAGES for a zero-copy send, which is only legal
- * while the caller keeps the pages alive until the skb is released -- with an
- * ITER_BVEC source the network stack takes no reference of its own
- * (iov_iter_extract_bvec_pages() just copies the page pointers). These pages
- * belong to a bio that is completed as soon as the request is retired, which
- * can happen the moment sock_sendmsg() returns, so the NIC could be left
- * transmitting from freed or reused memory (fix-history #20).
+ * This once passed MSG_SPLICE_PAGES, which is only legal while the caller keeps
+ * the pages alive until the skb is released -- with an ITER_BVEC source the
+ * network stack takes no reference of its own (iov_iter_extract_bvec_pages()
+ * just copies the page pointers). These pages belong to a bio that is completed
+ * as soon as the request is retired, which can happen the moment sock_sendmsg()
+ * returns, so the NIC could be left transmitting from freed or reused memory
+ * (fix-history #20).
  *
  * That is not theoretical: regression 12 caught a single
  * "enp1s0: bad gso: type: 1b, size: 0" 10 ms before the peer started reading
  * the byte stream as garbage, and a VM_BUG_ON_PAGE(page_ref_count == 0) 37 s
- * later. Without the flag TCP copies into its own buffers, so the pages are
- * ours again the moment the call returns.
+ * later.
  *
- * Kept deliberately simple while the model is being tested: if this makes the
- * corruption and the panics disappear, the next question is whether the
- * zero-copy path can be brought back with a lifetime rule that actually holds
- * (see #20's candidate A), not whether to paper over it here.
+ * MSG_ZEROCOPY fixes both halves of that: the stack references the pages, and
+ * it tells us when it is done with them. A bio that cannot go out zero-copy
+ * (slab pages, or no request to pin) falls back to letting TCP copy, which is
+ * always safe because the pages are ours again as soon as the call returns.
  */
-int pcache_send_bio_pages(struct socket *sock, struct bio *bio)
+int pcache_send_bio_pages(struct socket *sock, struct bio *bio,
+			  struct pcache_request *preq)
 {
 	struct bio_vec bvec;
 	struct bvec_iter iter;
+	struct pcache_zc *zc = NULL;
+	unsigned int zc_flag = 0;
+	int err = 0;
+
+	/*
+	 * Zero-copy only when we can both pin the pages and be told when the
+	 * NIC is done with them. Anything else falls back to letting TCP copy,
+	 * which is always safe because the pages are ours again as soon as
+	 * sock_sendmsg() returns.
+	 */
+	if (preq && pcache_bio_zc_ok(bio)) {
+		zc = kzalloc(sizeof(*zc), GFP_NOIO);
+		if (zc) {
+			zc->uarg.ops = &pcache_zc_ops;
+			/*
+			 * skb_zcopy_init() does `shinfo->flags |= uarg->flags`,
+			 * and skb_zcopy() -- the test skb_zcopy_clear() uses on
+			 * release -- keys off SKBFL_ZEROCOPY_ENABLE in those
+			 * flags. Leaving uarg.flags at 0 (kzalloc) means the
+			 * skb never looks zero-copy, so complete() is never
+			 * called even though net_zcopy_get() already took a
+			 * reference: the request is pinned forever and the bio
+			 * never ends. Same value io_uring uses for its notif
+			 * (IO_NOTIF_UBUF_FLAGS in io_uring/notif.h).
+			 */
+			zc->uarg.flags = SKBFL_ZEROCOPY_FRAG | SKBFL_DONT_ORPHAN;
+			refcount_set(&zc->uarg.refcnt, 1);
+			zc->preq = preq;
+			pcache_req_get(preq);
+			zc_flag = MSG_ZEROCOPY;
+		}
+	}
 
 	bio_for_each_segment(bvec, bio, iter) {
 		int len = bvec.bv_len;
 		int offset = bvec.bv_offset;
 		struct page *page = bvec.bv_page;
+		/*
+		 * MSG_MORE on every segment but the last, as DRBD's
+		 * dtt_send_bio() does. Without it each segment is pushed on its
+		 * own, which for a 128 KiB bio means a separate skb per page --
+		 * and with MSG_ZEROCOPY each of those skbs takes its own uarg
+		 * reference.
+		 */
+		unsigned int more = bio_iter_last(bvec, iter) ? 0 : MSG_MORE;
 
 		while (len > 0) {
 			struct msghdr msg = {
-				.msg_flags = MSG_NOSIGNAL,
+				.msg_flags = MSG_NOSIGNAL | zc_flag | more,
+				.msg_ubuf = zc ? &zc->uarg : NULL,
 			};
 			struct bio_vec out;
 			int sent;
@@ -413,14 +526,26 @@ int pcache_send_bio_pages(struct socket *sock, struct bio *bio)
 			iov_iter_bvec(&msg.msg_iter, ITER_SOURCE, &out, 1, len);
 
 			sent = sock_sendmsg(sock, &msg);
-			if (sent <= 0)
-				return sent ? sent : -ECONNRESET;
+			if (sent <= 0) {
+				err = sent ? sent : -ECONNRESET;
+				goto out;
+			}
 
 			len    -= sent;
 			offset += sent;
 		}
 	}
-	return 0;
+out:
+	/*
+	 * Drop the reference we initialised the uarg with. The stack holds its
+	 * own per-skb references, so complete() -- and with it the request's
+	 * release -- fires only once the last skb carrying these pages is gone.
+	 * On the error path this is equally correct: whatever the stack already
+	 * queued still keeps the pages pinned until it is done.
+	 */
+	if (zc)
+		net_zcopy_put(&zc->uarg);
+	return err;
 }
 
 /*

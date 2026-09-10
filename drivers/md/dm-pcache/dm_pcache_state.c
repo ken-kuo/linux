@@ -1182,7 +1182,7 @@ static int pcache_send_unsent(struct pcache_peer *peer, struct socket *sock)
 
 		ret = pcache_send_packet(sock, &phdr);
 		if (!ret && bio)
-			ret = pcache_send_bio_pages(sock, bio);
+			ret = pcache_send_bio_pages(sock, bio, preq);
 		if (preq)
 			pcache_req_put(preq, 0);
 		if (ret) {
@@ -1737,7 +1737,7 @@ static int pcache_data_sender(void *arg)
 
 			ret = pcache_send_packet(sock, &phdr);
 			if (!ret && bio)
-				ret = pcache_send_bio_pages(sock, bio);
+				ret = pcache_send_bio_pages(sock, bio, preq);
 			if (preq)
 				pcache_req_put(preq, 0);
 			if (ret)
