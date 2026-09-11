@@ -773,7 +773,52 @@ wait_sock:
 
 		switch (le16_to_cpu(hdr.type)) {
 		case PCACHE_P_HANDSHAKE:
-			/* re-handshake on an active stream is unexpected */
+			/*
+			 * A re-handshake on an active stream is unexpected, but
+			 * it is a packet we understand, so its length is
+			 * trustworthy. Breaking without consuming the body left
+			 * the handshake payload in the stream, where the next
+			 * read took it for a header -- one stray packet, and
+			 * the stream was misframed from there on.
+			 */
+			ret = pcache_drain_body(sock, le16_to_cpu(hdr.length));
+			if (ret) {
+				pcache_err("secondary: HANDSHAKE body recv: %d\n", ret);
+				peer->state = PCACHE_C_CONNECTING;
+				pcache_set_repl_state(peer, PCACHE_R_OFF);
+				goto wait_sock;
+			}
+			pcache_err("secondary: unexpected re-handshake on an active stream\n");
+			break;
+		case PCACHE_P_SYNC_PARAMS:
+		case PCACHE_P_BITMAP:
+			/*
+			 * Fix-history #22: a negotiation packet that arrived
+			 * after the phase it belongs to had closed.
+			 * pcache_decide_sync_role() can judge a reconnect clean
+			 * and go straight to ESTABLISHED without entering
+			 * BITMAP_EXCHANGE, while the peer has already begun
+			 * sending its bitmap runs. Such a packet is stale by
+			 * construction -- both sides agreed there is nothing to
+			 * exchange -- so drain and discard.
+			 *
+			 * Draining by hdr.length is sound here and only here:
+			 * we recognise the type, so we know the body is the
+			 * fixed sub-header and nothing more (PCACHE_BM_ENC_RUN
+			 * carries no payload). Both sides send bitmaps and
+			 * sync params, so the race is symmetric -- the primary
+			 * receiver handles the same two types the same way.
+			 */
+			ret = pcache_drain_body(sock, le16_to_cpu(hdr.length));
+			if (ret) {
+				pcache_err("secondary: %s body recv: %d\n",
+					   pcache_packet_name(le16_to_cpu(hdr.type)), ret);
+				peer->state = PCACHE_C_CONNECTING;
+				pcache_set_repl_state(peer, PCACHE_R_OFF);
+				goto wait_sock;
+			}
+			pcache_info("secondary: late %s after the phase closed -- discarded\n",
+				    pcache_packet_name(le16_to_cpu(hdr.type)));
 			break;
 		case PCACHE_P_DATA:
 			ret = pcache_handle_data_recv(&peer->streams[0], sock, &hdr);
@@ -877,13 +922,31 @@ wait_sock:
 		case PCACHE_P_ACK:
 		case PCACHE_P_NACK:
 			/* Phase 1: secondary never sends DATA, so ACK/NACK
-			 * arriving here is a protocol violation. Log and skip. */
+			 * arriving here is a protocol violation. These are
+			 * header-only, so unlike an unknown type they cannot
+			 * misframe the stream -- log and carry on. */
 			pcache_err("secondary: unexpected ACK/NACK\n");
 			break;
 		default:
-			pcache_err("secondary: unknown packet type: %u\n",
-				   le16_to_cpu(hdr.type));
-			break;
+			/*
+			 * A type we do not understand means we can no longer
+			 * parse the stream. hdr.length describes a layout we do
+			 * not know, so draining by it is a guess, and a wrong
+			 * guess misframes the stream permanently -- that is how
+			 * one stray packet became 15,000 "unknown packet type"
+			 * lines in regression 12, and how a garbage size field
+			 * reaches kvmalloc(). DRBD calls this C_PROTOCOL_ERROR
+			 * and drops the connection (drbdd()); do the same. The
+			 * reconnect re-handshakes and the bitmap drives
+			 * recovery, which is cheap next to a stream nobody can
+			 * parse.
+			 */
+			pcache_err("secondary: unknown packet type %u (%s) -- protocol error, dropping connection\n",
+				   le16_to_cpu(hdr.type),
+				   pcache_packet_name(le16_to_cpu(hdr.type)));
+			peer->state = PCACHE_C_CONNECTING;
+			pcache_set_repl_state(peer, PCACHE_R_OFF);
+			goto wait_sock;
 		}
 	}
 
@@ -1015,11 +1078,57 @@ static int pcache_primary_receiver(void *arg)
 				le32_to_cpu(body.status));
 			break;
 		}
+		case PCACHE_P_SYNC_PARAMS:
+		case PCACHE_P_BITMAP:
+		case PCACHE_P_BITMAP_DONE:
+			/*
+			 * The mirror of the secondary loop's case: both sides
+			 * send sync params and bitmaps, so either can still be
+			 * in the exchange when the other has already decided
+			 * the reconnect was clean. Stale by construction --
+			 * drain the fixed body and discard (fix-history #22).
+			 */
+			ret = pcache_drain_body(sock, le16_to_cpu(hdr.length));
+			if (ret) {
+				pcache_err("primary recv: %s body recv: %d\n",
+					   pcache_packet_name(le16_to_cpu(hdr.type)), ret);
+				peer->state = PCACHE_C_CONNECTING;
+				pcache_set_repl_state(peer, PCACHE_R_OFF);
+				pcache_flush_stream(&peer->streams[0], 0);
+				wake_up(&peer->streams[0].wait_for_work);
+				break;
+			}
+			pcache_info("primary recv: late %s after the phase closed -- discarded\n",
+				    pcache_packet_name(le16_to_cpu(hdr.type)));
+			break;
 		default:
-			pcache_err("primary recv: unexpected packet type: %u\n",
-				   le16_to_cpu(hdr.type));
+			/*
+			 * Same reasoning as the secondary loop: a type we
+			 * cannot parse means the stream is no longer
+			 * trustworthy, so drop the connection rather than
+			 * guess at the body length. DRBD's drbdd() treats this
+			 * as C_PROTOCOL_ERROR.
+			 */
+			pcache_err("primary recv: unexpected packet type %u (%s) -- protocol error, dropping connection\n",
+				   le16_to_cpu(hdr.type),
+				   pcache_packet_name(le16_to_cpu(hdr.type)));
+			peer->state = PCACHE_C_CONNECTING;
+			pcache_set_repl_state(peer, PCACHE_R_OFF);
+			/* Link is going away: complete in-flight writes locally
+			 * and let the bitmap drive the resync, exactly as the
+			 * recv-error path above does. */
+			pcache_flush_stream(&peer->streams[0], 0);
+			wake_up(&peer->streams[0].wait_for_work);
 			break;
 		}
+		/*
+		 * One get at the top of the loop, one put here. This used to
+		 * put only on the two early-exit paths, so every successfully
+		 * received packet leaked a reference: pcache_conn_release()
+		 * never ran, and the socket behind a dropped connection was
+		 * never released.
+		 */
+		pcache_conn_put(conn);
 	}
 	return 0;
 }
@@ -1095,12 +1204,47 @@ static int pcache_send_pages_inline(struct socket *sock, struct page **pages,
  *
  * Returns 0, or -ENOTCONN if the link went away and the caller must reconnect.
  */
+/*
+ * Fault injection for fix-history #22 -- see the PCACHE_FAULT_STRAY_* comment
+ * in dm_pcache.h. Called from the control stream's only writer, so the stray
+ * packet lands in the stream cleanly framed, exactly as the real race delivers
+ * it; what is under test is what the peer's receive loop does with it.
+ */
+static void pcache_inject_stray_packet(struct socket *sock)
+{
+	if (unlikely(pcache_should_fail(PCACHE_FAULT_STRAY_BITMAP))) {
+		struct pcache_packet_header hdr = {
+			.type	= cpu_to_le16(PCACHE_P_BITMAP),
+			.length	= cpu_to_le16(PCACHE_BM_PKT_SIZE),
+		};
+		struct pcache_bitmap_pkt bp = {
+			.encoding = cpu_to_le32(PCACHE_BM_ENC_RUN),
+		};
+		u8 buf[sizeof(hdr) + sizeof(bp)];
+
+		memcpy(buf, &hdr, sizeof(hdr));
+		memcpy(buf + sizeof(hdr), &bp, sizeof(bp));
+		pcache_send_all(sock, buf, sizeof(buf));
+	}
+	if (unlikely(pcache_should_fail(PCACHE_FAULT_STRAY_UNKNOWN))) {
+		/* 0x7f is deliberately absent from enum pcache_packet_type. */
+		struct pcache_packet_header hdr = {
+			.type	= cpu_to_le16(0x7f),
+			.length	= 0,
+		};
+
+		pcache_send_packet(sock, &hdr);
+	}
+}
+
 static int pcache_send_unsent(struct pcache_peer *peer, struct socket *sock)
 {
 	struct pcache_stream *st = &peer->streams[0];
 	struct pcache_pending_req *req;
 	bool found_unsent;
 	int ret;
+
+	pcache_inject_stray_packet(sock);
 
 	/*
 	 * Any reply the receiver parked for us goes out from here, because this
@@ -1803,11 +1947,16 @@ static int pcache_data_receiver(void *arg)
 			pcache_handle_ack(st, &hdr, false);
 			break;
 		default:
-			pcache_err("data recv: unexpected pkt type %u\n",
+			/* Unparseable stream -- fault it rather than read the
+			 * next header out of this packet's body. */
+			pcache_err("data recv: unexpected pkt type %u -- protocol error, faulting stream\n",
 				   le16_to_cpu(hdr.type));
-			break;
+			if (!kthread_should_stop())
+				pcache_stream_fault(st);
+			goto out;
 		}
 	}
+out:
 	return 0;
 }
 
@@ -1850,8 +1999,14 @@ static int pcache_data_secondary(void *arg)
 				break;
 			}
 		} else {
-			pcache_err("data secondary: unexpected pkt type %u\n",
+			/* Unparseable stream -- fault it rather than read the
+			 * next header out of this packet's body. */
+			pcache_err("data secondary: unexpected pkt type %u -- protocol error, faulting stream\n",
 				   le16_to_cpu(hdr.type));
+			pcache_conn_put(conn);
+			if (!kthread_should_stop())
+				pcache_stream_fault(st);
+			break;
 		}
 		pcache_conn_put(conn);
 	}

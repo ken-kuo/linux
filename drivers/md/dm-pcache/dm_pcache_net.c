@@ -51,6 +51,53 @@ int pcache_send_all(struct socket *sock, const void *buf, int size)
  * partial read has begun, blocks until completion (treating EAGAIN/EINTR as
  * a transient backoff).
  */
+/* Packet type as text, for log lines. Mirrors DRBD's drbd_packet_name(). */
+const char *pcache_packet_name(u16 type)
+{
+	switch (type) {
+	case PCACHE_P_HANDSHAKE:	return "HANDSHAKE";
+	case PCACHE_P_DATA:		return "DATA";
+	case PCACHE_P_ACK:		return "ACK";
+	case PCACHE_P_NACK:		return "NACK";
+	case PCACHE_P_SYNC_PARAMS:	return "SYNC_PARAMS";
+	case PCACHE_P_BITMAP:		return "BITMAP";
+	case PCACHE_P_BITMAP_DONE:	return "BITMAP_DONE";
+	case PCACHE_P_RS_DATA:		return "RS_DATA";
+	case PCACHE_P_RS_ACK:		return "RS_ACK";
+	case PCACHE_P_OUT_OF_SYNC:	return "OUT_OF_SYNC";
+	case PCACHE_P_PING:		return "PING";
+	case PCACHE_P_PING_ACK:		return "PING_ACK";
+	case PCACHE_P_DEMOTE_REQ:	return "DEMOTE_REQ";
+	case PCACHE_P_DEMOTE_ACK:	return "DEMOTE_ACK";
+	default:			return "?";
+	}
+}
+
+/**
+ * pcache_drain_body - Read and discard @len bytes of packet body.
+ *
+ * Only ever for a packet whose type we recognise. The length is trustworthy
+ * then, because recognising the type is what tells us the stream is still
+ * correctly framed. Never use this to "skip" an unknown type: hdr.length
+ * belongs to a layout we do not know, so skipping by it is a guess, and a
+ * wrong guess leaves the stream misframed for good. The receive loops treat
+ * an unknown type as a protocol error instead, the way DRBD's drbdd() does.
+ */
+int pcache_drain_body(struct socket *sock, u32 len)
+{
+	u8 buf[64];
+
+	while (len) {
+		u32 chunk = min_t(u32, len, sizeof(buf));
+		int ret = pcache_recv_all(sock, buf, chunk);
+
+		if (ret)
+			return ret;
+		len -= chunk;
+	}
+	return 0;
+}
+
 int pcache_recv_all(struct socket *sock, void *buf, int size)
 {
 	struct msghdr msg = { .msg_flags = MSG_NOSIGNAL };

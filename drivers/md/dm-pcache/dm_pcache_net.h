@@ -201,6 +201,8 @@ struct pcache_network {
 /* dm_pcache_net.c */
 int pcache_send_all(struct socket *sock, const void *buf, int size);
 int pcache_recv_all(struct socket *sock, void *buf, int size);
+int pcache_drain_body(struct socket *sock, u32 len);
+const char *pcache_packet_name(u16 type);
 int pcache_create_peer_socket(struct pcache_peer *peer);
 int pcache_connect_data_stream(struct pcache_stream *st);
 int pcache_create_listen_socket(struct socket **sock_out, int port);

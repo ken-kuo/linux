@@ -126,6 +126,19 @@ void pcache_req_put(struct pcache_request *pcache_req, int ret);
  */
 #define PCACHE_FAULT_DATA_WRITE		0	/* secondary: P_DATA -> cache */
 #define PCACHE_FAULT_RS_WRITE		1	/* secondary: P_RS_DATA -> cache */
+/*
+ * Shove an unexpected packet into an established control stream. Both sites
+ * exist to make fix-history #22 testable: the receive loops' handling of a
+ * packet they did not expect is otherwise only reachable by winning a
+ * reconnect race that fired twice in an entire regression run.
+ *
+ *   STRAY_BITMAP  — a known type arriving after its phase closed. Must be
+ *                   drained and discarded; the connection must survive.
+ *   STRAY_UNKNOWN — a type nobody defines. Must be treated as a protocol
+ *                   error: drop the connection and let the reconnect recover.
+ */
+#define PCACHE_FAULT_STRAY_BITMAP	2	/* control stream: late P_BITMAP */
+#define PCACHE_FAULT_STRAY_UNKNOWN	3	/* control stream: undefined type */
 
 bool pcache_should_fail(unsigned int type);
 
