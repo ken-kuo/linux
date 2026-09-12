@@ -139,6 +139,13 @@ void pcache_req_put(struct pcache_request *pcache_req, int ret);
  */
 #define PCACHE_FAULT_STRAY_BITMAP	2	/* control stream: late P_BITMAP */
 #define PCACHE_FAULT_STRAY_UNKNOWN	3	/* control stream: undefined type */
+/*
+ * Stall the secondary for a second before it ACKs, which is the shape real
+ * congestion takes: its receive loop is single-threaded, so one slow write
+ * delays every ACK queued behind it. Makes the PCACHE_R_AHEAD degrade
+ * (fix-history #21b) reachable on demand instead of only under a resync race.
+ */
+#define PCACHE_FAULT_SLOW_ACK		4	/* secondary: delay before ACK */
 
 bool pcache_should_fail(unsigned int type);
 

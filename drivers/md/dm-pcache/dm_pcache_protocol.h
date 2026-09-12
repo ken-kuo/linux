@@ -32,6 +32,12 @@ enum pcache_repl_state {
 	PCACHE_R_SYNC_TARGET      = 4,	/* this node receiving resync data */
 	PCACHE_R_ESTABLISHED      = 5,	/* fully in sync, normal I/O */
 	PCACHE_R_HALT             = 6,	/* split-brain or fatal mismatch */
+	/*
+	 * Peer cannot keep up: replication is degraded to bitmap accounting
+	 * until the backlog drains, then a sweep pays the debt back. DRBD's
+	 * L_AHEAD. Never sent on the wire -- repl_state is local.
+	 */
+	PCACHE_R_AHEAD            = 7,
 };
 
 enum pcache_packet_type {

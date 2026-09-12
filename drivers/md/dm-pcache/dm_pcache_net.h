@@ -195,6 +195,12 @@ struct pcache_network {
 
 /* ACK timeout in seconds */
 #define PCACHE_ACK_TIMEOUT_SECS		30
+/*
+ * Go PCACHE_R_AHEAD once the oldest unacked write has been waiting this long.
+ * Comfortably inside PCACHE_ACK_TIMEOUT_SECS so the backlog has time to drain
+ * before the reaper would give up on it (fix-history #21b).
+ */
+#define PCACHE_AHEAD_ENTER_SECS		10
 /* Socket buffer sizes (4 MiB each is plenty for PMEM-class RTT) */
 #define PCACHE_SOCK_BUF_BYTES		(4 * 1024 * 1024)
 

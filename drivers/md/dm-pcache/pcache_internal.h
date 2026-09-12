@@ -11,6 +11,9 @@
 	pr_info("dm-pcache: %s:%u " fmt, __func__, __LINE__, ##__VA_ARGS__)
 #define pcache_debug(fmt, ...)							\
 	pr_debug("dm-pcache: %s:%u " fmt, __func__, __LINE__, ##__VA_ARGS__)
+/* For per-request chatter that is expected in bulk -- see the AHEAD degrade. */
+#define pcache_info_ratelimited(fmt, ...)					\
+	pr_info_ratelimited("dm-pcache: %s:%u " fmt, __func__, __LINE__, ##__VA_ARGS__)
 
 #define PCACHE_KB			(1024ULL)
 #define PCACHE_MB			(1024 * PCACHE_KB)

@@ -33,6 +33,7 @@ static const char *pcache_repl_state_name(enum pcache_repl_state s)
 	case PCACHE_R_SYNC_TARGET:	return "SYNC_TARGET";
 	case PCACHE_R_ESTABLISHED:	return "ESTABLISHED";
 	case PCACHE_R_HALT:		return "HALT";
+	case PCACHE_R_AHEAD:		return "AHEAD";
 	}
 	return "?";
 }
@@ -569,6 +570,14 @@ static int pcache_handle_data_recv(struct pcache_stream *stream,
 #endif
 
 	if (flags & PCACHE_F_ACK) {
+		if (unlikely(pcache_should_fail(PCACHE_FAULT_SLOW_ACK))) {
+			/* Stall this receive loop, not just this reply: that is
+			 * what a slow cache write does, and it is why ACKs
+			 * queued behind one blow the reap deadline. */
+			set_current_state(TASK_UNINTERRUPTIBLE);
+			schedule_timeout(HZ);
+			__set_current_state(TASK_RUNNING);
+		}
 		memset(&reply, 0, sizeof(reply));
 		reply.type = cpu_to_le16(ret ? PCACHE_P_NACK : PCACHE_P_ACK);
 		reply.sector = hdr->sector;
@@ -2507,6 +2516,8 @@ connect:
 	while (!kthread_should_stop()) {
 		struct pcache_pending_req *req, *tmp;
 		bool any_timed_out = false;
+		unsigned long oldest_sent = 0;
+		bool have_oldest = false;
 
 		/* Reap timed-out requests. */
 		spin_lock(&peer->streams[0].pending_lock);
@@ -2517,10 +2528,30 @@ connect:
 			list_for_each_entry_safe(req, tmp, &peer->streams[0].pending_list, list) {
 				if (!req->sent)
 					continue;
-				if (time_after_eq(req->send_time, deadline))
+				if (time_after_eq(req->send_time, deadline)) {
+					/* Survives the reap -- only these say
+					 * how far behind the peer really is. */
+					if (!have_oldest ||
+					    time_before(req->send_time, oldest_sent)) {
+						oldest_sent = req->send_time;
+						have_oldest = true;
+					}
 					continue;
-				pcache_err("primary: request timeout sector=%llu size=%u\n",
-					   req->sector, req->size);
+				}
+				/*
+				 * While AHEAD this is not a fault: it is the
+				 * backlog that built up before the degrade
+				 * being accounted into the bitmap, which is
+				 * exactly what we want. Saying "timeout" at
+				 * error level for each one buries the real
+				 * signal -- one run produced 45 of them.
+				 */
+				if (peer->repl_state == PCACHE_R_AHEAD)
+					pcache_info_ratelimited("primary: AHEAD -- accounting backlogged write sector=%llu size=%u into the bitmap\n",
+								req->sector, req->size);
+				else
+					pcache_err("primary: request timeout sector=%llu size=%u\n",
+						   req->sector, req->size);
 				list_del(&req->list);
 				atomic_dec(&peer->streams[0].pending_cnt);
 				/* Step 6: mark dirty before completing so next
@@ -2559,9 +2590,92 @@ connect:
 		 * here — that wakes the receiver with -ECONNRESET, which
 		 * flips state to CONNECTING and sends us back to connect:.
 		 */
-		if (any_timed_out) {
+		/*
+		 * A reap normally means the link is dead even though TCP has
+		 * not said so, so drop the socket and let the reconnect sort it
+		 * out. Not while AHEAD: there we have already concluded the
+		 * peer is slow rather than gone, and reaping is how the backlog
+		 * that built up before the degrade gets accounted and cleared.
+		 * Reconnecting on it would undo the whole point -- the run that
+		 * proved this had 34 reaps and a forced reconnect on a link
+		 * that was merely stalled (fix-history #21b). A genuinely dead
+		 * peer is still caught, by the socket keepalive: while AHEAD we
+		 * send nothing, so the connection is idle and the ~50 s
+		 * KEEPIDLE + KEEPCNT x KEEPINTVL budget applies.
+		 */
+		if (any_timed_out && peer->repl_state != PCACHE_R_AHEAD) {
 			pcache_err("primary: ACK timeout — forcing reconnect\n");
 			pcache_conn_shutdown(cst);
+		}
+
+		/*
+		 * Congestion degrade -- DRBD's L_AHEAD (fix-history #21b).
+		 *
+		 * When the peer falls far enough behind that writes are heading
+		 * for the reaper, stop replicating inline and account the
+		 * writes in the bitmap instead. The alternative this replaces
+		 * is worse in both directions: writes sat until the 30 s
+		 * deadline and the link was then declared dead and
+		 * reconnected, even though it was merely slow.
+		 *
+		 * DRBD triggers on in-flight count (cong_fill) because its
+		 * failure mode is buffer exhaustion; ours is a time-based
+		 * reaper, so the age of the oldest unacked write is the signal
+		 * that actually predicts the failure. Entering well inside the
+		 * reap deadline leaves the backlog time to drain; if it still
+		 * cannot, the reaper fires and reconnecting IS the right
+		 * answer -- that peer is wedged, not slow.
+		 *
+		 * DRBD also leaves pull-ahead off by default (on-congestion
+		 * defaults to OC_BLOCK). We enable it because the behaviour it
+		 * replaces here is a malfunction rather than a policy choice.
+		 */
+		if (peer->repl_state == PCACHE_R_ESTABLISHED && have_oldest &&
+		    time_after(jiffies,
+			       oldest_sent + PCACHE_AHEAD_ENTER_SECS * HZ)) {
+			pcache_info("primary: peer is %us behind on ACKs -- going AHEAD, accounting writes in the bitmap\n",
+				    jiffies_to_msecs(jiffies - oldest_sent) / 1000);
+			pcache_set_repl_state(peer, PCACHE_R_AHEAD);
+		}
+
+		/*
+		 * Leaving AHEAD: the backlog is gone, so pay the debt back.
+		 * DRBD makes the same transition (Ahead -> SyncSource once
+		 * ap_in_flight hits zero) rather than waiting for a reconnect.
+		 *
+		 * The sweep can run here because it no longer reads the socket
+		 * itself: since the async RS_ACK change it waits on
+		 * peer->rs_ack_done, which the receiver completes. This thread
+		 * is still the socket's only writer.
+		 */
+		if (peer->repl_state == PCACHE_R_AHEAD &&
+		    atomic_read(&peer->streams[0].pending_cnt) == 0) {
+			u64 owed = pcache_bm_dirty_count(peer->bm);
+
+			if (owed) {
+				int rs_ret;
+
+				pcache_info("primary: backlog drained -- sweeping %llu owed bit(s) before resuming inline replication\n",
+					    owed);
+				pcache_set_repl_state(peer, PCACHE_R_SYNC_SOURCE);
+				rs_ret = pcache_do_resync(peer, sock,
+							  peer->peer_generation);
+				if (rs_ret) {
+					pcache_err("primary: post-AHEAD resync failed: %d, reconnecting\n",
+						   rs_ret);
+					peer->state = PCACHE_C_CONNECTING;
+					pcache_set_repl_state(peer, PCACHE_R_OFF);
+					goto connect;
+				}
+			}
+			/*
+			 * Back to inline replication. Any bit the sweep could
+			 * not carry (a writer outran it) stays owed and the
+			 * next pass through here picks it up, exactly as the
+			 * connect-time sweep loop does -- #19's rule that a
+			 * debt must always have a drain.
+			 */
+			pcache_set_repl_state(peer, PCACHE_R_ESTABLISHED);
 		}
 
 		/* Send all currently-unsent requests. */
@@ -3160,6 +3274,12 @@ void pcache_net_stop(struct dm_pcache *pcache)
  */
 static bool pcache_peer_can_replicate(struct pcache_peer *peer)
 {
+	/*
+	 * PCACHE_R_AHEAD is excluded by construction, and that is the whole of
+	 * the congestion degrade: submit_write then takes the "cannot
+	 * replicate" branch, which marks the range in this peer's bitmap and
+	 * lets the write complete locally (fix-history #21b).
+	 */
 	return peer->state == PCACHE_C_CONNECTED &&
 	       (peer->repl_state == PCACHE_R_ESTABLISHED ||
 		peer->repl_state == PCACHE_R_SYNC_SOURCE);

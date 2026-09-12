@@ -21,7 +21,7 @@ static unsigned int pcache_fault_count;	/* faults actually injected */
 module_param_named(fault_rate, pcache_fault_rate, int, 0644);
 MODULE_PARM_DESC(fault_rate, "Percent chance of injecting a fault at an enabled site (0 = off)");
 module_param_named(fault_types, pcache_fault_types, uint, 0644);
-MODULE_PARM_DESC(fault_types, "Bitmask of fault sites: 1=secondary data write, 2=secondary resync write, 4=stray P_BITMAP, 8=stray unknown packet");
+MODULE_PARM_DESC(fault_types, "Bitmask of fault sites: 1=secondary data write, 2=secondary resync write, 4=stray P_BITMAP, 8=stray unknown packet, 16=slow ACK");
 module_param_named(fault_count, pcache_fault_count, uint, 0444);
 MODULE_PARM_DESC(fault_count, "Number of faults injected so far (read-only)");
 
@@ -32,6 +32,7 @@ static const char *pcache_fault_str(unsigned int type)
 	case PCACHE_FAULT_RS_WRITE:	return "secondary resync write";
 	case PCACHE_FAULT_STRAY_BITMAP:	return "stray P_BITMAP";
 	case PCACHE_FAULT_STRAY_UNKNOWN: return "stray unknown packet";
+	case PCACHE_FAULT_SLOW_ACK:	return "slow ACK";
 	}
 	return "unknown";
 }
