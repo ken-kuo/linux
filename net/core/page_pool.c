@@ -76,19 +76,19 @@ static const char pp_stats[][ETH_GSTRING_LEN] = {
  * @pool:	pool from which page was allocated
  * @stats:	struct page_pool_stats to fill in
  *
+ * Deprecated driver API for querying stats. Page pool stats can be queried
+ * via netdev Netlink.
+ *
  * Retrieve statistics about the page_pool. This API is only available
  * if the kernel has been configured with ``CONFIG_PAGE_POOL_STATS=y``.
  * A pointer to a caller allocated struct page_pool_stats structure
  * is passed to this API which is filled in. The caller can then report
  * those stats to the user (perhaps via ethtool, debugfs, etc.).
  */
-bool page_pool_get_stats(const struct page_pool *pool,
+void page_pool_get_stats(const struct page_pool *pool,
 			 struct page_pool_stats *stats)
 {
 	int cpu = 0;
-
-	if (!stats)
-		return false;
 
 	/* The caller is responsible to initialize stats. */
 	stats->alloc_stats.fast += pool->alloc_stats.fast;
@@ -108,8 +108,6 @@ bool page_pool_get_stats(const struct page_pool *pool,
 		stats->recycle_stats.ring_full += pcpu->ring_full;
 		stats->recycle_stats.released_refcnt += pcpu->released_refcnt;
 	}
-
-	return true;
 }
 EXPORT_SYMBOL(page_pool_get_stats);
 
@@ -327,6 +325,11 @@ static void page_pool_uninit(struct page_pool *pool)
 	if (!pool->system)
 		free_percpu(pool->recycle_stats);
 #endif
+
+	if (pool->mp_ops) {
+		pool->mp_ops->destroy(pool);
+		static_branch_dec(&page_pool_mem_providers);
+	}
 }
 
 /**
@@ -481,6 +484,13 @@ static int page_pool_register_dma_index(struct page_pool *pool,
 	if (unlikely(!PP_DMA_INDEX_BITS))
 		goto out;
 
+	/*
+	 * Drivers request GFP flags according to both the current context and
+	 * the device constraints, but the XArray entry itself is by no mean
+	 * used by the device, so remove zone/policy flags.
+	 */
+	gfp &= ~(__GFP_DMA | __GFP_DMA32 | __GFP_HIGHMEM | __GFP_COMP);
+
 	if (in_softirq())
 		err = xa_alloc(&pool->dma_mapped, &id, netmem_to_page(netmem),
 			       PP_DMA_INDEX_LIMIT, gfp);
@@ -497,29 +507,40 @@ out:
 	return err;
 }
 
-static int page_pool_release_dma_index(struct page_pool *pool,
-				       netmem_ref netmem)
+static void __page_pool_unmap_netmem_dma(struct page_pool *pool,
+					 netmem_ref netmem)
 {
 	struct page *old, *page = netmem_to_page(netmem);
 	unsigned long id;
+	dma_addr_t dma;
 
-	if (unlikely(!PP_DMA_INDEX_BITS))
-		return 0;
+	if (!pool->dma_map)
+		return;
 
-	id = netmem_get_dma_index(netmem);
-	if (!id)
-		return -1;
+	/* Cache dma_addr before xa_cmpxchg. The scrub path holds no page ref;
+	 * the unref path calls put_page() regardless of cmpxchg outcome, so
+	 * after the cmpxchg we cannot safely touch netmem fields.
+	 */
+	dma = page_pool_get_dma_addr_netmem(netmem);
 
-	if (in_softirq())
-		old = xa_cmpxchg(&pool->dma_mapped, id, page, NULL, 0);
-	else
-		old = xa_cmpxchg_bh(&pool->dma_mapped, id, page, NULL, 0);
-	if (old != page)
-		return -1;
+	if (likely(PP_DMA_INDEX_BITS)) {
+		id = netmem_get_dma_index(netmem);
+		if (!id)
+			return;
 
-	netmem_set_dma_index(netmem, 0);
+		if (in_softirq())
+			old = xa_cmpxchg(&pool->dma_mapped,
+					 id, page, NULL, 0);
+		else
+			old = xa_cmpxchg_bh(&pool->dma_mapped,
+					    id, page, NULL, 0);
+		if (old != page)
+			return;
+	}
 
-	return 0;
+	dma_unmap_page_attrs(pool->p.dev, dma,
+			     PAGE_SIZE << pool->p.order, pool->p.dma_dir,
+			     DMA_ATTR_SKIP_CPU_SYNC | DMA_ATTR_WEAK_ORDERING);
 }
 
 static bool page_pool_dma_map(struct page_pool *pool, netmem_ref netmem, gfp_t gfp)
@@ -702,18 +723,8 @@ s32 page_pool_inflight(const struct page_pool *pool, bool strict)
 
 void page_pool_set_pp_info(struct page_pool *pool, netmem_ref netmem)
 {
-	struct page *page;
-
 	netmem_set_pp(netmem, pool);
-
-	/* XXX: Now that the offset of page_type is shared between
-	 * struct page and net_iov, just cast the netmem to struct page
-	 * unconditionally by clearing NET_IOV if any, no matter whether
-	 * it comes from struct net_iov or struct page.  This should be
-	 * adjusted once the offset is no longer shared.
-	 */
-	page = (struct page *)((__force unsigned long)netmem & ~NET_IOV);
-	__SetPageNetpp(page);
+	netmem_or_pp_magic(netmem, PP_SIGNATURE);
 
 	/* Ensuring all pages have been split into one fragment initially:
 	 * page_pool_set_pp_info() is only called once for every page when it
@@ -728,41 +739,23 @@ void page_pool_set_pp_info(struct page_pool *pool, netmem_ref netmem)
 
 void page_pool_clear_pp_info(netmem_ref netmem)
 {
-	struct page *page;
-
-	/* XXX: Now that the offset of page_type is shared between
-	 * struct page and net_iov, just cast the netmem to struct page
-	 * unconditionally by clearing NET_IOV if any, no matter whether
-	 * it comes from struct net_iov or struct page.  This should be
-	 * adjusted once the offset is no longer shared.
-	 */
-	page = (struct page *)((__force unsigned long)netmem & ~NET_IOV);
-	__ClearPageNetpp(page);
-
+	netmem_clear_pp_magic(netmem);
 	netmem_set_pp(netmem, NULL);
 }
 
 static __always_inline void __page_pool_release_netmem_dma(struct page_pool *pool,
 							   netmem_ref netmem)
 {
-	dma_addr_t dma;
-
+	/* Caller must hold a page ref: __page_pool_unmap_netmem_dma() is
+	 * safe without a ref, but the field clears below require it.
+	 */
 	if (!pool->dma_map)
-		/* Always account for inflight pages, even if we didn't
-		 * map them
-		 */
 		return;
 
-	if (page_pool_release_dma_index(pool, netmem))
-		return;
-
-	dma = page_pool_get_dma_addr_netmem(netmem);
-
-	/* When page is unmapped, it cannot be returned to our pool */
-	dma_unmap_page_attrs(pool->p.dev, dma,
-			     PAGE_SIZE << pool->p.order, pool->p.dma_dir,
-			     DMA_ATTR_SKIP_CPU_SYNC | DMA_ATTR_WEAK_ORDERING);
+	__page_pool_unmap_netmem_dma(pool, netmem);
 	page_pool_set_dma_addr_netmem(netmem, 0);
+	if (likely(PP_DMA_INDEX_BITS))
+		netmem_set_dma_index(netmem, 0);
 }
 
 /* Disconnects a page (from a page_pool).  API users can have a need
@@ -1080,7 +1073,8 @@ netmem_ref page_pool_alloc_frag_netmem(struct page_pool *pool,
 	if (WARN_ON(size > max_size))
 		return 0;
 
-	size = ALIGN(size, dma_get_cache_alignment());
+	size = ALIGN(size, max_t(unsigned int, dma_get_cache_alignment(),
+				 __alignof__(struct skb_shared_info)));
 	*offset = pool->frag_offset;
 
 	if (netmem && *offset + size > max_size) {
@@ -1146,11 +1140,6 @@ static void __page_pool_destroy(struct page_pool *pool)
 	page_pool_unlist(pool);
 	page_pool_uninit(pool);
 
-	if (pool->mp_ops) {
-		pool->mp_ops->destroy(pool);
-		static_branch_dec(&page_pool_mem_providers);
-	}
-
 	kfree(pool);
 }
 
@@ -1193,8 +1182,9 @@ static void page_pool_scrub(struct page_pool *pool)
 				synchronize_net();
 		}
 
+		/* No page ref, dma-unmap only. */
 		xa_for_each(&pool->dma_mapped, id, ptr)
-			__page_pool_release_netmem_dma(pool, page_to_netmem((struct page *)ptr));
+			__page_pool_unmap_netmem_dma(pool, page_to_netmem((struct page *)ptr));
 	}
 
 	/* No more consumers should exist, but producers could still

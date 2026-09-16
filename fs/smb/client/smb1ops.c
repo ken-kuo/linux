@@ -49,7 +49,6 @@ void reset_cifs_unix_caps(unsigned int xid, struct cifs_tcon *tcon,
 
 	if (!CIFSSMBQFSUnixInfo(xid, tcon)) {
 		__u64 cap = le64_to_cpu(tcon->fsUnixInfo.Capability);
-		unsigned int sbflags;
 
 		cifs_dbg(FYI, "unix caps which server supports %lld\n", cap);
 		/*
@@ -76,28 +75,26 @@ void reset_cifs_unix_caps(unsigned int xid, struct cifs_tcon *tcon,
 		if (cap & CIFS_UNIX_TRANSPORT_ENCRYPTION_MANDATORY_CAP)
 			cifs_dbg(VFS, "per-share encryption not supported yet\n");
 
-		if (cifs_sb)
-			sbflags = cifs_sb_flags(cifs_sb);
-
 		cap &= CIFS_UNIX_CAP_MASK;
 		if (ctx && ctx->no_psx_acl)
 			cap &= ~CIFS_UNIX_POSIX_ACL_CAP;
 		else if (CIFS_UNIX_POSIX_ACL_CAP & cap) {
 			cifs_dbg(FYI, "negotiated posix acl support\n");
-			if (cifs_sb)
-				sbflags |= CIFS_MOUNT_POSIXACL;
+			if (cifs_sb) {
+				atomic_or(CIFS_MOUNT_POSIXACL,
+					  &cifs_sb->mnt_cifs_flags);
+			}
 		}
 
 		if (ctx && ctx->posix_paths == 0)
 			cap &= ~CIFS_UNIX_POSIX_PATHNAMES_CAP;
 		else if (cap & CIFS_UNIX_POSIX_PATHNAMES_CAP) {
 			cifs_dbg(FYI, "negotiate posix pathnames\n");
-			if (cifs_sb)
-				sbflags |= CIFS_MOUNT_POSIX_PATHS;
+			if (cifs_sb) {
+				atomic_or(CIFS_MOUNT_POSIX_PATHS,
+					  &cifs_sb->mnt_cifs_flags);
+			}
 		}
-
-		if (cifs_sb)
-			atomic_set(&cifs_sb->mnt_cifs_flags, sbflags);
 
 		cifs_dbg(FYI, "Negotiate caps 0x%x\n", (int)cap);
 #ifdef CONFIG_CIFS_DEBUG2
@@ -508,21 +505,27 @@ static int
 cifs_is_path_accessible(const unsigned int xid, struct cifs_tcon *tcon,
 			struct cifs_sb_info *cifs_sb, const char *full_path)
 {
-	int rc;
-	FILE_ALL_INFO *file_info;
+	int rc = -EOPNOTSUPP;
+	FILE_ALL_INFO file_info;
 
-	file_info = kmalloc_obj(FILE_ALL_INFO);
-	if (file_info == NULL)
-		return -ENOMEM;
+	if (tcon->ses->capabilities & CAP_NT_SMBS)
+		rc = CIFSSMBQPathInfo(xid, tcon, full_path, &file_info,
+				      0 /* not legacy */, cifs_sb->local_nls,
+				      cifs_remap(cifs_sb));
 
-	rc = CIFSSMBQPathInfo(xid, tcon, full_path, file_info,
-			      0 /* not legacy */, cifs_sb->local_nls,
-			      cifs_remap(cifs_sb));
+	/*
+	 * Non-UNICODE variant of fallback functions below expands wildcards,
+	 * so they cannot be used for querying paths with wildcard characters.
+	 * Therefore for such paths returns -ENOENT as they cannot exist.
+	 */
+	if ((rc == -EOPNOTSUPP || rc == -EINVAL) &&
+	    !(tcon->ses->capabilities & CAP_UNICODE) &&
+	    strpbrk(full_path, "*?\"><"))
+		rc = -ENOENT;
 
 	if (rc == -EOPNOTSUPP || rc == -EINVAL)
-		rc = SMBQueryInformation(xid, tcon, full_path, file_info,
+		rc = SMBQueryInformation(xid, tcon, full_path, &file_info,
 				cifs_sb->local_nls, cifs_remap(cifs_sb));
-	kfree(file_info);
 	return rc;
 }
 
@@ -539,6 +542,7 @@ static int cifs_query_path_info(const unsigned int xid,
 
 	data->reparse_point = false;
 	data->adjust_tz = false;
+	data->unknown_nlink = false;
 
 	/*
 	 * First try CIFSSMBQPathInfo() function which returns more info
@@ -605,6 +609,7 @@ static int cifs_query_path_info(const unsigned int xid,
 				fi.EASize = di->EaSize;
 			}
 			fi.NumberOfLinks = cpu_to_le32(1);
+			data->unknown_nlink = true;
 			fi.DeletePending = 0;
 			fi.Directory = !!(le32_to_cpu(fi.Attributes) & ATTR_DIRECTORY);
 			cifs_buf_release(search_info.ntwrk_buf_start);
@@ -627,6 +632,8 @@ static int cifs_query_path_info(const unsigned int xid,
 		rc = SMBQueryInformation(xid, tcon, full_path, &fi, cifs_sb->local_nls,
 					 cifs_remap(cifs_sb));
 		data->adjust_tz = true;
+		if (!rc)
+			data->unknown_nlink = true;
 	} else if ((rc == -EOPNOTSUPP || rc == -EINVAL) && non_unicode_wildcard) {
 		/* Path with non-UNICODE wildcard character cannot exist. */
 		rc = -ENOENT;
@@ -714,7 +721,7 @@ static int cifs_query_path_info(const unsigned int xid,
 			ea->ea_value_length = cpu_to_le16(SMB2_WSL_XATTR_DEV_SIZE);
 			memcpy(&ea->ea_data[0], SMB2_WSL_XATTR_DEV, SMB2_WSL_XATTR_NAME_LEN + 1);
 			data->wsl.eas_len += ALIGN(sizeof(*ea) + SMB2_WSL_XATTR_NAME_LEN + 1 +
-						   SMB2_WSL_XATTR_MODE_SIZE, 4);
+						   SMB2_WSL_XATTR_DEV_SIZE, 4);
 			rc = 0;
 		} else if (rc >= 0) {
 			/* It is an error if EA $LXDEV has wrong size. */
@@ -890,8 +897,10 @@ static int cifs_open_file(const unsigned int xid, struct cifs_open_parms *oparms
 	else
 		rc = CIFS_open(xid, oparms, oplock, &fi);
 
-	if (!rc && data)
+	if (!rc && data) {
 		move_cifs_info_to_smb2(&data->fi, &fi);
+		data->unknown_nlink = true;
+	}
 
 	return rc;
 }
@@ -952,7 +961,7 @@ smb_set_file_info(struct inode *inode, const char *full_path,
 	struct cifs_open_parms oparms;
 	struct cifsFileInfo *open_file;
 	FILE_BASIC_INFO new_buf;
-	struct cifs_open_info_data query_data;
+	struct cifs_open_info_data query_data = {};
 	__le64 write_time = buf->LastWriteTime;
 	struct cifsInodeInfo *cinode = CIFS_I(inode);
 	struct cifs_sb_info *cifs_sb = CIFS_SB(inode->i_sb);
@@ -1113,9 +1122,10 @@ out:
 
 static int
 cifs_set_compression(const unsigned int xid, struct cifs_tcon *tcon,
-		   struct cifsFileInfo *cfile)
+		   struct cifsFileInfo *cfile, __u16 compression_state)
 {
-	return CIFSSMB_set_compression(xid, tcon, cfile->fid.netfid);
+	return CIFSSMB_set_compression(xid, tcon, cfile->fid.netfid,
+				       compression_state);
 }
 
 static int

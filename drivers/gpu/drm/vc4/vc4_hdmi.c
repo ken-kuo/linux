@@ -455,7 +455,7 @@ static int vc4_hdmi_connector_get_modes(struct drm_connector *connector)
 }
 
 static int vc4_hdmi_connector_atomic_check(struct drm_connector *connector,
-					   struct drm_atomic_state *state)
+					   struct drm_atomic_commit *state)
 {
 	struct drm_connector_state *old_state =
 		drm_atomic_get_old_connector_state(state, connector);
@@ -508,7 +508,7 @@ static int vc4_hdmi_connector_atomic_check(struct drm_connector *connector,
 static void vc4_hdmi_connector_reset(struct drm_connector *connector)
 {
 	drm_atomic_helper_connector_reset(connector);
-	__drm_atomic_helper_connector_hdmi_reset(connector, connector->state);
+	__drm_atomic_helper_connector_hdmi_state_init(connector, connector->state);
 	drm_atomic_helper_connector_tv_margins_reset(connector);
 }
 
@@ -877,7 +877,7 @@ static void vc4_hdmi_scrambling_wq(struct work_struct *work)
 }
 
 static void vc4_hdmi_encoder_post_crtc_disable(struct drm_encoder *encoder,
-					       struct drm_atomic_state *state)
+					       struct drm_atomic_commit *state)
 {
 	struct vc4_hdmi *vc4_hdmi = encoder_to_vc4_hdmi(encoder);
 	struct drm_device *drm = vc4_hdmi->connector.dev;
@@ -927,7 +927,7 @@ out:
 }
 
 static void vc4_hdmi_encoder_post_crtc_powerdown(struct drm_encoder *encoder,
-						 struct drm_atomic_state *state)
+						 struct drm_atomic_commit *state)
 {
 	struct vc4_hdmi *vc4_hdmi = encoder_to_vc4_hdmi(encoder);
 	struct drm_device *drm = vc4_hdmi->connector.dev;
@@ -1471,7 +1471,7 @@ static void vc4_hdmi_recenter_fifo(struct vc4_hdmi *vc4_hdmi)
 }
 
 static void vc4_hdmi_encoder_pre_crtc_configure(struct drm_encoder *encoder,
-						struct drm_atomic_state *state)
+						struct drm_atomic_commit *state)
 {
 	struct vc4_hdmi *vc4_hdmi = encoder_to_vc4_hdmi(encoder);
 	struct drm_device *drm = vc4_hdmi->connector.dev;
@@ -1587,7 +1587,7 @@ out:
 }
 
 static void vc4_hdmi_encoder_pre_crtc_enable(struct drm_encoder *encoder,
-					     struct drm_atomic_state *state)
+					     struct drm_atomic_commit *state)
 {
 	struct vc4_hdmi *vc4_hdmi = encoder_to_vc4_hdmi(encoder);
 	struct drm_device *drm = vc4_hdmi->connector.dev;
@@ -1617,7 +1617,7 @@ out:
 }
 
 static void vc4_hdmi_encoder_post_crtc_enable(struct drm_encoder *encoder,
-					      struct drm_atomic_state *state)
+					      struct drm_atomic_commit *state)
 {
 	struct vc4_hdmi *vc4_hdmi = encoder_to_vc4_hdmi(encoder);
 	struct drm_connector *connector = &vc4_hdmi->connector;
@@ -3208,11 +3208,11 @@ err_disable_clk:
 	return ret;
 }
 
-static void vc4_hdmi_put_ddc_device(void *ptr)
+static void vc4_hdmi_put_ddc(void *ptr)
 {
 	struct vc4_hdmi *vc4_hdmi = ptr;
 
-	put_device(&vc4_hdmi->ddc->dev);
+	i2c_put_adapter(vc4_hdmi->ddc);
 }
 
 static int vc4_hdmi_bind(struct device *dev, struct device *master, void *data)
@@ -3266,14 +3266,14 @@ static int vc4_hdmi_bind(struct device *dev, struct device *master, void *data)
 		return -ENODEV;
 	}
 
-	vc4_hdmi->ddc = of_find_i2c_adapter_by_node(ddc_node);
+	vc4_hdmi->ddc = of_get_i2c_adapter_by_node(ddc_node);
 	of_node_put(ddc_node);
 	if (!vc4_hdmi->ddc) {
 		drm_err(drm, "Failed to get ddc i2c adapter by node\n");
 		return -EPROBE_DEFER;
 	}
 
-	ret = devm_add_action_or_reset(dev, vc4_hdmi_put_ddc_device, vc4_hdmi);
+	ret = devm_add_action_or_reset(dev, vc4_hdmi_put_ddc, vc4_hdmi);
 	if (ret)
 		return ret;
 

@@ -526,14 +526,14 @@ static int dwc3_qcom_find_num_ports(struct platform_device *pdev)
 	int irq;
 
 	irq = platform_get_irq_byname_optional(pdev, "dp_hs_phy_1");
-	if (irq <= 0)
+	if (irq < 0)
 		return 1;
 
 	for (port_num = 2; port_num <= DWC3_QCOM_MAX_PORTS; port_num++) {
 		sprintf(irq_name, "dp_hs_phy_%d", port_num);
 
 		irq = platform_get_irq_byname_optional(pdev, irq_name);
-		if (irq <= 0)
+		if (irq < 0)
 			return port_num - 1;
 	}
 
@@ -602,7 +602,7 @@ static void dwc3_qcom_run_stop_notifier(struct dwc3 *dwc, bool is_on)
 	pm_runtime_mark_last_busy(qcom->dev);
 }
 
-struct dwc3_glue_ops dwc3_qcom_glue_ops = {
+static struct dwc3_glue_ops dwc3_qcom_glue_ops = {
 	.pre_set_role	= dwc3_qcom_set_role_notifier,
 	.pre_run_stop	= dwc3_qcom_run_stop_notifier,
 };

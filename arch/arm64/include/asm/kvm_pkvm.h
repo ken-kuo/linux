@@ -17,7 +17,7 @@
 
 #define HYP_MEMBLOCK_REGIONS 128
 
-int pkvm_init_host_vm(struct kvm *kvm);
+int pkvm_init_host_vm(struct kvm *kvm, unsigned long type);
 int pkvm_create_hyp_vm(struct kvm *kvm);
 bool pkvm_hyp_vm_is_created(struct kvm *kvm);
 void pkvm_destroy_hyp_vm(struct kvm *kvm);
@@ -40,12 +40,13 @@ static inline bool kvm_pkvm_ext_allowed(struct kvm *kvm, long ext)
 	case KVM_CAP_MAX_VCPU_ID:
 	case KVM_CAP_MSI_DEVID:
 	case KVM_CAP_ARM_VM_IPA_SIZE:
-	case KVM_CAP_ARM_PMU_V3:
-	case KVM_CAP_ARM_SVE:
 	case KVM_CAP_ARM_PTRAUTH_ADDRESS:
 	case KVM_CAP_ARM_PTRAUTH_GENERIC:
 		return true;
 	case KVM_CAP_ARM_MTE:
+		return false;
+	case KVM_CAP_ARM_EAGER_SPLIT_CHUNK_SIZE:
+	case KVM_CAP_ARM_SUPPORTED_BLOCK_SIZES:
 		return false;
 	default:
 		return !kvm || !kvm_vm_is_protected(kvm);
@@ -190,15 +191,17 @@ static inline size_t pkvm_host_sve_state_size(void)
 	if (!system_supports_sve())
 		return 0;
 
-	return size_add(sizeof(struct cpu_sve_state),
-			SVE_SIG_REGS_SIZE(sve_vq_from_vl(kvm_host_sve_max_vl)));
+	return SVE_SIG_REGS_SIZE(sve_vq_from_vl(kvm_host_sve_max_vl));
 }
 
 struct pkvm_mapping {
 	struct rb_node node;
 	u64 gfn;
 	u64 pfn;
-	u64 nr_pages;
+	struct {
+		u64 nr_pages:48;
+		u64 nc:1;
+	};
 	u64 __subtree_last;	/* Internal member for interval tree */
 };
 

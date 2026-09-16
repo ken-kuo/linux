@@ -131,9 +131,8 @@ void free_pid(struct pid *pid)
 			wake_up_process(READ_ONCE(ns->child_reaper));
 			break;
 		case PIDNS_ADDING:
-			/* Handle a fork failure of the first process */
-			WARN_ON(ns->child_reaper);
-			ns->pid_allocated = 0;
+			/* Only possible if the 1st fork fails */
+			WARN_ON(READ_ONCE(ns->child_reaper));
 			break;
 		}
 
@@ -230,6 +229,10 @@ struct pid *alloc_pid(struct pid_namespace *ns, pid_t *arg_set_tid,
 	retried_preload = false;
 	idr_preload(GFP_KERNEL);
 	spin_lock(&pidmap_lock);
+	/* For the case when the previous attempt to create init failed */
+	if (ns->pid_allocated == PIDNS_ADDING)
+		idr_set_cursor(&ns->idr, 0);
+
 	for (tmp = ns, i = ns->level; i >= 0;) {
 		int tid = set_tid[ns->level - i];
 
@@ -314,10 +317,17 @@ struct pid *alloc_pid(struct pid_namespace *ns, pid_t *arg_set_tid,
 	 *
 	 * This can't be done earlier because we need to preserve other
 	 * error conditions.
+	 *
+	 * We need this even if copy_process() does the same check. If two
+	 * or more tasks from parent namespace try to inject a child into a
+	 * dead namespace, one of free_pid() calls from the copy_process()
+	 * error path may try to wakeup the possibly freed ns->child_reaper.
 	 */
 	retval = -ENOMEM;
-	if (unlikely(!(ns->pid_allocated & PIDNS_ADDING)))
-		goto out_free;
+	for (upid = pid->numbers + ns->level; upid >= pid->numbers; --upid)
+		if (unlikely(!(upid->ns->pid_allocated & PIDNS_ADDING)))
+			goto out_free;
+
 	for (upid = pid->numbers + ns->level; upid >= pid->numbers; --upid) {
 		/* Make the PID visible to find_pid_ns. */
 		idr_replace(&upid->ns->idr, pid, upid->nr);
@@ -340,10 +350,6 @@ out_free:
 		upid = pid->numbers + i;
 		idr_remove(&upid->ns->idr, upid->nr);
 	}
-
-	/* On failure to allocate the first pid, reset the state */
-	if (ns->pid_allocated == PIDNS_ADDING)
-		idr_set_cursor(&ns->idr, 0);
 
 	spin_unlock(&pidmap_lock);
 	idr_preload_end();
@@ -760,29 +766,6 @@ static struct ctl_table_root pid_table_root = {
 	.set_ownership	= pid_table_root_set_ownership,
 };
 
-static int proc_do_cad_pid(const struct ctl_table *table, int write, void *buffer,
-		size_t *lenp, loff_t *ppos)
-{
-	struct pid *new_pid;
-	pid_t tmp_pid;
-	int r;
-	struct ctl_table tmp_table = *table;
-
-	tmp_pid = pid_vnr(cad_pid);
-	tmp_table.data = &tmp_pid;
-
-	r = proc_dointvec(&tmp_table, write, buffer, lenp, ppos);
-	if (r || !write)
-		return r;
-
-	new_pid = find_get_pid(tmp_pid);
-	if (!new_pid)
-		return -ESRCH;
-
-	put_pid(xchg(&cad_pid, new_pid));
-	return 0;
-}
-
 static const struct ctl_table pid_table[] = {
 	{
 		.procname	= "pid_max",
@@ -793,14 +776,6 @@ static const struct ctl_table pid_table[] = {
 		.extra1		= &pid_max_min,
 		.extra2		= &pid_max_max,
 	},
-#ifdef CONFIG_PROC_SYSCTL
-	{
-		.procname	= "cad_pid",
-		.maxlen		= sizeof(int),
-		.mode		= 0600,
-		.proc_handler	= proc_do_cad_pid,
-	},
-#endif
 };
 #endif
 
@@ -881,10 +856,12 @@ static struct file *__pidfd_fget(struct task_struct *task, int fd)
 	if (ret)
 		return ERR_PTR(ret);
 
-	if (ptrace_may_access(task, PTRACE_MODE_ATTACH_REALCREDS))
-		file = fget_task(task, fd);
-	else
+	if (!ptrace_may_access(task, PTRACE_MODE_ATTACH_REALCREDS))
 		file = ERR_PTR(-EPERM);
+	else if (task->flags & PF_EXITING)
+		file = ERR_PTR(-ESRCH);
+	else
+		file = fget_task(task, fd);
 
 	up_read(&task->signal->exec_update_lock);
 

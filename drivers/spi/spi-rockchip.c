@@ -98,7 +98,6 @@
 #define CR0_FRF_MICROWIRE			0x2
 
 #define CR0_XFM_OFFSET				18
-#define CR0_XFM_MASK				(0x03 << SPI_XFM_OFFSET)
 #define CR0_XFM_TR					0x0
 #define CR0_XFM_TO					0x1
 #define CR0_XFM_RO					0x2
@@ -108,8 +107,6 @@
 #define CR0_OPM_TARGET				0x1
 
 #define CR0_SOI_OFFSET				23
-
-#define CR0_MTM_OFFSET				0x21
 
 /* Bit fields in SER, 2bit */
 #define SER_MASK					0x3
@@ -357,7 +354,8 @@ static irqreturn_t rockchip_spi_isr(int irq, void *dev_id)
 	struct rockchip_spi *rs = spi_controller_get_devdata(ctlr);
 
 	/* When int_cs_inactive comes, spi target abort */
-	if (rs->cs_inactive && readl_relaxed(rs->regs + ROCKCHIP_SPI_IMR) & INT_CS_INACTIVE) {
+	if (rs->cs_inactive &&
+	    (readl_relaxed(rs->regs + ROCKCHIP_SPI_ISR) & INT_CS_INACTIVE)) {
 		ctlr->target_abort(ctlr);
 		writel_relaxed(0, rs->regs + ROCKCHIP_SPI_IMR);
 		writel_relaxed(0xffffffff, rs->regs + ROCKCHIP_SPI_ICR);
@@ -940,7 +938,6 @@ static void rockchip_spi_remove(struct platform_device *pdev)
 		dma_release_channel(ctlr->dma_rx);
 }
 
-#ifdef CONFIG_PM_SLEEP
 static int rockchip_spi_suspend(struct device *dev)
 {
 	int ret;
@@ -974,9 +971,7 @@ static int rockchip_spi_resume(struct device *dev)
 
 	return spi_controller_resume(ctlr);
 }
-#endif /* CONFIG_PM_SLEEP */
 
-#ifdef CONFIG_PM
 static int rockchip_spi_runtime_suspend(struct device *dev)
 {
 	struct spi_controller *ctlr = dev_get_drvdata(dev);
@@ -1004,12 +999,11 @@ static int rockchip_spi_runtime_resume(struct device *dev)
 
 	return 0;
 }
-#endif /* CONFIG_PM */
 
 static const struct dev_pm_ops rockchip_spi_pm = {
-	SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(rockchip_spi_suspend, rockchip_spi_resume)
-	SET_RUNTIME_PM_OPS(rockchip_spi_runtime_suspend,
-			   rockchip_spi_runtime_resume, NULL)
+	NOIRQ_SYSTEM_SLEEP_PM_OPS(rockchip_spi_suspend, rockchip_spi_resume)
+	RUNTIME_PM_OPS(rockchip_spi_runtime_suspend,
+		       rockchip_spi_runtime_resume, NULL)
 };
 
 static const struct of_device_id rockchip_spi_dt_match[] = {
@@ -1032,7 +1026,7 @@ MODULE_DEVICE_TABLE(of, rockchip_spi_dt_match);
 static struct platform_driver rockchip_spi_driver = {
 	.driver = {
 		.name	= DRIVER_NAME,
-		.pm = &rockchip_spi_pm,
+		.pm = pm_ptr(&rockchip_spi_pm),
 		.of_match_table = of_match_ptr(rockchip_spi_dt_match),
 	},
 	.probe = rockchip_spi_probe,

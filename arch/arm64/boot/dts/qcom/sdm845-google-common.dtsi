@@ -66,8 +66,8 @@
 			no-map;
 		};
 
-		cdsp_mem: cdsp-mem@97D00000 {
-			reg = <0 0x97D00000 0 0x800000>;
+		cdsp_mem: cdsp-mem@97d00000 {
+			reg = <0 0x97d00000 0 0x800000>;
 			no-map;
 		};
 
@@ -81,8 +81,8 @@
 			no-map;
 		};
 
-		spss_mem: spss@99B00000 {
-			reg = <0 0x99B00000 0 0x100000>;
+		spss_mem: spss@99b00000 {
+			reg = <0 0x99b00000 0 0x100000>;
 			no-map;
 		};
 
@@ -130,6 +130,33 @@
 		regulator-boot-on;
 
 		vin-supply = <&vph_pwr>;
+	};
+
+	wcn3990-pmu {
+		compatible = "qcom,wcn3990-pmu";
+
+		vddio-supply = <&vreg_s4a_1p8>;
+		vddxo-supply = <&vreg_l7a_1p8>;
+		vddrf-supply = <&vreg_l17a_1p3>;
+		vddch0-supply = <&vreg_l25a_3p3>;
+
+		regulators {
+			vreg_pmu_io: ldo0 {
+				regulator-name = "vreg_pmu_io";
+			};
+
+			vreg_pmu_xo: ldo1 {
+				regulator-name = "vreg_pmu_xo";
+			};
+
+			vreg_pmu_rf: ldo2 {
+				regulator-name = "vreg_pmu_rf";
+			};
+
+			vreg_pmu_ch0: ldo3 {
+				regulator-name = "vreg_pmu_ch0";
+			};
+		};
 	};
 };
 
@@ -364,6 +391,23 @@
 	firmware-name = "qcom/sdm845/Google/blueline/a630_zap.mbn";
 };
 
+&i2c3 {
+	status = "okay";
+
+	nfc@28 {
+		compatible = "nxp,pn557", "nxp,nxp-nci-i2c";
+		reg = <0x28>;
+
+		interrupts-extended = <&tlmm 63 IRQ_TYPE_EDGE_RISING>;
+
+		enable-gpios = <&tlmm 25 GPIO_ACTIVE_HIGH>;
+		firmware-gpios = <&tlmm 79 GPIO_ACTIVE_HIGH>;
+
+		pinctrl-0 = <&nfc_int_default &nfc_enable_default>;
+		pinctrl-names = "default";
+	};
+};
+
 &i2c12 {
 	/* Bottom spkr (right) CS35L36 @ 40 */
 
@@ -432,6 +476,20 @@
 	gpio-reserved-ranges = < 0 4>, /* SPI (Intel MNH Pixel Visual Core) */
 			       <81 4>; /* SPI (most likely Fingerprint Cards FPC1075) */
 
+	nfc_int_default: nfc-int-default-state {
+		pins = "gpio63";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
+	nfc_enable_default: nfc-enable-default-state {
+		pins = "gpio25", "gpio79";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
 	touchscreen_reset: ts-reset-state {
 		pins = "gpio99";
 		function = "gpio";
@@ -462,10 +520,11 @@
 	bluetooth {
 		compatible = "qcom,wcn3990-bt";
 
-		vddio-supply = <&vreg_s4a_1p8>;
-		vddxo-supply = <&vreg_l7a_1p8>;
-		vddrf-supply = <&vreg_l17a_1p3>;
-		vddch0-supply = <&vreg_l25a_3p3>;
+		vddio-supply = <&vreg_pmu_io>;
+		vddxo-supply = <&vreg_pmu_xo>;
+		vddrf-supply = <&vreg_pmu_rf>;
+		vddch0-supply = <&vreg_pmu_ch0>;
+
 		max-speed = <3200000>;
 	};
 };
@@ -512,8 +571,8 @@
 };
 
 &usb_1_qmpphy {
-	vdda-phy-supply = <&vreg_l26a_1p2>;
-	vdda-pll-supply = <&vreg_l1a_0p875>;
+	vdda-phy-supply = <&vreg_l1a_0p875>;
+	vdda-pll-supply = <&vreg_l26a_1p2>;
 
 	status = "okay";
 };
@@ -526,9 +585,9 @@
 
 &wifi {
 	vdd-0.8-cx-mx-supply = <&vreg_l5a_0p8>;
-	vdd-1.8-xo-supply = <&vreg_l7a_1p8>;
-	vdd-1.3-rfa-supply = <&vreg_l17a_1p3>;
-	vdd-3.3-ch0-supply = <&vreg_l25a_3p3>;
+	vdd-1.8-xo-supply = <&vreg_pmu_xo>;
+	vdd-1.3-rfa-supply = <&vreg_pmu_rf>;
+	vdd-3.3-ch0-supply = <&vreg_pmu_ch0>;
 
 	qcom,snoc-host-cap-8bit-quirk;
 

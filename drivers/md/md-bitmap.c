@@ -216,6 +216,7 @@ struct bitmap {
 };
 
 static struct workqueue_struct *md_bitmap_wq;
+static struct attribute_group md_bitmap_internal_group;
 
 static int __bitmap_resize(struct bitmap *bitmap, sector_t blocks,
 			   int chunksize, bool init);
@@ -501,6 +502,18 @@ static void write_sb_page(struct bitmap *bitmap, unsigned long pg_index,
 static void md_bitmap_file_kick(struct bitmap *bitmap);
 
 #ifdef CONFIG_MD_BITMAP_FILE
+static void end_bitmap_write(struct bio *bio)
+{
+	struct buffer_head *bh;
+	bool uptodate = bio_endio_bh(bio, &bh);
+	struct bitmap *bitmap = bh->b_private;
+
+	if (!uptodate)
+		set_bit(BITMAP_WRITE_ERROR, &bitmap->flags);
+	if (atomic_dec_and_test(&bitmap->pending_writes))
+		wake_up(&bitmap->write_wait);
+}
+
 static void write_file_page(struct bitmap *bitmap, struct page *page, int wait)
 {
 	struct buffer_head *bh = page_buffers(page);
@@ -509,23 +522,13 @@ static void write_file_page(struct bitmap *bitmap, struct page *page, int wait)
 		atomic_inc(&bitmap->pending_writes);
 		set_buffer_locked(bh);
 		set_buffer_mapped(bh);
-		submit_bh(REQ_OP_WRITE | REQ_SYNC, bh);
+		bh_submit(bh, REQ_OP_WRITE | REQ_SYNC, end_bitmap_write);
 		bh = bh->b_this_page;
 	}
 
 	if (wait)
 		wait_event(bitmap->write_wait,
 			   atomic_read(&bitmap->pending_writes) == 0);
-}
-
-static void end_bitmap_write(struct buffer_head *bh, int uptodate)
-{
-	struct bitmap *bitmap = bh->b_private;
-
-	if (!uptodate)
-		set_bit(BITMAP_WRITE_ERROR, &bitmap->flags);
-	if (atomic_dec_and_test(&bitmap->pending_writes))
-		wake_up(&bitmap->write_wait);
 }
 
 static void free_buffers(struct page *page)
@@ -591,12 +594,11 @@ static int read_file_page(struct file *file, unsigned long index,
 			else
 				count -= blocksize;
 
-			bh->b_end_io = end_bitmap_write;
 			bh->b_private = bitmap;
 			atomic_inc(&bitmap->pending_writes);
 			set_buffer_locked(bh);
 			set_buffer_mapped(bh);
-			submit_bh(REQ_OP_READ, bh);
+			bh_submit(bh, REQ_OP_READ, end_bitmap_write);
 		}
 		blk_cur++;
 		bh = bh->b_this_page;
@@ -1728,6 +1730,13 @@ static void bitmap_start_write(struct mddev *mddev, sector_t offset,
 	}
 }
 
+static void bitmap_prepare_range(struct mddev *mddev, sector_t *offset,
+				 unsigned long *sectors, bool discard)
+{
+	if (mddev->pers->bitmap_sector)
+		mddev->pers->bitmap_sector(mddev, offset, sectors);
+}
+
 static void bitmap_end_write(struct mddev *mddev, sector_t offset,
 			     unsigned long sectors)
 {
@@ -2580,6 +2589,30 @@ static int bitmap_resize(struct mddev *mddev, sector_t blocks, int chunksize)
 	return __bitmap_resize(bitmap, blocks, chunksize, false);
 }
 
+static bool bitmap_none_enabled(void *data, bool flush)
+{
+	return false;
+}
+
+static int bitmap_none_create(struct mddev *mddev)
+{
+	return 0;
+}
+
+static int bitmap_none_load(struct mddev *mddev)
+{
+	return 0;
+}
+
+static void bitmap_none_destroy(struct mddev *mddev)
+{
+}
+
+static int bitmap_none_get_stats(void *data, struct md_bitmap_stats *stats)
+{
+	return -ENOENT;
+}
+
 static ssize_t
 location_show(struct mddev *mddev, char *page)
 {
@@ -2598,10 +2631,12 @@ static ssize_t
 location_store(struct mddev *mddev, const char *buf, size_t len)
 {
 	int rv;
+	unsigned int noio_flags;
 
 	rv = mddev_suspend_and_lock(mddev);
 	if (rv)
 		return rv;
+	noio_flags = memalloc_noio_save();
 
 	if (mddev->pers) {
 		if (mddev->recovery || mddev->sync_thread) {
@@ -2618,7 +2653,11 @@ location_store(struct mddev *mddev, const char *buf, size_t len)
 			goto out;
 		}
 
-		bitmap_destroy(mddev);
+		sysfs_unmerge_group(&mddev->kobj, &md_bitmap_internal_group);
+		md_bitmap_destroy_nosysfs(mddev);
+		mddev->bitmap_id = ID_BITMAP_NONE;
+		if (!mddev_set_bitmap_ops_nosysfs(mddev))
+			goto none_err;
 		mddev->bitmap_info.offset = 0;
 		if (mddev->bitmap_info.file) {
 			struct file *f = mddev->bitmap_info.file;
@@ -2654,16 +2693,25 @@ location_store(struct mddev *mddev, const char *buf, size_t len)
 			}
 
 			mddev->bitmap_info.offset = offset;
-			rv = bitmap_create(mddev);
-			if (rv)
-				goto out;
+			md_bitmap_destroy_nosysfs(mddev);
+			mddev->bitmap_id = ID_BITMAP;
+			if (!mddev_set_bitmap_ops_nosysfs(mddev))
+				goto bitmap_err;
 
-			rv = bitmap_load(mddev);
+			rv = md_bitmap_create_nosysfs(mddev);
+			if (rv)
+				goto create_err;
+
+			rv = mddev->bitmap_ops->load(mddev);
 			if (rv) {
 				mddev->bitmap_info.offset = 0;
-				bitmap_destroy(mddev);
-				goto out;
+				goto load_err;
 			}
+
+			rv = sysfs_merge_group(&mddev->kobj,
+					       &md_bitmap_internal_group);
+			if (rv)
+				goto merge_err;
 		}
 	}
 	if (!mddev->external) {
@@ -2675,10 +2723,27 @@ location_store(struct mddev *mddev, const char *buf, size_t len)
 	}
 	rv = 0;
 out:
+	memalloc_noio_restore(noio_flags);
 	mddev_unlock_and_resume(mddev);
 	if (rv)
 		return rv;
 	return len;
+
+merge_err:
+	mddev->bitmap_info.offset = 0;
+load_err:
+	md_bitmap_destroy_nosysfs(mddev);
+create_err:
+	mddev->bitmap_info.offset = 0;
+	mddev->bitmap_id = ID_BITMAP_NONE;
+	if (!mddev_set_bitmap_ops_nosysfs(mddev))
+		rv = -ENOENT;
+	goto out;
+bitmap_err:
+	rv = -ENOENT;
+none_err:
+	mddev->bitmap_info.offset = 0;
+	goto out;
 }
 
 static struct md_sysfs_entry bitmap_location =
@@ -2802,7 +2867,7 @@ backlog_store(struct mddev *mddev, const char *buf, size_t len)
 	if (!has_write_mostly) {
 		pr_warn_ratelimited("%s: can't set backlog, no write mostly device available\n",
 				    mdname(mddev));
-		mddev_unlock(mddev);
+		mddev_unlock_and_resume(mddev);
 		return -EINVAL;
 	}
 
@@ -2955,8 +3020,12 @@ static struct md_sysfs_entry max_backlog_used =
 __ATTR(max_backlog_used, S_IRUGO | S_IWUSR,
        behind_writes_used_show, behind_writes_used_reset);
 
-static struct attribute *md_bitmap_attrs[] = {
+static struct attribute *md_bitmap_common_attrs[] = {
 	&bitmap_location.attr,
+	NULL
+};
+
+static struct attribute *md_bitmap_internal_attrs[] = {
 	&bitmap_space.attr,
 	&bitmap_timeout.attr,
 	&bitmap_backlog.attr,
@@ -2967,9 +3036,41 @@ static struct attribute *md_bitmap_attrs[] = {
 	NULL
 };
 
-static struct attribute_group md_bitmap_group = {
+static struct attribute_group md_bitmap_common_group = {
 	.name = "bitmap",
-	.attrs = md_bitmap_attrs,
+	.attrs = md_bitmap_common_attrs,
+};
+
+static struct attribute_group md_bitmap_internal_group = {
+	.name = "bitmap",
+	.attrs = md_bitmap_internal_attrs,
+};
+
+static const struct attribute_group *bitmap_groups[] = {
+	&md_bitmap_common_group,
+	&md_bitmap_internal_group,
+	NULL,
+};
+
+static const struct attribute_group *bitmap_none_groups[] = {
+	&md_bitmap_common_group,
+	NULL,
+};
+
+static struct bitmap_operations bitmap_none_ops = {
+	.head = {
+		.type	= MD_BITMAP,
+		.id	= ID_BITMAP_NONE,
+		.name	= "none",
+	},
+
+	.enabled		= bitmap_none_enabled,
+	.create			= bitmap_none_create,
+	.load			= bitmap_none_load,
+	.destroy		= bitmap_none_destroy,
+	.get_stats		= bitmap_none_get_stats,
+
+	.groups			= bitmap_none_groups,
 };
 
 static struct bitmap_operations bitmap_ops = {
@@ -2987,6 +3088,7 @@ static struct bitmap_operations bitmap_ops = {
 	.flush			= bitmap_flush,
 	.write_all		= bitmap_write_all,
 	.dirty_bits		= bitmap_dirty_bits,
+	.prepare_range		= bitmap_prepare_range,
 	.unplug			= bitmap_unplug,
 	.daemon_work		= bitmap_daemon_work,
 
@@ -3013,21 +3115,38 @@ static struct bitmap_operations bitmap_ops = {
 	.set_pages		= bitmap_set_pages,
 	.free			= md_bitmap_free,
 
-	.group			= &md_bitmap_group,
+	.groups			= bitmap_groups,
 };
 
 int md_bitmap_init(void)
 {
+	int err;
+
 	md_bitmap_wq = alloc_workqueue("md_bitmap", WQ_MEM_RECLAIM | WQ_UNBOUND,
 				       0);
 	if (!md_bitmap_wq)
 		return -ENOMEM;
 
-	return register_md_submodule(&bitmap_ops.head);
+	err = register_md_submodule(&bitmap_none_ops.head);
+	if (err)
+		goto err_wq;
+
+	err = register_md_submodule(&bitmap_ops.head);
+	if (err)
+		goto err_none;
+
+	return 0;
+
+err_none:
+	unregister_md_submodule(&bitmap_none_ops.head);
+err_wq:
+	destroy_workqueue(md_bitmap_wq);
+	return err;
 }
 
 void md_bitmap_exit(void)
 {
-	destroy_workqueue(md_bitmap_wq);
 	unregister_md_submodule(&bitmap_ops.head);
+	unregister_md_submodule(&bitmap_none_ops.head);
+	destroy_workqueue(md_bitmap_wq);
 }

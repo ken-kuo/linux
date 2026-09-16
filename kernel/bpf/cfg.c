@@ -5,6 +5,8 @@
 #include <linux/filter.h>
 #include <linux/sort.h>
 
+#include "diagnostics.h"
+
 #define verbose(env, fmt, args...) bpf_verifier_log_write(env, fmt, ##args)
 
 /* non-recursive DFS pseudo code
@@ -47,7 +49,6 @@ enum {
 	BRANCH = 2,
 };
 
-
 static void mark_subprog_changes_pkt_data(struct bpf_verifier_env *env, int off)
 {
 	struct bpf_subprog_info *subprog;
@@ -64,11 +65,19 @@ static void mark_subprog_might_sleep(struct bpf_verifier_env *env, int off)
 	subprog->might_sleep = true;
 }
 
+static void mark_subprog_might_throw(struct bpf_verifier_env *env, int off)
+{
+	struct bpf_subprog_info *subprog;
+
+	subprog = bpf_find_containing_subprog(env, off);
+	subprog->might_throw = true;
+}
+
 /* 't' is an index of a call-site.
  * 'w' is a callee entry point.
  * Eventually this function would be called when env->cfg.insn_state[w] == EXPLORED.
  * Rely on DFS traversal order and absence of recursive calls to guarantee that
- * callee's change_pkt_data marks would be correct at that moment.
+ * callee's effect marks would be correct at that moment.
  */
 static void merge_callee_effects(struct bpf_verifier_env *env, int t, int w)
 {
@@ -78,6 +87,7 @@ static void merge_callee_effects(struct bpf_verifier_env *env, int t, int w)
 	callee = bpf_find_containing_subprog(env, w);
 	caller->changes_pkt_data |= callee->changes_pkt_data;
 	caller->might_sleep |= callee->might_sleep;
+	caller->might_throw |= callee->might_throw;
 }
 
 enum {
@@ -104,6 +114,10 @@ static int push_insn(int t, int w, int e, struct bpf_verifier_env *env)
 	if (w < 0 || w >= env->prog->len) {
 		verbose_linfo(env, t, "%d: ", t);
 		verbose(env, "jump out of range from insn %d to %d\n", t, w);
+		bpf_diag_program_structure(
+			env, t, "jump out of range", "Keep branch targets inside the program.",
+			"Instruction %d jumps to instruction %d, but the program only contains instructions 0 through %d.",
+			t, w, env->prog->len - 1);
 		return -EINVAL;
 	}
 
@@ -111,6 +125,7 @@ static int push_insn(int t, int w, int e, struct bpf_verifier_env *env)
 		/* mark branch target for state pruning */
 		mark_prune_point(env, w);
 		mark_jmp_point(env, w);
+		mark_jump_target(env, w);
 	}
 
 	if (insn_state[w] == 0) {
@@ -127,6 +142,11 @@ static int push_insn(int t, int w, int e, struct bpf_verifier_env *env)
 		verbose_linfo(env, t, "%d: ", t);
 		verbose_linfo(env, w, "%d: ", w);
 		verbose(env, "back-edge from insn %d to %d\n", t, w);
+		bpf_diag_program_structure(
+			env, t, "back-edge is not allowed",
+			"Load with privileges that allow this back-edge, or rewrite the control flow so it does not branch backward.",
+			"Instruction %d branches back to instruction %d. This program is being rejected without the privilege needed for this back-edge.",
+			t, w);
 		return -EINVAL;
 	} else if (insn_state[w] == EXPLORED) {
 		/* forward- or cross-edge */
@@ -307,6 +327,11 @@ static struct bpf_iarray *jt_from_subprog(struct bpf_verifier_env *env,
 
 	if (!jt) {
 		verbose(env, "no jump tables found for subprog starting at %u\n", subprog_start);
+		bpf_diag_program_structure(
+			env, subprog_start, "missing jump table",
+			"Make sure subprograms containing gotox instructions are accompanied by jump tables referencing these subprograms.",
+			"No jump table was found for the subprogram that starts at instruction %u.",
+			subprog_start);
 		return ERR_PTR(-EINVAL);
 	}
 
@@ -334,6 +359,11 @@ create_jt(int t, struct bpf_verifier_env *env)
 		if (jt->items[i] < subprog_start || jt->items[i] >= subprog_end) {
 			verbose(env, "jump table for insn %d points outside of the subprog [%u,%u]\n",
 					t, subprog_start, subprog_end);
+			bpf_diag_program_structure(
+				env, t, "jump table target out of range",
+				"Keep every jump-table target inside the same subprogram.",
+				"The jump table for instruction %d points outside subprogram range [%u,%u).",
+				t, subprog_start, subprog_end);
 			kvfree(jt);
 			return ERR_PTR(-EINVAL);
 		}
@@ -365,10 +395,16 @@ static int visit_gotox_insn(int t, struct bpf_verifier_env *env)
 		w = jt->items[i];
 		if (w < 0 || w >= env->prog->len) {
 			verbose(env, "indirect jump out of range from insn %d to %d\n", t, w);
+			bpf_diag_program_structure(
+				env, t, "indirect jump out of range",
+				"Keep indirect jump targets inside the program.",
+				"Instruction %d can jump indirectly to instruction %d, but the program only contains instructions 0 through %d.",
+				t, w, env->prog->len - 1);
 			return -EINVAL;
 		}
 
 		mark_jmp_point(env, w);
+		mark_jump_target(env, w);
 
 		/* EXPLORED || DISCOVERED */
 		if (insn_state[w])
@@ -482,7 +518,7 @@ static int visit_insn(int t, struct bpf_verifier_env *env)
 					return ret;
 			}
 		} else if (insn->src_reg == BPF_PSEUDO_KFUNC_CALL) {
-			struct bpf_kfunc_call_arg_meta meta;
+			struct bpf_call_arg_meta meta;
 
 			ret = bpf_fetch_kfunc_arg_meta(env, insn->imm, insn->off, &meta);
 			if (ret == 0 && bpf_is_iter_next_kfunc(&meta)) {
@@ -509,6 +545,8 @@ static int visit_insn(int t, struct bpf_verifier_env *env)
 				mark_subprog_might_sleep(env, t);
 			if (ret == 0 && bpf_is_kfunc_pkt_changing(&meta))
 				mark_subprog_changes_pkt_data(env, t);
+			if (ret == 0 && bpf_is_throw_kfunc(insn))
+				mark_subprog_might_throw(env, t);
 		}
 		return visit_func_call_insn(t, insns, env, insn->src_reg == BPF_PSEUDO_CALL);
 
@@ -528,6 +566,7 @@ static int visit_insn(int t, struct bpf_verifier_env *env)
 
 		mark_prune_point(env, t + off + 1);
 		mark_jmp_point(env, t + off + 1);
+		mark_jump_target(env, t + off + 1);
 
 		return ret;
 
@@ -613,12 +652,21 @@ walk_cfg:
 
 		if (insn_state[i] != EXPLORED) {
 			verbose(env, "unreachable insn %d\n", i);
+			bpf_diag_program_structure(
+				env, i, "unreachable instruction",
+				"Remove the unreachable instruction or add valid control flow that reaches it.",
+				"Instruction %d is not reachable from the program entry point.", i);
 			ret = -EINVAL;
 			goto err_free;
 		}
 		if (bpf_is_ldimm64(insn)) {
 			if (insn_state[i + 1] != 0) {
 				verbose(env, "jump into the middle of ldimm64 insn %d\n", i);
+				bpf_diag_program_structure(
+					env, i, "jump into ldimm64 immediate",
+					"Target the first instruction of the ldimm64 pair, or restructure the jump target.",
+					"Control flow reaches the second half of the ldimm64 instruction pair that starts at instruction %d.",
+					i);
 				ret = -EINVAL;
 				goto err_free;
 			}

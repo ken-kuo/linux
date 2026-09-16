@@ -61,6 +61,9 @@
 	[smu_feature] = {1, (aldebaran_feature)}
 
 #define FEATURE_MASK(feature) (1ULL << feature)
+
+static int aldebaran_init_ppt_limits(struct smu_context *smu);
+
 static const struct smu_feature_bits aldebaran_dpm_features = {
 	.bits = {
 		SMU_FEATURE_BIT_INIT(FEATURE_DATA_CALCULATIONS),
@@ -425,6 +428,7 @@ static int aldebaran_set_default_dpm_table(struct smu_context *smu)
 		dpm_table->dpm_levels[0].enabled = true;
 		dpm_table->dpm_levels[1].value = pptable->GfxclkFmax;
 		dpm_table->dpm_levels[1].enabled = true;
+		dpm_table->flags |= SMU_DPM_TABLE_FINE_GRAINED;
 	} else {
 		dpm_table->count = 1;
 		dpm_table->dpm_levels[0].value = smu->smu_table.boot_values.gfxclk / 100;
@@ -536,7 +540,7 @@ static int aldebaran_setup_pptable(struct smu_context *smu)
 	if (ret)
 		return ret;
 
-	return ret;
+	return aldebaran_init_ppt_limits(smu);
 }
 
 static bool aldebaran_is_primary(struct smu_context *smu)
@@ -676,7 +680,8 @@ static int aldebaran_get_smu_metrics_data(struct smu_context *smu,
 	case METRICS_AVERAGE_SOCKETPOWER:
 		/* Valid power data is available only from primary die */
 		if (aldebaran_is_primary(smu))
-			*value = metrics->AverageSocketPower << 8;
+			*value = metrics->AverageSocketPower *
+				 MILLIWATT_PER_WATT;
 		else
 			ret = -EOPNOTSUPP;
 		break;
@@ -1109,28 +1114,17 @@ static int aldebaran_read_sensor(struct smu_context *smu,
 	return ret;
 }
 
-static int aldebaran_get_power_limit(struct smu_context *smu,
-						uint32_t *current_power_limit,
-						uint32_t *default_power_limit,
-						uint32_t *max_power_limit,
-						uint32_t *min_power_limit)
+static int aldebaran_get_ppt_limit(struct smu_context *smu,
+				   enum smu_ppt_limit_type limit_type,
+				   uint32_t *ppt_limit)
 {
-	PPTable_t *pptable = smu->smu_table.driver_pptable;
-	uint32_t power_limit = 0;
 	int ret;
 
-	if (!smu_cmn_feature_is_enabled(smu, SMU_FEATURE_PPT_BIT)) {
-		if (current_power_limit)
-			*current_power_limit = 0;
-		if (default_power_limit)
-			*default_power_limit = 0;
-		if (max_power_limit)
-			*max_power_limit = 0;
-		if (min_power_limit)
-			*min_power_limit = 0;
-		dev_warn(smu->adev->dev,
-			"PPT feature is not enabled, power values can't be fetched.");
+	if (limit_type != SMU_PPT_LIMIT_PPT0)
+		return -EOPNOTSUPP;
 
+	if (!smu_cmn_feature_is_enabled(smu, SMU_FEATURE_PPT_BIT)) {
+		*ppt_limit = 0;
 		return 0;
 	}
 
@@ -1139,42 +1133,47 @@ static int aldebaran_get_power_limit(struct smu_context *smu,
 	 */
 	if (aldebaran_is_primary(smu)) {
 		ret = smu_cmn_send_smc_msg(smu, SMU_MSG_GetPptLimit,
-					   &power_limit);
-
-		if (ret) {
-			/* the last hope to figure out the ppt limit */
-			if (!pptable) {
-				dev_err(smu->adev->dev,
-					"Cannot get PPT limit due to pptable missing!");
-				return -EINVAL;
-			}
-			power_limit = pptable->PptLimit;
-		}
+					   ppt_limit);
+		if (ret)
+			return ret;
+	} else {
+		*ppt_limit = 0;
 	}
-
-	if (current_power_limit)
-		*current_power_limit = power_limit;
-	if (default_power_limit)
-		*default_power_limit = power_limit;
-
-	if (max_power_limit) {
-		if (pptable)
-			*max_power_limit = pptable->PptLimit;
-	}
-
-	if (min_power_limit)
-		*min_power_limit = 0;
 
 	return 0;
 }
 
-static int aldebaran_set_power_limit(struct smu_context *smu,
-				     enum smu_ppt_limit_type limit_type,
-				     uint32_t limit)
+static int aldebaran_init_ppt_limits(struct smu_context *smu)
 {
-	/* Power limit can be set only through primary die */
+	PPTable_t *pptable = smu->smu_table.driver_pptable;
+	int i;
+
+	if (!pptable)
+		return -EINVAL;
+
+	for (i = SMU_POWER_SOURCE_AC; i < SMU_POWER_SOURCE_COUNT; i++) {
+		smu->ppt_limits.range[i][SMU_PPT_LIMIT_PPT0].default_value =
+			pptable->PptLimit;
+		smu->ppt_limits.range[i][SMU_PPT_LIMIT_PPT0].min = 0;
+		smu->ppt_limits.range[i][SMU_PPT_LIMIT_PPT0].max =
+			pptable->PptLimit;
+		smu->ppt_limits.range[i][SMU_PPT_LIMIT_PPT0].od_min = 0;
+		smu->ppt_limits.range[i][SMU_PPT_LIMIT_PPT0].od_max =
+			pptable->PptLimit;
+	}
+
+	smu->ppt_limits.supported_mask |= BIT(SMU_PPT_LIMIT_PPT0);
+
+	return 0;
+}
+
+static int aldebaran_set_ppt_limit(struct smu_context *smu,
+				   enum smu_ppt_limit_type limit_type,
+				   uint32_t limit)
+{
+	/* PPT limit can be set only through primary die */
 	if (aldebaran_is_primary(smu))
-		return smu_v13_0_set_power_limit(smu, limit_type, limit);
+		return smu_v13_0_set_ppt_limit(smu, limit_type, limit);
 
 	return -EINVAL;
 }
@@ -1846,6 +1845,7 @@ static int aldebaran_mode2_reset(struct smu_context *smu)
 		amdgpu_device_load_pci_state(adev->pdev);
 
 		dev_dbg(adev->dev, "wait for reset ack\n");
+		ret = -ETIME;
 		while (ret == -ETIME && timeout)  {
 			ret = smu_msg_wait_response(ctl, 0);
 			/* Wait a bit more time for getting ACK */
@@ -1855,7 +1855,7 @@ static int aldebaran_mode2_reset(struct smu_context *smu)
 				continue;
 			}
 
-			if (ret != 1) {
+			if (ret != 0) {
 				dev_err(adev->dev, "failed to send mode2 message \tparam: 0x%08x response %#x\n",
 						SMU_RESET_MODE_2, ret);
 				goto out;
@@ -1865,10 +1865,9 @@ static int aldebaran_mode2_reset(struct smu_context *smu)
 	} else {
 		dev_err(adev->dev, "smu fw 0x%x does not support MSG_GfxDeviceDriverReset MSG\n",
 				smu->smc_fw_version);
+		ret = -EOPNOTSUPP;
 	}
 
-	if (ret == 1)
-		ret = 0;
 out:
 	mutex_unlock(&ctl->lock);
 
@@ -1974,7 +1973,7 @@ static const struct pptable_funcs aldebaran_ppt_funcs = {
 	.force_clk_levels = aldebaran_force_clk_levels,
 	.read_sensor = aldebaran_read_sensor,
 	.set_performance_level = aldebaran_set_performance_level,
-	.get_power_limit = aldebaran_get_power_limit,
+	.get_ppt_limit = aldebaran_get_ppt_limit,
 	.is_dpm_running = aldebaran_is_dpm_running,
 	.get_unique_id = aldebaran_get_unique_id,
 	.init_microcode = smu_v13_0_init_microcode,
@@ -1997,13 +1996,12 @@ static const struct pptable_funcs aldebaran_ppt_funcs = {
 	.get_enabled_mask = smu_cmn_get_enabled_mask,
 	.feature_is_enabled = smu_cmn_feature_is_enabled,
 	.disable_all_features_with_exception = smu_cmn_disable_all_features_with_exception,
-	.set_power_limit = aldebaran_set_power_limit,
+	.set_ppt_limit = aldebaran_set_ppt_limit,
 	.init_max_sustainable_clocks = smu_v13_0_init_max_sustainable_clocks,
 	.enable_thermal_alert = smu_v13_0_enable_thermal_alert,
 	.disable_thermal_alert = smu_v13_0_disable_thermal_alert,
 	.set_xgmi_pstate = smu_v13_0_set_xgmi_pstate,
 	.register_irq_handler = smu_v13_0_register_irq_handler,
-	.set_azalia_d3_pme = smu_v13_0_set_azalia_d3_pme,
 	.get_max_sustainable_clocks_by_dc = smu_v13_0_get_max_sustainable_clocks_by_dc,
 	.get_bamaco_support = aldebaran_get_bamaco_support,
 	.get_dpm_ultimate_freq = aldebaran_get_dpm_ultimate_freq,

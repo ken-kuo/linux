@@ -49,9 +49,11 @@
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_cache.h>
 #include <rdma/ib_addr.h>
+#include <rdma/ib_umem.h>
 #include <rdma/rw.h>
 #include <rdma/lag.h>
 
+#include "rdma_core.h"
 #include "core_priv.h"
 #include <trace/events/rdma_core.h>
 
@@ -390,6 +392,7 @@ int ib_dealloc_pd_user(struct ib_pd *pd, struct ib_udata *udata)
 {
 	int ret;
 
+	rdma_restrack_begin_del(&pd->res);
 	if (pd->__internal_mr) {
 		ret = pd->device->ops.dereg_mr(pd->__internal_mr, NULL);
 		WARN_ON(ret);
@@ -397,10 +400,12 @@ int ib_dealloc_pd_user(struct ib_pd *pd, struct ib_udata *udata)
 	}
 
 	ret = pd->device->ops.dealloc_pd(pd, udata);
-	if (ret)
+	if (ret) {
+		rdma_restrack_abort_del(&pd->res);
 		return ret;
+	}
 
-	rdma_restrack_del(&pd->res);
+	rdma_restrack_commit_del(&pd->res);
 	kfree(pd);
 	return ret;
 }
@@ -1138,16 +1143,20 @@ int ib_destroy_srq_user(struct ib_srq *srq, struct ib_udata *udata)
 	if (atomic_read(&srq->usecnt))
 		return -EBUSY;
 
+	rdma_restrack_begin_del(&srq->res);
+
 	ret = srq->device->ops.destroy_srq(srq, udata);
-	if (ret)
+	if (ret) {
+		rdma_restrack_abort_del(&srq->res);
 		return ret;
+	}
 
 	atomic_dec(&srq->pd->usecnt);
 	if (srq->srq_type == IB_SRQT_XRC && srq->ext.xrc.xrcd)
 		atomic_dec(&srq->ext.xrc.xrcd->usecnt);
 	if (ib_srq_has_cq(srq->srq_type))
 		atomic_dec(&srq->ext.cq->usecnt);
-	rdma_restrack_del(&srq->res);
+	rdma_restrack_commit_del(&srq->res);
 	kfree(srq);
 
 	return ret;
@@ -1264,10 +1273,9 @@ static struct ib_qp *create_xrc_qp_user(struct ib_qp *qp,
 
 static struct ib_qp *create_qp(struct ib_device *dev, struct ib_pd *pd,
 			       struct ib_qp_init_attr *attr,
-			       struct ib_udata *udata,
+			       struct uverbs_attr_bundle *uattrs,
 			       struct ib_uqp_object *uobj, const char *caller)
 {
-	struct ib_udata dummy = {};
 	struct ib_qp *qp;
 	int ret;
 
@@ -1292,6 +1300,7 @@ static struct ib_qp *create_qp(struct ib_device *dev, struct ib_pd *pd,
 	qp->qp_context = attr->qp_context;
 
 	spin_lock_init(&qp->mr_lock);
+	xa_init(&qp->comp_cntrs);
 	INIT_LIST_HEAD(&qp->rdma_mrs);
 	INIT_LIST_HEAD(&qp->sig_mrs);
 	init_completion(&qp->srq_completion);
@@ -1300,9 +1309,10 @@ static struct ib_qp *create_qp(struct ib_device *dev, struct ib_pd *pd,
 	qp->recv_cq = attr->recv_cq;
 
 	rdma_restrack_new(&qp->res, RDMA_RESTRACK_QP);
-	WARN_ONCE(!udata && !caller, "Missing kernel QP owner");
-	rdma_restrack_set_name(&qp->res, udata ? NULL : caller);
-	ret = dev->ops.create_qp(qp, attr, udata);
+	WARN_ONCE(!uattrs && !caller, "Missing kernel QP owner");
+	rdma_restrack_set_name(&qp->res, uattrs ? NULL : caller);
+	ret = dev->ops.create_qp(qp, attr,
+				 uattrs ? &uattrs->driver_udata : NULL);
 	if (ret)
 		goto err_create;
 
@@ -1321,9 +1331,11 @@ static struct ib_qp *create_qp(struct ib_device *dev, struct ib_pd *pd,
 	return qp;
 
 err_security:
-	qp->device->ops.destroy_qp(qp, udata ? &dummy : NULL);
+	qp->device->ops.destroy_qp(
+		qp, uattrs ? uverbs_get_cleared_udata(uattrs) : NULL);
 err_create:
 	rdma_restrack_put(&qp->res);
+	xa_destroy(&qp->comp_cntrs);
 	kfree(qp);
 	return ERR_PTR(ret);
 
@@ -1337,13 +1349,13 @@ err_create:
  * @attr: A list of initial attributes required to create the
  *   QP.  If QP creation succeeds, then the attributes are updated to
  *   the actual capabilities of the created QP.
- * @udata: User data
+ * @uattrs: User ioctl attributes and udata
  * @uobj: uverbs obect
  * @caller: caller's build-time module name
  */
 struct ib_qp *ib_create_qp_user(struct ib_device *dev, struct ib_pd *pd,
 				struct ib_qp_init_attr *attr,
-				struct ib_udata *udata,
+				struct uverbs_attr_bundle *uattrs,
 				struct ib_uqp_object *uobj, const char *caller)
 {
 	struct ib_qp *qp, *xrc_qp;
@@ -1351,7 +1363,7 @@ struct ib_qp *ib_create_qp_user(struct ib_device *dev, struct ib_pd *pd,
 	if (attr->qp_type == IB_QPT_XRC_TGT)
 		qp = create_qp(dev, pd, attr, NULL, NULL, caller);
 	else
-		qp = create_qp(dev, pd, attr, udata, uobj, NULL);
+		qp = create_qp(dev, pd, attr, uattrs, uobj, NULL);
 	if (attr->qp_type != IB_QPT_XRC_TGT || IS_ERR(qp))
 		return qp;
 
@@ -1537,8 +1549,7 @@ static const struct {
 						 IB_QP_PKEY_INDEX),
 				 [IB_QPT_RC]  = (IB_QP_ALT_PATH			|
 						 IB_QP_ACCESS_FLAGS		|
-						 IB_QP_PKEY_INDEX		|
-						 IB_QP_RATE_LIMIT),
+						 IB_QP_PKEY_INDEX),
 				 [IB_QPT_XRC_INI] = (IB_QP_ALT_PATH		|
 						 IB_QP_ACCESS_FLAGS		|
 						 IB_QP_PKEY_INDEX),
@@ -1586,8 +1597,7 @@ static const struct {
 						 IB_QP_ALT_PATH			|
 						 IB_QP_ACCESS_FLAGS		|
 						 IB_QP_MIN_RNR_TIMER		|
-						 IB_QP_PATH_MIG_STATE		|
-						 IB_QP_RATE_LIMIT),
+						 IB_QP_PATH_MIG_STATE),
 				 [IB_QPT_XRC_INI] = (IB_QP_CUR_STATE		|
 						 IB_QP_ALT_PATH			|
 						 IB_QP_ACCESS_FLAGS		|
@@ -1601,7 +1611,6 @@ static const struct {
 						 IB_QP_QKEY),
 				 [IB_QPT_GSI] = (IB_QP_CUR_STATE		|
 						 IB_QP_QKEY),
-				 [IB_QPT_RAW_PACKET] = IB_QP_RATE_LIMIT,
 			 }
 		}
 	},
@@ -1621,8 +1630,7 @@ static const struct {
 						IB_QP_ACCESS_FLAGS		|
 						IB_QP_ALT_PATH			|
 						IB_QP_PATH_MIG_STATE		|
-						IB_QP_MIN_RNR_TIMER		|
-						IB_QP_RATE_LIMIT),
+						IB_QP_MIN_RNR_TIMER),
 				[IB_QPT_XRC_INI] = (IB_QP_CUR_STATE		|
 						IB_QP_ACCESS_FLAGS		|
 						IB_QP_ALT_PATH			|
@@ -1636,7 +1644,6 @@ static const struct {
 						IB_QP_QKEY),
 				[IB_QPT_GSI] = (IB_QP_CUR_STATE			|
 						IB_QP_QKEY),
-				[IB_QPT_RAW_PACKET] = IB_QP_RATE_LIMIT,
 			}
 		},
 		[IB_QPS_SQD]   = {
@@ -1774,7 +1781,7 @@ bool ib_modify_qp_is_ok(enum ib_qp_state cur_state, enum ib_qp_state next_state,
 	if ((mask & req_param) != req_param)
 		return false;
 
-	if (mask & ~(req_param | opt_param | IB_QP_STATE))
+	if (mask & ~(req_param | opt_param | IB_QP_STATE | IB_QP_RATE_LIMIT))
 		return false;
 
 	return true;
@@ -2051,11 +2058,13 @@ int ib_get_eth_speed(struct ib_device *dev, u32 port_num, u16 *speed, u8 *width)
 		return -ENODEV;
 
 	rtnl_lock();
+	if (READ_ONCE(netdev->reg_state) != NETREG_REGISTERED) {
+		dev_put(netdev);
+		rtnl_unlock();
+		return -ENODEV;
+	}
+
 	rc = __ethtool_get_link_ksettings(netdev, &lksettings);
-	rtnl_unlock();
-
-	dev_put(netdev);
-
 	if (!rc && lksettings.base.speed != (u32)SPEED_UNKNOWN) {
 		netdev_speed = lksettings.base.speed;
 	} else {
@@ -2064,6 +2073,8 @@ int ib_get_eth_speed(struct ib_device *dev, u32 port_num, u16 *speed, u8 *width)
 			pr_warn("%s speed is unknown, defaulting to %u\n",
 				netdev->name, netdev_speed);
 	}
+	dev_put(netdev);
+	rtnl_unlock();
 
 	ib_get_width_and_speed(netdev_speed, lksettings.lanes,
 			       speed, width);
@@ -2146,6 +2157,8 @@ int ib_destroy_qp_user(struct ib_qp *qp, struct ib_udata *udata)
 	const struct ib_gid_attr *alt_path_sgid_attr = qp->alt_path_sgid_attr;
 	const struct ib_gid_attr *av_sgid_attr = qp->av_sgid_attr;
 	struct ib_qp_security *sec;
+	struct ib_comp_cntr *cc;
+	unsigned long index;
 	int ret;
 
 	WARN_ON_ONCE(qp->mrs_used > 0);
@@ -2155,6 +2168,8 @@ int ib_destroy_qp_user(struct ib_qp *qp, struct ib_udata *udata)
 
 	if (qp->real_qp != qp)
 		return __ib_destroy_shared_qp(qp);
+
+	rdma_restrack_begin_del(&qp->res);
 
 	sec  = qp->qp_sec;
 	if (sec)
@@ -2168,6 +2183,7 @@ int ib_destroy_qp_user(struct ib_qp *qp, struct ib_udata *udata)
 	if (ret) {
 		if (sec)
 			ib_destroy_qp_security_abort(sec);
+		rdma_restrack_abort_del(&qp->res);
 		return ret;
 	}
 
@@ -2176,11 +2192,15 @@ int ib_destroy_qp_user(struct ib_qp *qp, struct ib_udata *udata)
 	if (av_sgid_attr)
 		rdma_put_gid_attr(av_sgid_attr);
 
+	xa_for_each(&qp->comp_cntrs, index, cc)
+		atomic_dec(&cc->usecnt);
+	xa_destroy(&qp->comp_cntrs);
+
 	ib_qp_usecnt_dec(qp);
 	if (sec)
 		ib_destroy_qp_security_end(sec);
 
-	rdma_restrack_del(&qp->res);
+	rdma_restrack_commit_del(&qp->res);
 	kfree(qp);
 	return ret;
 }
@@ -2198,12 +2218,14 @@ struct ib_cq *__ib_create_cq(struct ib_device *device,
 	struct ib_cq *cq;
 	int ret;
 
+	if (WARN_ON_ONCE(!cq_attr->cqe))
+		return ERR_PTR(-EINVAL);
+
 	cq = rdma_zalloc_drv_obj(device, ib_cq);
 	if (!cq)
 		return ERR_PTR(-ENOMEM);
 
 	cq->device = device;
-	cq->uobject = NULL;
 	cq->comp_handler = comp_handler;
 	cq->event_handler = event_handler;
 	cq->cq_context = cq_context;
@@ -2218,7 +2240,6 @@ struct ib_cq *__ib_create_cq(struct ib_device *device,
 		kfree(cq);
 		return ERR_PTR(ret);
 	}
-
 	rdma_restrack_add(&cq->res);
 	return cq;
 }
@@ -2245,25 +2266,19 @@ int ib_destroy_cq_user(struct ib_cq *cq, struct ib_udata *udata)
 	if (atomic_read(&cq->usecnt))
 		return -EBUSY;
 
-	ret = cq->device->ops.destroy_cq(cq, udata);
-	if (ret)
-		return ret;
+	rdma_restrack_begin_del(&cq->res);
 
-	rdma_restrack_del(&cq->res);
+	ret = cq->device->ops.destroy_cq(cq, udata);
+	if (ret) {
+		rdma_restrack_abort_del(&cq->res);
+		return ret;
+	}
+
+	rdma_restrack_commit_del(&cq->res);
 	kfree(cq);
 	return ret;
 }
 EXPORT_SYMBOL(ib_destroy_cq_user);
-
-int ib_resize_cq(struct ib_cq *cq, int cqe)
-{
-	if (cq->shared)
-		return -EOPNOTSUPP;
-
-	return cq->device->ops.resize_cq ?
-		cq->device->ops.resize_cq(cq, cqe, NULL) : -EOPNOTSUPP;
-}
-EXPORT_SYMBOL(ib_resize_cq);
 
 /* Memory regions */
 
@@ -3153,44 +3168,6 @@ int rdma_init_netdev(struct ib_device *device, u32 port_num,
 					     netdev, params.param);
 }
 EXPORT_SYMBOL(rdma_init_netdev);
-
-void __rdma_block_iter_start(struct ib_block_iter *biter,
-			     struct scatterlist *sglist, unsigned int nents,
-			     unsigned long pgsz)
-{
-	memset(biter, 0, sizeof(struct ib_block_iter));
-	biter->__sg = sglist;
-	biter->__sg_nents = nents;
-
-	/* Driver provides best block size to use */
-	biter->__pg_bit = __fls(pgsz);
-}
-EXPORT_SYMBOL(__rdma_block_iter_start);
-
-bool __rdma_block_iter_next(struct ib_block_iter *biter)
-{
-	unsigned int block_offset;
-	unsigned int delta;
-
-	if (!biter->__sg_nents || !biter->__sg)
-		return false;
-
-	biter->__dma_addr = sg_dma_address(biter->__sg) + biter->__sg_advance;
-	block_offset = biter->__dma_addr & (BIT_ULL(biter->__pg_bit) - 1);
-	delta = BIT_ULL(biter->__pg_bit) - block_offset;
-
-	while (biter->__sg_nents && biter->__sg &&
-	       sg_dma_len(biter->__sg) - biter->__sg_advance <= delta) {
-		delta -= sg_dma_len(biter->__sg) - biter->__sg_advance;
-		biter->__sg_advance = 0;
-		biter->__sg = sg_next(biter->__sg);
-		biter->__sg_nents--;
-	}
-	biter->__sg_advance += delta;
-
-	return true;
-}
-EXPORT_SYMBOL(__rdma_block_iter_next);
 
 /**
  * rdma_alloc_hw_stats_struct - Helper function to allocate dynamic struct

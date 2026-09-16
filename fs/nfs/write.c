@@ -739,17 +739,18 @@ static void nfs_inode_remove_request(struct nfs_page *req)
 	nfs_page_group_lock(req);
 	if (nfs_page_group_sync_on_bit_locked(req, PG_REMOVE)) {
 		struct folio *folio = nfs_page_to_folio(req->wb_head);
-		struct address_space *mapping = folio->mapping;
 
-		spin_lock(&mapping->i_private_lock);
 		if (likely(folio)) {
+			struct address_space *mapping = folio->mapping;
+
+			spin_lock(&mapping->i_private_lock);
 			folio->private = NULL;
 			folio_clear_private(folio);
 			clear_bit(PG_MAPPED, &req->wb_head->wb_flags);
-		}
-		spin_unlock(&mapping->i_private_lock);
+			spin_unlock(&mapping->i_private_lock);
 
-		folio_end_dropbehind(folio);
+			folio_end_dropbehind(folio);
+		}
 	}
 	nfs_page_group_unlock(req);
 
@@ -807,7 +808,7 @@ nfs_request_add_commit_list(struct nfs_page *req, struct nfs_commit_info *cinfo)
 	mutex_lock(&NFS_I(cinfo->inode)->commit_mutex);
 	nfs_request_add_commit_list_locked(req, &cinfo->mds->list, cinfo);
 	mutex_unlock(&NFS_I(cinfo->inode)->commit_mutex);
-	nfs_folio_mark_unstable(nfs_page_to_folio(req), cinfo);
+	nfs_folio_mark_unstable(req, cinfo);
 }
 EXPORT_SYMBOL_GPL(nfs_request_add_commit_list);
 
@@ -866,10 +867,12 @@ nfs_mark_request_commit(struct nfs_page *req, struct pnfs_layout_segment *lseg,
 	nfs_request_add_commit_list(req, cinfo);
 }
 
-static void nfs_folio_clear_commit(struct folio *folio)
+static void nfs_folio_clear_commit(struct nfs_page *req)
 {
+	struct folio *folio = nfs_page_to_folio(req);
+
 	if (folio) {
-		long nr = folio_nr_pages(folio);
+		long nr = DIV_ROUND_UP(req->wb_bytes, PAGE_SIZE);
 
 		node_stat_mod_folio(folio, NR_WRITEBACK, -nr);
 		bdi_wb_stat_mod(folio->mapping->host, WB_WRITEBACK, -nr);
@@ -889,7 +892,7 @@ static void nfs_clear_request_commit(struct nfs_commit_info *cinfo,
 			nfs_request_remove_commit_list(req, cinfo);
 		}
 		mutex_unlock(&NFS_I(inode)->commit_mutex);
-		nfs_folio_clear_commit(nfs_page_to_folio(req));
+		nfs_folio_clear_commit(req);
 	}
 }
 
@@ -926,9 +929,13 @@ static void nfs_write_completion(struct nfs_pgio_header *hdr)
 			goto remove_req;
 		}
 		if (nfs_write_need_commit(hdr)) {
+			struct nfs_open_context *ctx =
+				req->wb_lock_context->open_context;
+
 			/* Reset wb_nio, since the write was successful. */
 			req->wb_nio = 0;
 			memcpy(&req->wb_verf, &hdr->verf.verifier, sizeof(req->wb_verf));
+			clear_bit(NFS_CONTEXT_WRITE_SYNC, &ctx->flags);
 			nfs_mark_request_commit(req, hdr->lseg, &cinfo,
 				hdr->ds_commit_idx);
 			goto next;
@@ -1550,9 +1557,12 @@ static void nfs_writeback_result(struct rpc_task *task,
 	struct nfs_pgio_args	*argp = &hdr->args;
 	struct nfs_pgio_res	*resp = &hdr->res;
 
-	if (resp->count < argp->count) {
+	if (resp->count < argp->count && !list_empty(&hdr->pages)) {
 		static unsigned long    complain;
+		struct nfs_open_context *ctx =
+			hdr->req->wb_lock_context->open_context;
 
+		set_bit(NFS_CONTEXT_WRITE_SYNC, &ctx->flags);
 		/* This a short write! */
 		nfs_inc_stats(hdr->inode, NFSIOS_SHORTWRITE);
 
@@ -1655,7 +1665,7 @@ int nfs_initiate_commit(struct rpc_clnt *clnt, struct nfs_commit_data *data,
 	dprintk("NFS: initiated commit call\n");
 
 	if (localio)
-		return nfs_local_commit(localio, data, call_ops, how);
+		return nfs_local_commit(localio, data, call_ops);
 
 	task = rpc_run_task(&task_setup_data);
 	if (IS_ERR(task))
@@ -1734,7 +1744,7 @@ void nfs_retry_commit(struct list_head *page_list,
 		req = nfs_list_entry(page_list->next);
 		nfs_list_remove_request(req);
 		nfs_mark_request_commit(req, lseg, cinfo, ds_commit_idx);
-		nfs_folio_clear_commit(nfs_page_to_folio(req));
+		nfs_folio_clear_commit(req);
 		nfs_unlock_and_release_request(req);
 	}
 }
@@ -1806,11 +1816,11 @@ static void nfs_commit_release_pages(struct nfs_commit_data *data)
 		req = nfs_list_entry(data->pages.next);
 		nfs_list_remove_request(req);
 		folio = nfs_page_to_folio(req);
-		nfs_folio_clear_commit(folio);
+		nfs_folio_clear_commit(req);
 
 		dprintk("NFS:       commit (%s/%llu %d@%lld)",
 			nfs_req_openctx(req)->dentry->d_sb->s_id,
-			(unsigned long long)NFS_FILEID(d_inode(nfs_req_openctx(req)->dentry)),
+			(unsigned long long)d_inode(nfs_req_openctx(req)->dentry)->i_ino,
 			req->wb_bytes,
 			(long long)req_offset(req));
 		if (status < 0) {
@@ -1836,6 +1846,8 @@ static void nfs_commit_release_pages(struct nfs_commit_data *data)
 		/* We have a mismatch. Write the page again */
 		dprintk(" mismatch\n");
 		nfs_mark_request_dirty(req);
+		set_bit(NFS_CONTEXT_WRITE_SYNC,
+			&req->wb_lock_context->open_context->flags);
 		atomic_long_inc(&NFS_I(data->inode)->redirtied_pages);
 	next:
 		nfs_unlock_and_release_request(req);

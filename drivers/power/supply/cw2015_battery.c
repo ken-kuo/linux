@@ -694,7 +694,8 @@ static int cw_bat_probe(struct i2c_client *client)
 			 "No monitored battery, some properties will be missing\n");
 	}
 
-	cw_bat->battery_workqueue = create_singlethread_workqueue("rk_battery");
+	cw_bat->battery_workqueue = devm_alloc_ordered_workqueue(&client->dev,
+								 "rk_battery", 0);
 	if (!cw_bat->battery_workqueue)
 		return -ENOMEM;
 
@@ -732,9 +733,10 @@ static int __maybe_unused cw_bat_resume(struct device *dev)
 static SIMPLE_DEV_PM_OPS(cw_bat_pm_ops, cw_bat_suspend, cw_bat_resume);
 
 static const struct i2c_device_id cw_bat_id_table[] = {
-	{ "cw2015" },
+	{ .name = "cw2015" },
 	{ }
 };
+MODULE_DEVICE_TABLE(i2c, cw_bat_id_table);
 
 static const struct of_device_id cw2015_of_match[] = {
 	{ .compatible = "cellwise,cw2015" },

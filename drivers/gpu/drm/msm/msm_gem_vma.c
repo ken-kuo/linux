@@ -458,6 +458,8 @@ msm_gem_vm_bo_validate(struct drm_gpuvm_bo *vm_bo, struct drm_exec *exec)
 			return ret;
 	}
 
+	drm_gpuvm_bo_evict(vm_bo, false);
+
 	return 0;
 }
 
@@ -702,7 +704,7 @@ static struct dma_fence *
 msm_vma_job_run(struct drm_sched_job *_job)
 {
 	struct msm_vm_bind_job *job = to_msm_vm_bind_job(_job);
-	struct msm_drm_private *priv = job->vm->drm->dev_private;
+	struct drm_device *dev = job->vm->drm;
 	struct msm_gem_vm *vm = to_msm_vm(job->vm);
 	struct drm_gem_object *obj;
 	int ret = vm->unusable ? -EINVAL : 0;
@@ -745,13 +747,13 @@ msm_vma_job_run(struct drm_sched_job *_job)
 	if (ret)
 		msm_gem_vm_unusable(job->vm);
 
-	mutex_lock(&priv->lru.lock);
+	mutex_lock(&dev->gem_lru_mutex);
 
 	job_foreach_bo (obj, job) {
 		msm_gem_unpin_active(obj);
 	}
 
-	mutex_unlock(&priv->lru.lock);
+	mutex_unlock(&dev->gem_lru_mutex);
 
 	/* VM_BIND ops are synchronous, so no fence to wait on: */
 	return NULL;
@@ -955,7 +957,7 @@ msm_gem_vm_close(struct drm_gpuvm *gpuvm)
 
 
 static struct msm_vm_bind_job *
-vm_bind_job_create(struct drm_device *dev, struct drm_file *file,
+vm_bind_job_create(struct drm_device *dev, struct drm_file *file, struct drm_gpuvm *vm,
 		   struct msm_gpu_submitqueue *queue, uint32_t nr_ops)
 {
 	struct msm_vm_bind_job *job;
@@ -972,7 +974,7 @@ vm_bind_job_create(struct drm_device *dev, struct drm_file *file,
 		return ERR_PTR(ret);
 	}
 
-	job->vm = msm_context_vm(dev, queue->ctx);
+	job->vm = vm;
 	job->queue = queue;
 	INIT_LIST_HEAD(&job->vm_ops);
 
@@ -1305,7 +1307,7 @@ vm_bind_job_pin_objects(struct msm_vm_bind_job *job)
 			return PTR_ERR(pages);
 	}
 
-	struct msm_drm_private *priv = job->vm->drm->dev_private;
+	struct drm_device *dev = job->vm->drm;
 
 	/*
 	 * A second loop while holding the LRU lock (a) avoids acquiring/dropping
@@ -1314,10 +1316,10 @@ vm_bind_job_pin_objects(struct msm_vm_bind_job *job)
 	 * get_pages() which could trigger reclaim.. and if we held the LRU lock
 	 * could trigger deadlock with the shrinker).
 	 */
-	mutex_lock(&priv->lru.lock);
+	mutex_lock(&dev->gem_lru_mutex);
 	job_foreach_bo (obj, job)
 		msm_gem_pin_obj_locked(obj);
-	mutex_unlock(&priv->lru.lock);
+	mutex_unlock(&dev->gem_lru_mutex);
 
 	job->bos_pinned = true;
 
@@ -1431,6 +1433,7 @@ msm_ioctl_vm_bind(struct drm_device *dev, void *data, struct drm_file *file)
 	struct msm_drm_private *priv = dev->dev_private;
 	struct drm_msm_vm_bind *args = data;
 	struct msm_context *ctx = file->driver_priv;
+	struct drm_gpuvm *vm = msm_context_vm(dev, ctx);
 	struct msm_vm_bind_job *job = NULL;
 	struct msm_gpu *gpu = priv->gpu;
 	struct msm_gpu_submitqueue *queue;
@@ -1445,11 +1448,14 @@ msm_ioctl_vm_bind(struct drm_device *dev, void *data, struct drm_file *file)
 	if (!gpu)
 		return -ENXIO;
 
+	if (!vm)
+		return UERR(ENOMEM, dev, "no VM");
+
 	/*
 	 * Maybe we could allow just UNMAP ops?  OTOH userspace should just
 	 * immediately close the device file and all will be torn down.
 	 */
-	if (to_msm_vm(msm_context_vm(dev, ctx))->unusable)
+	if (to_msm_vm(vm)->unusable)
 		return UERR(EPIPE, dev, "context is unusable");
 
 	/*
@@ -1480,7 +1486,7 @@ msm_ioctl_vm_bind(struct drm_device *dev, void *data, struct drm_file *file)
 		}
 	}
 
-	job = vm_bind_job_create(dev, file, queue, args->nr_ops);
+	job = vm_bind_job_create(dev, file, vm, queue, args->nr_ops);
 	if (IS_ERR(job)) {
 		ret = PTR_ERR(job);
 		goto out_post_unlock;

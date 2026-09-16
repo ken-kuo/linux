@@ -128,6 +128,9 @@ struct nvmet_ns {
 	u8			csi;
 	struct nvmet_pr		pr;
 	struct xarray		pr_per_ctrl_refs;
+#ifdef CONFIG_NVME_TARGET_DEBUGFS
+	struct dentry		*debugfs_dir;
+#endif
 };
 
 static inline struct nvmet_ns *to_nvmet_ns(struct config_item *item)
@@ -208,14 +211,15 @@ struct nvmet_port {
 	struct list_head		global_entry;
 	struct config_group		ana_groups_group;
 	struct nvmet_ana_group		ana_default_group;
-	enum nvme_ana_state		*ana_state;
 	struct key			*keyring;
 	void				*priv;
 	bool				enabled;
 	int				inline_data_size;
 	int				max_queue_size;
+	int				mdts;
 	const struct nvmet_fabrics_ops	*tr_ops;
 	bool				pi_enable;
+	enum nvme_ana_state		ana_state[];
 };
 
 static inline struct nvmet_port *to_nvmet_port(struct config_item *item)
@@ -264,6 +268,7 @@ struct nvmet_ctrl {
 
 	uuid_t			hostid;
 	u16			cntlid;
+	u16			max_qid;
 	u32			kato;
 
 	struct nvmet_port	*port;
@@ -673,6 +678,7 @@ void nvmet_add_async_event(struct nvmet_ctrl *ctrl, u8 event_type,
 #define NVMET_MAX_QUEUE_SIZE	1024
 #define NVMET_NR_QUEUES		128
 #define NVMET_MAX_CMD(ctrl)	(NVME_CAP_MQES(ctrl->cap) + 1)
+#define NVMET_MAX_MDTS		255
 
 /*
  * Nice round number that makes a list of nsids fit into a page.
@@ -751,6 +757,11 @@ static inline struct nvmet_subsys *nvmet_req_subsys(struct nvmet_req *req)
 	return req->sq->ctrl->subsys;
 }
 
+static inline struct nvmet_ctrl *nvmet_req_ctrl(struct nvmet_req *req)
+{
+	return req->sq->ctrl;
+}
+
 static inline bool nvmet_is_disc_subsys(struct nvmet_subsys *subsys)
 {
     return subsys->type != NVME_NQN_NVME;
@@ -759,6 +770,17 @@ static inline bool nvmet_is_disc_subsys(struct nvmet_subsys *subsys)
 static inline bool nvmet_is_pci_ctrl(struct nvmet_ctrl *ctrl)
 {
 	return ctrl->port->disc_addr.trtype == NVMF_TRTYPE_PCI;
+}
+
+/* Limit MDTS according to port config or transport capability */
+static inline u8 nvmet_ctrl_mdts(struct nvmet_req *req)
+{
+	struct nvmet_ctrl *ctrl = req->sq->ctrl;
+	u8 mdts = req->port->mdts;
+
+	if (!ctrl->ops->get_mdts)
+		return mdts;
+	return min_not_zero(ctrl->ops->get_mdts(ctrl), mdts);
 }
 
 #ifdef CONFIG_NVME_TARGET_PASSTHRU
@@ -902,6 +924,7 @@ u8 nvmet_setup_auth(struct nvmet_ctrl *ctrl, struct nvmet_sq *sq, bool reset);
 void nvmet_auth_sq_init(struct nvmet_sq *sq);
 void nvmet_destroy_auth(struct nvmet_ctrl *ctrl);
 void nvmet_auth_sq_free(struct nvmet_sq *sq);
+void nvmet_auth_sq_destroy(struct nvmet_sq *sq);
 int nvmet_setup_dhgroup(struct nvmet_ctrl *ctrl, u8 dhgroup_id);
 bool nvmet_check_auth_status(struct nvmet_req *req);
 int nvmet_auth_host_hash(struct nvmet_req *req, u8 *response,
@@ -928,6 +951,7 @@ static inline void nvmet_auth_sq_init(struct nvmet_sq *sq)
 }
 static inline void nvmet_destroy_auth(struct nvmet_ctrl *ctrl) {};
 static inline void nvmet_auth_sq_free(struct nvmet_sq *sq) {};
+static inline void nvmet_auth_sq_destroy(struct nvmet_sq *sq) {};
 static inline bool nvmet_check_auth_status(struct nvmet_req *req)
 {
 	return true;

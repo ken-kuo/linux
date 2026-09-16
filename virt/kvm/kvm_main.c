@@ -56,6 +56,7 @@
 
 #include "coalesced_mmio.h"
 #include "async_pf.h"
+#include "guest_memfd.h"
 #include "kvm_mm.h"
 #include "vfio.h"
 
@@ -75,22 +76,22 @@ MODULE_DESCRIPTION("Kernel-based Virtual Machine (KVM) Hypervisor");
 MODULE_LICENSE("GPL");
 
 /* Architectures should define their poll value according to the halt latency */
-unsigned int halt_poll_ns = KVM_HALT_POLL_NS_DEFAULT;
+unsigned int __read_mostly halt_poll_ns = KVM_HALT_POLL_NS_DEFAULT;
 module_param(halt_poll_ns, uint, 0644);
 EXPORT_SYMBOL_FOR_KVM_INTERNAL(halt_poll_ns);
 
 /* Default doubles per-vcpu halt_poll_ns. */
-unsigned int halt_poll_ns_grow = 2;
+unsigned int __read_mostly halt_poll_ns_grow = 2;
 module_param(halt_poll_ns_grow, uint, 0644);
 EXPORT_SYMBOL_FOR_KVM_INTERNAL(halt_poll_ns_grow);
 
 /* The start value to grow halt_poll_ns from */
-unsigned int halt_poll_ns_grow_start = 10000; /* 10us */
+unsigned int __read_mostly halt_poll_ns_grow_start = 10000; /* 10us */
 module_param(halt_poll_ns_grow_start, uint, 0644);
 EXPORT_SYMBOL_FOR_KVM_INTERNAL(halt_poll_ns_grow_start);
 
 /* Default halves per-vcpu halt_poll_ns. */
-unsigned int halt_poll_ns_shrink = 2;
+unsigned int __read_mostly halt_poll_ns_shrink = 2;
 module_param(halt_poll_ns_shrink, uint, 0644);
 EXPORT_SYMBOL_FOR_KVM_INTERNAL(halt_poll_ns_shrink);
 
@@ -98,7 +99,7 @@ EXPORT_SYMBOL_FOR_KVM_INTERNAL(halt_poll_ns_shrink);
  * Allow direct access (from KVM or the CPU) without MMU notifier protection
  * to unpinned pages.
  */
-static bool allow_unsafe_mappings;
+static bool __ro_after_init allow_unsafe_mappings;
 module_param(allow_unsafe_mappings, bool, 0444);
 
 /*
@@ -670,7 +671,7 @@ static __always_inline bool kvm_age_hva_range_no_flush(struct mmu_notifier *mn,
 	return kvm_age_hva_range(mn, start, end, handler, false);
 }
 
-void kvm_mmu_invalidate_begin(struct kvm *kvm)
+void kvm_mmu_invalidate_start(struct kvm *kvm)
 {
 	lockdep_assert_held_write(&kvm->mmu_lock);
 	/*
@@ -726,7 +727,7 @@ static int kvm_mmu_notifier_invalidate_range_start(struct mmu_notifier *mn,
 		.start		= range->start,
 		.end		= range->end,
 		.handler	= kvm_mmu_unmap_gfn_range,
-		.on_lock	= kvm_mmu_invalidate_begin,
+		.on_lock	= kvm_mmu_invalidate_start,
 		.flush_on_ret	= true,
 		.may_block	= mmu_notifier_range_blockable(range),
 	};
@@ -1091,6 +1092,9 @@ static inline struct kvm_io_bus *kvm_get_bus_for_destruction(struct kvm *kvm,
 	return rcu_dereference_protected(kvm->buses[idx],
 					 !refcount_read(&kvm->users_count));
 }
+
+static int kvm_enable_virtualization(void);
+static void kvm_disable_virtualization(void);
 
 static struct kvm *kvm_create_vm(unsigned long type, const char *fdname)
 {
@@ -2539,7 +2543,7 @@ static int kvm_vm_set_mem_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
 		.end = end,
 		.arg.attributes = attributes,
 		.handler = kvm_pre_set_memory_attributes,
-		.on_lock = kvm_mmu_invalidate_begin,
+		.on_lock = kvm_mmu_invalidate_start,
 		.flush_on_ret = true,
 		.may_block = true,
 	};
@@ -3115,6 +3119,9 @@ int __kvm_vcpu_map(struct kvm_vcpu *vcpu, gfn_t gfn, struct kvm_host_map *map,
 		.pin = true,
 	};
 
+	if (WARN_ON_ONCE(map->hva))
+		kvm_vcpu_unmap(vcpu, map);
+
 	map->pinned_page = NULL;
 	map->page = NULL;
 	map->hva = NULL;
@@ -3517,7 +3524,8 @@ void mark_page_dirty_in_slot(struct kvm *kvm,
 	if (WARN_ON_ONCE(vcpu && vcpu->kvm != kvm))
 		return;
 
-	WARN_ON_ONCE(!vcpu && !kvm_arch_allow_write_without_running_vcpu(kvm));
+	WARN_ON_ONCE(!vcpu && refcount_read(&kvm->users_count) &&
+		     !kvm_arch_allow_write_without_running_vcpu(kvm));
 #endif
 
 	if (memslot && kvm_slot_dirty_track_enabled(memslot)) {
@@ -4169,6 +4177,11 @@ static int kvm_vm_ioctl_create_vcpu(struct kvm *kvm, unsigned long id)
 		return -EINVAL;
 	}
 
+	if (test_bit(id, kvm->vcpu_ids)) {
+		mutex_unlock(&kvm->lock);
+		return -EEXIST;
+	}
+
 	r = kvm_arch_vcpu_precreate(kvm, id);
 	if (r) {
 		mutex_unlock(&kvm->lock);
@@ -4176,6 +4189,7 @@ static int kvm_vm_ioctl_create_vcpu(struct kvm *kvm, unsigned long id)
 	}
 
 	kvm->created_vcpus++;
+	__set_bit(id, kvm->vcpu_ids);
 	mutex_unlock(&kvm->lock);
 
 	vcpu = kmem_cache_zalloc(kvm_vcpu_cache, GFP_KERNEL_ACCOUNT);
@@ -4183,6 +4197,8 @@ static int kvm_vm_ioctl_create_vcpu(struct kvm *kvm, unsigned long id)
 		r = -ENOMEM;
 		goto vcpu_decrement;
 	}
+
+	vcpu->vcpu_idx = -1;
 
 	BUILD_BUG_ON(sizeof(struct kvm_run) > PAGE_SIZE);
 	page = alloc_page(GFP_KERNEL_ACCOUNT | __GFP_ZERO);
@@ -4207,11 +4223,16 @@ static int kvm_vm_ioctl_create_vcpu(struct kvm *kvm, unsigned long id)
 
 	mutex_lock(&kvm->lock);
 
-	if (kvm_get_vcpu_by_id(kvm, id)) {
+	if (WARN_ON_ONCE(kvm_get_vcpu_by_id(kvm, id))) {
 		r = -EEXIST;
 		goto unlock_vcpu_destroy;
 	}
 
+	/*
+	 * Set the vCPU's index *before* the vCPU is reachable by other tasks.
+	 * Unwind the index back to -1 on failure so that KVM can use the index
+	 * to detect that the vCPU is unreachable, e.g. for lockdep asserts.
+	 */
 	vcpu->vcpu_idx = atomic_read(&kvm->online_vcpus);
 	r = xa_insert(&kvm->vcpu_array, vcpu->vcpu_idx, vcpu, GFP_KERNEL_ACCOUNT);
 	WARN_ON_ONCE(r == -EBUSY);
@@ -4250,6 +4271,7 @@ kvm_put_xa_erase:
 	kvm_put_kvm_no_destroy(kvm);
 	xa_erase(&kvm->vcpu_array, vcpu->vcpu_idx);
 unlock_vcpu_destroy:
+	vcpu->vcpu_idx = -1;
 	mutex_unlock(&kvm->lock);
 	kvm_dirty_ring_free(&vcpu->dirty_ring);
 arch_vcpu_destroy:
@@ -4261,6 +4283,7 @@ vcpu_free:
 vcpu_decrement:
 	mutex_lock(&kvm->lock);
 	kvm->created_vcpus--;
+	__clear_bit(id, kvm->vcpu_ids);
 	mutex_unlock(&kvm->lock);
 	return r;
 }
@@ -5564,16 +5587,18 @@ static struct miscdevice kvm_dev = {
 };
 
 #ifdef CONFIG_KVM_GENERIC_HARDWARE_ENABLING
-bool enable_virt_at_load = true;
+bool __ro_after_init enable_virt_at_load = true;
 module_param(enable_virt_at_load, bool, 0444);
 EXPORT_SYMBOL_FOR_KVM_INTERNAL(enable_virt_at_load);
-
-__visible bool kvm_rebooting;
-EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_rebooting);
 
 static DEFINE_PER_CPU(bool, virtualization_enabled);
 static DEFINE_MUTEX(kvm_usage_lock);
 static int kvm_usage_count;
+
+__weak void kvm_arch_shutdown(void)
+{
+
+}
 
 __weak void kvm_arch_enable_virtualization(void)
 {
@@ -5628,10 +5653,9 @@ static int kvm_offline_cpu(unsigned int cpu)
 
 static void kvm_shutdown(void *data)
 {
+	kvm_arch_shutdown();
+
 	/*
-	 * Disable hardware virtualization and set kvm_rebooting to indicate
-	 * that KVM has asynchronously disabled hardware virtualization, i.e.
-	 * that relevant errors and exceptions aren't entirely unexpected.
 	 * Some flavors of hardware virtualization need to be disabled before
 	 * transferring control to firmware (to perform shutdown/reboot), e.g.
 	 * on x86, virtualization can block INIT interrupts, which are used by
@@ -5640,7 +5664,6 @@ static void kvm_shutdown(void *data)
 	 * 100% comprehensive.
 	 */
 	pr_info("kvm: exiting hardware virtualization\n");
-	kvm_rebooting = true;
 	on_each_cpu(kvm_disable_virtualization_cpu, NULL, 1);
 }
 
@@ -5679,7 +5702,7 @@ static struct syscore kvm_syscore = {
 	.ops = &kvm_syscore_ops,
 };
 
-int kvm_enable_virtualization(void)
+static int kvm_enable_virtualization(void)
 {
 	int r;
 
@@ -5724,9 +5747,8 @@ err_cpuhp:
 	--kvm_usage_count;
 	return r;
 }
-EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_enable_virtualization);
 
-void kvm_disable_virtualization(void)
+static void kvm_disable_virtualization(void)
 {
 	guard(mutex)(&kvm_usage_lock);
 
@@ -5737,7 +5759,6 @@ void kvm_disable_virtualization(void)
 	cpuhp_remove_state(CPUHP_AP_KVM_ONLINE);
 	kvm_arch_disable_virtualization();
 }
-EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_disable_virtualization);
 
 static int kvm_init_virtualization(void)
 {
@@ -5753,6 +5774,14 @@ static void kvm_uninit_virtualization(void)
 		kvm_disable_virtualization();
 }
 #else /* CONFIG_KVM_GENERIC_HARDWARE_ENABLING */
+static int kvm_enable_virtualization(void)
+{
+	return 0;
+}
+static void kvm_disable_virtualization(void)
+{
+
+}
 static int kvm_init_virtualization(void)
 {
 	return 0;
@@ -6059,25 +6088,19 @@ struct kvm_io_device *kvm_io_bus_get_dev(struct kvm *kvm, enum kvm_bus bus_idx,
 					 gpa_t addr)
 {
 	struct kvm_io_bus *bus;
-	int dev_idx, srcu_idx;
-	struct kvm_io_device *iodev = NULL;
+	int dev_idx;
 
-	srcu_idx = srcu_read_lock(&kvm->srcu);
+	lockdep_assert_held(&kvm->srcu);
 
 	bus = kvm_get_bus_srcu(kvm, bus_idx);
 	if (!bus)
-		goto out_unlock;
+		return NULL;
 
 	dev_idx = kvm_io_bus_get_first_dev(bus, addr, 1);
 	if (dev_idx < 0)
-		goto out_unlock;
+		return NULL;
 
-	iodev = bus->range[dev_idx].dev;
-
-out_unlock:
-	srcu_read_unlock(&kvm->srcu, srcu_idx);
-
-	return iodev;
+	return bus->range[dev_idx].dev;
 }
 EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_io_bus_get_dev);
 
@@ -6549,6 +6572,7 @@ err_virt:
 err_gmem:
 	kvm_vfio_ops_exit();
 err_vfio:
+	debugfs_remove_recursive(kvm_debugfs_dir);
 	kvm_async_pf_deinit();
 err_async_pf:
 	kvm_irqfd_exit();

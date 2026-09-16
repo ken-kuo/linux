@@ -155,6 +155,7 @@ netdev_tx_t hbg_net_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 	buffer->skb = skb;
 	buffer->skb_len = skb->len;
 	if (unlikely(hbg_dma_map(buffer))) {
+		buffer->skb = NULL;
 		dev_kfree_skb_any(skb);
 		return NETDEV_TX_OK;
 	}
@@ -452,11 +453,11 @@ static bool hbg_sync_data_from_hw(struct hbg_priv *priv,
 {
 	struct hbg_rx_desc *rx_desc;
 
-	/* make sure HW write desc complete */
-	dma_rmb();
-
 	dma_sync_single_for_cpu(&priv->pdev->dev, buffer->page_dma,
 				buffer->page_size, DMA_FROM_DEVICE);
+
+	/* make sure HW write desc complete */
+	dma_rmb();
 
 	rx_desc = (struct hbg_rx_desc *)buffer->page_addr;
 	return FIELD_GET(HBG_RX_DESC_W2_PKT_LEN_M, rx_desc->word2) != 0;
@@ -553,7 +554,7 @@ static int hbg_ring_page_pool_init(struct hbg_priv *priv, struct hbg_ring *ring)
 		.nid = dev_to_node(&priv->pdev->dev),
 		.dev = &priv->pdev->dev,
 		.napi = &ring->napi,
-		.dma_dir = DMA_FROM_DEVICE,
+		.dma_dir = DMA_BIDIRECTIONAL,
 		.offset = 0,
 		.max_len = hbg_get_page_size(ring),
 	};

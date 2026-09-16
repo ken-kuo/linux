@@ -144,6 +144,7 @@ struct zloop_device {
 	unsigned int		nr_conv_zones;
 	unsigned int		max_open_zones;
 	unsigned int		block_size;
+	unsigned int		dio_mem_align;
 
 	spinlock_t		open_zones_lock;
 	struct list_head	open_zones_lru_list;
@@ -288,12 +289,29 @@ static bool zloop_do_open_zone(struct zloop_device *zlo,
 	}
 }
 
+static void zloop_mark_full(struct zloop_device *zlo, struct zloop_zone *zone)
+{
+	lockdep_assert_held(&zone->wp_lock);
+
+	zloop_lru_remove_open_zone(zlo, zone);
+	zone->cond = BLK_ZONE_COND_FULL;
+	zone->wp = ULLONG_MAX;
+}
+
+static void zloop_mark_empty(struct zloop_device *zlo, struct zloop_zone *zone)
+{
+	lockdep_assert_held(&zone->wp_lock);
+
+	zloop_lru_remove_open_zone(zlo, zone);
+	zone->cond = BLK_ZONE_COND_EMPTY;
+	zone->wp = zone->start;
+}
+
 static int zloop_update_seq_zone(struct zloop_device *zlo, unsigned int zone_no)
 {
 	struct zloop_zone *zone = &zlo->zones[zone_no];
 	struct kstat stat;
 	sector_t file_sectors;
-	unsigned long flags;
 	int ret;
 
 	lockdep_assert_held(&zone->lock);
@@ -313,28 +331,24 @@ static int zloop_update_seq_zone(struct zloop_device *zlo, unsigned int zone_no)
 		return -EINVAL;
 	}
 
-	if (file_sectors & ((zlo->block_size >> SECTOR_SHIFT) - 1)) {
-		pr_err("Zone %u file size not aligned to block size %u\n",
-		       zone_no, zlo->block_size);
+	if (!IS_ALIGNED(stat.size, zlo->block_size)) {
+		pr_err("Zone %u file size (%llu) not aligned to block size %u\n",
+		       zone_no, stat.size, zlo->block_size);
 		return -EINVAL;
 	}
 
-	spin_lock_irqsave(&zone->wp_lock, flags);
+	spin_lock(&zone->wp_lock);
 	if (!file_sectors) {
-		zloop_lru_remove_open_zone(zlo, zone);
-		zone->cond = BLK_ZONE_COND_EMPTY;
-		zone->wp = zone->start;
+		zloop_mark_empty(zlo, zone);
 	} else if (file_sectors == zlo->zone_capacity) {
-		zloop_lru_remove_open_zone(zlo, zone);
-		zone->cond = BLK_ZONE_COND_FULL;
-		zone->wp = ULLONG_MAX;
+		zloop_mark_full(zlo, zone);
 	} else {
 		if (zone->cond != BLK_ZONE_COND_IMP_OPEN &&
 		    zone->cond != BLK_ZONE_COND_EXP_OPEN)
 			zone->cond = BLK_ZONE_COND_CLOSED;
 		zone->wp = zone->start + file_sectors;
 	}
-	spin_unlock_irqrestore(&zone->wp_lock, flags);
+	spin_unlock(&zone->wp_lock);
 
 	return 0;
 }
@@ -367,7 +381,6 @@ unlock:
 static int zloop_close_zone(struct zloop_device *zlo, unsigned int zone_no)
 {
 	struct zloop_zone *zone = &zlo->zones[zone_no];
-	unsigned long flags;
 	int ret = 0;
 
 	if (test_bit(ZLOOP_ZONE_CONV, &zone->flags))
@@ -386,13 +399,13 @@ static int zloop_close_zone(struct zloop_device *zlo, unsigned int zone_no)
 		break;
 	case BLK_ZONE_COND_IMP_OPEN:
 	case BLK_ZONE_COND_EXP_OPEN:
-		spin_lock_irqsave(&zone->wp_lock, flags);
+		spin_lock(&zone->wp_lock);
 		zloop_lru_remove_open_zone(zlo, zone);
 		if (zone->wp == zone->start)
 			zone->cond = BLK_ZONE_COND_EMPTY;
 		else
 			zone->cond = BLK_ZONE_COND_CLOSED;
-		spin_unlock_irqrestore(&zone->wp_lock, flags);
+		spin_unlock(&zone->wp_lock);
 		break;
 	case BLK_ZONE_COND_EMPTY:
 	case BLK_ZONE_COND_FULL:
@@ -410,7 +423,6 @@ unlock:
 static int zloop_reset_zone(struct zloop_device *zlo, unsigned int zone_no)
 {
 	struct zloop_zone *zone = &zlo->zones[zone_no];
-	unsigned long flags;
 	int ret = 0;
 
 	if (test_bit(ZLOOP_ZONE_CONV, &zone->flags))
@@ -428,12 +440,10 @@ static int zloop_reset_zone(struct zloop_device *zlo, unsigned int zone_no)
 		goto unlock;
 	}
 
-	spin_lock_irqsave(&zone->wp_lock, flags);
-	zloop_lru_remove_open_zone(zlo, zone);
-	zone->cond = BLK_ZONE_COND_EMPTY;
-	zone->wp = zone->start;
+	spin_lock(&zone->wp_lock);
+	zloop_mark_empty(zlo, zone);
 	clear_bit(ZLOOP_ZONE_SEQ_ERROR, &zone->flags);
-	spin_unlock_irqrestore(&zone->wp_lock, flags);
+	spin_unlock(&zone->wp_lock);
 
 unlock:
 	mutex_unlock(&zone->lock);
@@ -458,7 +468,6 @@ static int zloop_reset_all_zones(struct zloop_device *zlo)
 static int zloop_finish_zone(struct zloop_device *zlo, unsigned int zone_no)
 {
 	struct zloop_zone *zone = &zlo->zones[zone_no];
-	unsigned long flags;
 	int ret = 0;
 
 	if (test_bit(ZLOOP_ZONE_CONV, &zone->flags))
@@ -470,18 +479,17 @@ static int zloop_finish_zone(struct zloop_device *zlo, unsigned int zone_no)
 	    zone->cond == BLK_ZONE_COND_FULL)
 		goto unlock;
 
-	if (vfs_truncate(&zone->file->f_path, zlo->zone_size << SECTOR_SHIFT)) {
+	if (vfs_truncate(&zone->file->f_path,
+			 zlo->zone_capacity << SECTOR_SHIFT)) {
 		set_bit(ZLOOP_ZONE_SEQ_ERROR, &zone->flags);
 		ret = -EIO;
 		goto unlock;
 	}
 
-	spin_lock_irqsave(&zone->wp_lock, flags);
-	zloop_lru_remove_open_zone(zlo, zone);
-	zone->cond = BLK_ZONE_COND_FULL;
-	zone->wp = ULLONG_MAX;
+	spin_lock(&zone->wp_lock);
+	zloop_mark_full(zlo, zone);
 	clear_bit(ZLOOP_ZONE_SEQ_ERROR, &zone->flags);
-	spin_unlock_irqrestore(&zone->wp_lock, flags);
+	spin_unlock(&zone->wp_lock);
 
  unlock:
 	mutex_unlock(&zone->lock);
@@ -547,7 +555,7 @@ static int zloop_do_rw(struct zloop_cmd *cmd)
 		iov_iter_bvec(&iter, rw,
 			__bvec_iter_bvec(rq->bio->bi_io_vec, rq->bio->bi_iter),
 					nr_bvec, blk_rq_bytes(rq));
-		iter.iov_offset = rq->bio->bi_iter.bi_bvec_done;
+		iter.iov_offset = rq->bio->bi_iter.bi_offset;
 	}
 
 	cmd->iocb.ki_pos = (cmd->sector - zone->start) << SECTOR_SHIFT;
@@ -571,10 +579,9 @@ static int zloop_seq_write_prep(struct zloop_cmd *cmd)
 	bool is_append = req_op(rq) == REQ_OP_ZONE_APPEND;
 	struct zloop_zone *zone = &zlo->zones[zone_no];
 	sector_t zone_end = zone->start + zlo->zone_capacity;
-	unsigned long flags;
 	int ret = 0;
 
-	spin_lock_irqsave(&zone->wp_lock, flags);
+	spin_lock(&zone->wp_lock);
 
 	/*
 	 * Zone append operations always go at the current write pointer, but
@@ -616,14 +623,11 @@ static int zloop_seq_write_prep(struct zloop_cmd *cmd)
 	 */
 	if (!is_append || !zlo->ordered_zone_append) {
 		zone->wp += nr_sectors;
-		if (zone->wp == zone_end) {
-			zloop_lru_remove_open_zone(zlo, zone);
-			zone->cond = BLK_ZONE_COND_FULL;
-			zone->wp = ULLONG_MAX;
-		}
+		if (zone->wp == zone_end)
+			zloop_mark_full(zlo, zone);
 	}
 out_unlock:
-	spin_unlock_irqrestore(&zone->wp_lock, flags);
+	spin_unlock(&zone->wp_lock);
 	return ret;
 }
 
@@ -861,25 +865,21 @@ static bool zloop_set_zone_append_sector(struct request *rq)
 	struct zloop_zone *zone = &zlo->zones[zone_no];
 	sector_t zone_end = zone->start + zlo->zone_capacity;
 	sector_t nr_sectors = blk_rq_sectors(rq);
-	unsigned long flags;
 
-	spin_lock_irqsave(&zone->wp_lock, flags);
+	spin_lock(&zone->wp_lock);
 
 	if (zone->cond == BLK_ZONE_COND_FULL ||
 	    zone->wp + nr_sectors > zone_end) {
-		spin_unlock_irqrestore(&zone->wp_lock, flags);
+		spin_unlock(&zone->wp_lock);
 		return false;
 	}
 
 	rq->__sector = zone->wp;
 	zone->wp += blk_rq_sectors(rq);
-	if (zone->wp >= zone_end) {
-		zloop_lru_remove_open_zone(zlo, zone);
-		zone->cond = BLK_ZONE_COND_FULL;
-		zone->wp = ULLONG_MAX;
-	}
+	if (zone->wp >= zone_end)
+		zloop_mark_full(zlo, zone);
 
-	spin_unlock_irqrestore(&zone->wp_lock, flags);
+	spin_unlock(&zone->wp_lock);
 
 	return true;
 }
@@ -891,8 +891,10 @@ static blk_status_t zloop_queue_rq(struct blk_mq_hw_ctx *hctx,
 	struct zloop_cmd *cmd = blk_mq_rq_to_pdu(rq);
 	struct zloop_device *zlo = rq->q->queuedata;
 
-	if (data_race(READ_ONCE(zlo->state)) == Zlo_deleting)
+	if (data_race(READ_ONCE(zlo->state)) == Zlo_deleting) {
+		rq->rq_flags |= RQF_QUIET;
 		return BLK_STS_IOERR;
+	}
 
 	/*
 	 * If we need to strongly order zone append operations, set the request
@@ -938,7 +940,6 @@ static int zloop_report_zones(struct gendisk *disk, sector_t sector,
 	struct zloop_device *zlo = disk->private_data;
 	struct blk_zone blkz = {};
 	unsigned int first, i;
-	unsigned long flags;
 	int ret;
 
 	first = disk_zone_no(disk, sector);
@@ -962,9 +963,9 @@ static int zloop_report_zones(struct gendisk *disk, sector_t sector,
 
 		blkz.start = zone->start;
 		blkz.len = zlo->zone_size;
-		spin_lock_irqsave(&zone->wp_lock, flags);
+		spin_lock(&zone->wp_lock);
 		blkz.wp = zone->wp;
-		spin_unlock_irqrestore(&zone->wp_lock, flags);
+		spin_unlock(&zone->wp_lock);
 		blkz.cond = zone->cond;
 		if (test_bit(ZLOOP_ZONE_CONV, &zone->flags)) {
 			blkz.type = BLK_ZONE_TYPE_CONVENTIONAL;
@@ -1038,20 +1039,32 @@ static int zloop_get_block_size(struct zloop_device *zlo,
 	struct kstat st;
 
 	/*
-	 * If the FS block size is lower than or equal to 4K, use that as the
-	 * device block size. Otherwise, fallback to the FS direct IO alignment
-	 * constraint if that is provided, and to the FS underlying device
-	 * physical block size if the direct IO alignment is unknown.
+	 * Use the dio alignment of the file system if provided.  The incoming
+	 * request's bio_vec is forwarded to the backing file unchanged, so its
+	 * required memory alignment becomes the device's dma_alignment when
+	 * used for direct-io.  The file system reports zeroed alignments if the
+	 * file can't be used for direct-io at all, so fall back to the block
+	 * device limits in that case.
+	 */
+	if (!vfs_getattr(&zone->file->f_path, &st, STATX_DIOALIGN, 0) &&
+	    (st.result_mask & STATX_DIOALIGN) && st.dio_mem_align) {
+		zlo->block_size = st.dio_offset_align;
+		zlo->dio_mem_align = min(st.dio_mem_align - 1, PAGE_SIZE - 1);
+	} else if (sb_bdev) {
+		zlo->block_size = bdev_physical_block_size(sb_bdev);
+		zlo->dio_mem_align = bdev_dma_alignment(sb_bdev);
+	} else {
+		zlo->block_size = SECTOR_SIZE;
+		zlo->dio_mem_align = SECTOR_SIZE - 1;
+	}
+
+	/*
+	 * Prefer the FS block size for the device block size when it is no
+	 * larger than 4K; otherwise keep the direct I/O / physical block size
+	 * selected above.
 	 */
 	if (file_inode(zone->file)->i_sb->s_blocksize <= SZ_4K)
 		zlo->block_size = file_inode(zone->file)->i_sb->s_blocksize;
-	else if (!vfs_getattr(&zone->file->f_path, &st, STATX_DIOALIGN, 0) &&
-		 (st.result_mask & STATX_DIOALIGN))
-		zlo->block_size = st.dio_offset_align;
-	else if (sb_bdev)
-		zlo->block_size = bdev_physical_block_size(sb_bdev);
-	else
-		zlo->block_size = SECTOR_SIZE;
 
 	if (zlo->zone_capacity & ((zlo->block_size >> SECTOR_SHIFT) - 1)) {
 		pr_err("Zone capacity is not aligned to block size %u\n",
@@ -1280,6 +1293,10 @@ static int zloop_ctl_add(struct zloop_options *opts)
 
 	lim.physical_block_size = zlo->block_size;
 	lim.logical_block_size = zlo->block_size;
+	/* Direct I/O forwards the request pages to the backing files as-is. */
+	if (!opts->buffered_io)
+		lim.dma_alignment = max_t(unsigned int, zlo->dio_mem_align,
+					  SECTOR_SIZE - 1);
 	if (zlo->zone_append)
 		lim.max_hw_zone_append_sectors = lim.max_hw_sectors;
 	lim.max_open_zones = zlo->max_open_zones;
@@ -1363,20 +1380,6 @@ out:
 	return ret;
 }
 
-static void zloop_truncate(struct file *file, loff_t pos)
-{
-	struct mnt_idmap *idmap = file_mnt_idmap(file);
-	struct dentry *dentry = file_dentry(file);
-	struct iattr newattrs;
-
-	newattrs.ia_size = pos;
-	newattrs.ia_valid = ATTR_SIZE;
-
-	inode_lock(dentry->d_inode);
-	notify_change(idmap, dentry, &newattrs, NULL);
-	inode_unlock(dentry->d_inode);
-}
-
 static void zloop_forget_cache(struct zloop_device *zlo)
 {
 	unsigned int i;
@@ -1401,8 +1404,18 @@ static void zloop_forget_cache(struct zloop_device *zlo)
 				zlo->disk->part0, ret);
 			continue;
 		}
-		if (old_wp < zone->wp)
-			zloop_truncate(file, old_wp);
+
+		if (old_wp > zone->wp)
+			continue;
+		/*
+		 * This should not happen, if we recored a full zone, it can't
+		 * be active.
+		 */
+		if (WARN_ON_ONCE(old_wp == ULLONG_MAX))
+			continue;
+
+		vfs_truncate(&file->f_path,
+			(old_wp - zone->start) << SECTOR_SHIFT);
 	}
 }
 

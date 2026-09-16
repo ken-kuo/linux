@@ -40,12 +40,6 @@ static int asoc_sdw_bridge_cs35l56_asp_init(struct snd_soc_pcm_runtime *rtd)
 	struct snd_soc_dai *codec_dai;
 	struct snd_soc_dai *cpu_dai;
 
-	card->components = devm_kasprintf(card->dev, GFP_KERNEL,
-					  "%s spk:cs35l56-bridge",
-					  card->components);
-	if (!card->components)
-		return -ENOMEM;
-
 	ret = snd_soc_dapm_new_controls(dapm, bridge_widgets,
 					ARRAY_SIZE(bridge_widgets));
 	if (ret) {
@@ -105,11 +99,9 @@ static const struct snd_soc_dai_link bridge_dai_template = {
 	SND_SOC_DAILINK_REG(asoc_sdw_bridge_dai),
 };
 
-int asoc_sdw_bridge_cs35l56_count_sidecar(struct snd_soc_card *card,
+int asoc_sdw_bridge_cs35l56_count_sidecar(struct asoc_sdw_mc_private *ctx,
 					  int *num_dais, int *num_devs)
 {
-	struct asoc_sdw_mc_private *ctx = snd_soc_card_get_drvdata(card);
-
 	if (ctx->mc_quirk & SOC_SDW_SIDECAR_AMPS) {
 		(*num_dais)++;
 		(*num_devs) += ARRAY_SIZE(bridge_cs35l56_name_prefixes);

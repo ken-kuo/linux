@@ -32,7 +32,8 @@ static void sdca_dev_release(struct device *dev)
 
 /* alloc, init and add link devices */
 static struct sdca_dev *sdca_dev_register(struct device *parent,
-					  struct sdca_function_desc *function_desc)
+					  struct sdca_function_desc *function_desc,
+					  struct acpi_table_swft *swft)
 {
 	struct sdca_dev *sdev;
 	struct auxiliary_device *auxdev;
@@ -50,6 +51,7 @@ static struct sdca_dev *sdca_dev_register(struct device *parent,
 	auxdev->dev.release = sdca_dev_release;
 
 	sdev->function.desc = function_desc;
+	sdev->function.fdl_data.swft = swft;
 
 	rc = ida_alloc(&sdca_function_ida, GFP_KERNEL);
 	if (rc < 0) {
@@ -82,6 +84,9 @@ static struct sdca_dev *sdca_dev_register(struct device *parent,
 
 static void sdca_dev_unregister(struct sdca_dev *sdev)
 {
+	if (!sdev)
+		return;
+
 	auxiliary_device_delete(&sdev->auxdev);
 	auxiliary_device_uninit(&sdev->auxdev);
 }
@@ -90,14 +95,25 @@ int sdca_dev_register_functions(struct sdw_slave *slave)
 {
 	struct sdca_device_data *sdca_data = &slave->sdca_data;
 	int i;
+	int ret;
 
 	for (i = 0; i < sdca_data->num_functions; i++) {
 		struct sdca_dev *func_dev;
 
 		func_dev = sdca_dev_register(&slave->dev,
-					     &sdca_data->function[i]);
-		if (IS_ERR(func_dev))
-			return PTR_ERR(func_dev);
+					     &sdca_data->function[i],
+					     sdca_data->swft);
+		if (IS_ERR(func_dev)) {
+			ret = PTR_ERR(func_dev);
+			/*
+			 * Unregister functions that were successfully
+			 * registered before this failure. This also
+			 * sets func_dev to NULL so the caller will not
+			 * try to unregister them again.
+			 */
+			sdca_dev_unregister_functions(slave);
+			return ret;
+		}
 
 		sdca_data->function[i].func_dev = func_dev;
 	}
@@ -111,7 +127,12 @@ void sdca_dev_unregister_functions(struct sdw_slave *slave)
 	struct sdca_device_data *sdca_data = &slave->sdca_data;
 	int i;
 
-	for (i = 0; i < sdca_data->num_functions; i++)
+	for (i = 0; i < sdca_data->num_functions; i++) {
+		if (!sdca_data->function[i].func_dev)
+			continue;
+
 		sdca_dev_unregister(sdca_data->function[i].func_dev);
+		sdca_data->function[i].func_dev = NULL;
+	}
 }
 EXPORT_SYMBOL_NS(sdca_dev_unregister_functions, "SND_SOC_SDCA");

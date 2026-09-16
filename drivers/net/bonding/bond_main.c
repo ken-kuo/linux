@@ -787,6 +787,10 @@ down:
  * values are invalid, set speed and duplex to -1,
  * and return. Return 1 if speed or duplex settings are
  * UNKNOWN; 0 otherwise.
+ *
+ * Caller must hold the slave's netdev ops lock. The notifier path
+ * (bond_netdev_event NETDEV_CHANGE/UP) reaches us with the slave's ops
+ * lock held; other call sites take it explicitly.
  */
 static int bond_update_speed_duplex(struct slave *slave)
 {
@@ -794,7 +798,7 @@ static int bond_update_speed_duplex(struct slave *slave)
 	struct ethtool_link_ksettings ecmd;
 	int res;
 
-	res = __ethtool_get_link_ksettings(slave_dev, &ecmd);
+	res = netif_get_link_ksettings(slave_dev, &ecmd);
 	if (res < 0)
 		goto speed_duplex_unknown;
 	if (ecmd.base.speed == 0 || ecmd.base.speed == ((__u32)-1))
@@ -1241,7 +1245,7 @@ static void bond_peer_notify_may_events(struct bonding *bond, bool force)
 	}
 
 	if (notified || force)
-		bond->send_peer_notif--;
+		WRITE_ONCE(bond->send_peer_notif, bond->send_peer_notif - 1);
 }
 
 /**
@@ -1433,7 +1437,7 @@ static void bond_poll_controller(struct net_device *bond_dev)
 
 		if (BOND_MODE(bond) == BOND_MODE_8023AD) {
 			struct aggregator *agg =
-			    SLAVE_AD_INFO(slave)->port.aggregator;
+			    rcu_dereference(SLAVE_AD_INFO(slave)->port.aggregator);
 
 			if (agg &&
 			    agg->aggregator_identifier != ad_info.aggregator_id)
@@ -1890,6 +1894,12 @@ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev,
 	struct sockaddr_storage ss;
 	int res = 0, i;
 
+	if (slave_dev->type == ARPHRD_CAN) {
+		BOND_NL_ERR(bond_dev, extack,
+			    "CAN devices cannot be enslaved");
+		return -EPERM;
+	}
+
 	if (slave_dev->flags & IFF_MASTER &&
 	    !netif_is_bond_master(slave_dev)) {
 		BOND_NL_ERR(bond_dev, extack,
@@ -2106,8 +2116,10 @@ skip_mac_set:
 	new_slave->delay = 0;
 	new_slave->link_failure_count = 0;
 
-	if (bond_update_speed_duplex(new_slave) &&
-	    bond_needs_speed_duplex(bond))
+	netdev_lock_ops(slave_dev);
+	res = bond_update_speed_duplex(new_slave);
+	netdev_unlock_ops(slave_dev);
+	if (res && bond_needs_speed_duplex(bond))
 		new_slave->link = BOND_LINK_DOWN;
 
 	new_slave->last_rx = jiffies -
@@ -2272,7 +2284,7 @@ skip_mac_set:
 		}
 	}
 
-	bond->slave_cnt++;
+	WRITE_ONCE(bond->slave_cnt, bond->slave_cnt + 1);
 	netdev_compute_master_upper_features(bond->dev, true);
 	bond_set_carrier(bond);
 
@@ -2505,9 +2517,7 @@ static int __bond_release_one(struct net_device *bond_dev,
 		bond_alb_deinit_slave(bond, slave);
 	}
 
-	if (all) {
-		RCU_INIT_POINTER(bond->curr_active_slave, NULL);
-	} else if (oldcurrent == slave) {
+	if (!all && oldcurrent == slave) {
 		/* Note that we hold RTNL over this sequence, so there
 		 * is no concern that another slave add/remove event
 		 * will interfere.
@@ -2521,7 +2531,7 @@ static int __bond_release_one(struct net_device *bond_dev,
 
 	unblock_netpoll_tx();
 	synchronize_rcu();
-	bond->slave_cnt--;
+	WRITE_ONCE(bond->slave_cnt, bond->slave_cnt - 1);
 
 	if (!bond_has_slaves(bond)) {
 		call_netdevice_notifiers(NETDEV_CHANGEADDR, bond->dev);
@@ -2774,6 +2784,7 @@ static void bond_miimon_commit(struct bonding *bond)
 	struct slave *slave, *primary, *active;
 	bool do_failover = false;
 	struct list_head *iter;
+	int err;
 
 	ASSERT_RTNL();
 
@@ -2792,8 +2803,10 @@ static void bond_miimon_commit(struct bonding *bond)
 			continue;
 
 		case BOND_LINK_UP:
-			if (bond_update_speed_duplex(slave) &&
-			    bond_needs_speed_duplex(bond)) {
+			netdev_lock_ops(slave->dev);
+			err = bond_update_speed_duplex(slave);
+			netdev_unlock_ops(slave->dev);
+			if (err && bond_needs_speed_duplex(bond)) {
 				slave->link = BOND_LINK_DOWN;
 				if (net_ratelimit())
 					slave_warn(bond->dev, slave->dev,
@@ -3440,7 +3453,8 @@ static void bond_send_validate(struct bonding *bond, struct slave *slave)
 {
 	bond_arp_send_all(bond, slave);
 #if IS_ENABLED(CONFIG_IPV6)
-	bond_ns_send_all(bond, slave);
+	if (likely(ipv6_mod_enabled()))
+		bond_ns_send_all(bond, slave);
 #endif
 }
 
@@ -4369,13 +4383,13 @@ static int bond_open(struct net_device *bond_dev)
 
 	if (bond->params.arp_interval) {  /* arp interval, in milliseconds. */
 		queue_delayed_work(bond->wq, &bond->arp_work, 0);
-		bond->recv_probe = bond_rcv_validate;
+		WRITE_ONCE(bond->recv_probe, bond_rcv_validate);
 	}
 
 	if (BOND_MODE(bond) == BOND_MODE_8023AD) {
 		queue_delayed_work(bond->wq, &bond->ad_work, 0);
 		/* register to receive LACPDUs */
-		bond->recv_probe = bond_3ad_lacpdu_recv;
+		WRITE_ONCE(bond->recv_probe, bond_3ad_lacpdu_recv);
 		bond_3ad_initiate_agg_selection(bond, 1);
 
 		bond_for_each_slave(bond, slave, iter)
@@ -4397,7 +4411,7 @@ static int bond_close(struct net_device *bond_dev)
 	struct slave *slave;
 
 	bond_work_cancel_all(bond);
-	bond->send_peer_notif = 0;
+	WRITE_ONCE(bond->send_peer_notif, 0);
 	WRITE_ONCE(bond->recv_probe, NULL);
 
 	/* Wait for any in-flight RX handlers */
@@ -4615,10 +4629,10 @@ static int bond_do_ioctl(struct net_device *bond_dev, struct ifreq *ifr, int cmd
 
 	slave_dev = __dev_get_by_name(net, ifr->ifr_slave);
 
-	slave_dbg(bond_dev, slave_dev, "slave_dev=%p:\n", slave_dev);
-
 	if (!slave_dev)
 		return -ENODEV;
+
+	slave_dbg(bond_dev, slave_dev, "slave_dev=%p:\n", slave_dev);
 
 	switch (cmd) {
 	case SIOCBONDENSLAVE:
@@ -4842,12 +4856,6 @@ static int bond_set_mac_address(struct net_device *bond_dev, void *addr)
 			  __func__, slave);
 		res = dev_set_mac_address(slave->dev, addr, NULL);
 		if (res) {
-			/* TODO: consider downing the slave
-			 * and retry ?
-			 * User should expect communications
-			 * breakage anyway until ARP finish
-			 * updating, so...
-			 */
 			slave_dbg(bond_dev, slave->dev, "%s: err %d\n",
 				  __func__, res);
 			goto unwind;
@@ -5108,7 +5116,7 @@ static void bond_skip_slave(struct bond_up_slave *slaves,
 		if (skipslave == slaves->arr[idx]) {
 			slaves->arr[idx] =
 				slaves->arr[slaves->count - 1];
-			slaves->count--;
+			WRITE_ONCE(slaves->count, slaves->count - 1);
 			break;
 		}
 	}
@@ -5179,15 +5187,16 @@ int bond_update_slave_arr(struct bonding *bond, struct slave *skipslave)
 		spin_unlock_bh(&bond->mode_lock);
 		agg_id = ad_info.aggregator_id;
 	}
+	rcu_read_lock();
 	bond_for_each_slave(bond, slave, iter) {
 		if (skipslave == slave)
 			continue;
 
 		all_slaves->arr[all_slaves->count++] = slave;
 		if (BOND_MODE(bond) == BOND_MODE_8023AD) {
-			struct aggregator *agg;
+			const struct aggregator *agg;
 
-			agg = SLAVE_AD_INFO(slave)->port.aggregator;
+			agg = rcu_dereference(SLAVE_AD_INFO(slave)->port.aggregator);
 			if (!agg || agg->aggregator_identifier != agg_id)
 				continue;
 		}
@@ -5199,6 +5208,7 @@ int bond_update_slave_arr(struct bonding *bond, struct slave *skipslave)
 
 		usable_slaves->arr[usable_slaves->count++] = slave;
 	}
+	rcu_read_unlock();
 
 	bond_set_slave_arr(bond, usable_slaves, all_slaves);
 	return ret;
@@ -5853,7 +5863,9 @@ static int bond_ethtool_get_link_ksettings(struct net_device *bond_dev,
 	 */
 	bond_for_each_slave(bond, slave, iter) {
 		if (bond_slave_can_tx(slave)) {
+			netdev_lock_ops(slave->dev);
 			bond_update_speed_duplex(slave);
+			netdev_unlock_ops(slave->dev);
 			if (slave->speed != SPEED_UNKNOWN) {
 				if (BOND_MODE(bond) == BOND_MODE_BROADCAST)
 					speed = bond_mode_bcast_speed(slave,
@@ -6438,6 +6450,7 @@ static int __init bond_check_params(struct bond_params *params)
 	params->ad_user_port_key = ad_user_port_key;
 	params->coupled_control = 1;
 	params->broadcast_neighbor = 0;
+	params->lacp_strict = 0;
 	if (packets_per_slave > 0) {
 		params->reciprocal_packets_per_slave =
 			reciprocal_value(packets_per_slave);
@@ -6623,7 +6636,9 @@ static int __init bonding_init(void)
 				flow_keys_bonding_keys,
 				ARRAY_SIZE(flow_keys_bonding_keys));
 
-	register_netdevice_notifier(&bond_netdev_notifier);
+	res = register_netdevice_notifier(&bond_netdev_notifier);
+	if (res)
+		goto err;
 out:
 	return res;
 err:

@@ -110,6 +110,7 @@ struct ntfs_mount_options {
 	unsigned prealloc : 1; /* Preallocate space when file is growing. */
 	unsigned nocase : 1; /* case insensitive. */
 	unsigned delalloc : 1; /* delay allocation. */
+	unsigned ads : 1; /* ads support. */
 };
 
 /* Special value to unpack and deallocate. */
@@ -195,9 +196,6 @@ struct ntfs_index {
 	/* read/write access to 'bitmap_run'/'alloc_run' while ntfs_readdir */
 	struct rw_semaphore run_lock;
 	size_t version; /* increment each change */
-
-	/*TODO: Remove 'cmp'. */
-	NTFS_CMP_FUNC cmp;
 
 	u8 index_bits; // log2(root->index_block_size)
 	u8 idx2vbn_bits; // log2(root->index_block_clst)
@@ -395,13 +393,16 @@ struct ntfs_inode {
 	 */
 	u8 ni_bad;
 
+	/* Keep track of FS_NODUMP_FL. */
+	u8 nodump;
+
 	union {
 		struct ntfs_index dir;
 		struct {
 			struct rw_semaphore run_lock;
 			/* Unpacked runs from just one record. */
 			struct runs_tree run;
-			/* 
+			/*
 			 * Pairs [vcn, len] for all delay allocated clusters.
 			 * Normal file always contains delayed clusters in one fragment.
 			 * TODO: use 2 CLST per pair instead of 3.
@@ -410,6 +411,11 @@ struct ntfs_inode {
 #ifdef CONFIG_NTFS3_LZX_XPRESS
 			struct folio *offs_folio;
 #endif
+			/* Alternative data stream */
+			struct {
+				__le16 *name;
+				u8 len;
+			} ads;
 		} file;
 	};
 
@@ -421,6 +427,7 @@ struct ntfs_inode {
 	} attr_list;
 
 	size_t ni_flags; // NI_FLAG_XXX
+	struct ntfs_inode *base; /* ADS: points to base inode. Other: this. */
 
 	struct inode vfs_inode;
 };
@@ -443,6 +450,11 @@ enum REPARSE_SIGN {
 	REPARSE_DEDUPLICATED = 2,
 	REPARSE_LINK = 3
 };
+
+static inline bool is_ni_base(const struct ntfs_inode *ni)
+{
+	return ni == ni->base;
+}
 
 /* Functions from attrib.c */
 int attr_allocate_clusters(struct ntfs_sb_info *sbi, struct runs_tree *run,
@@ -526,13 +538,21 @@ int ntfs_utf16_to_nls(struct ntfs_sb_info *sbi, const __le16 *name, u32 len,
 int ntfs_nls_to_utf16(struct ntfs_sb_info *sbi, const u8 *name, u32 name_len,
 		      struct cpu_str *uni, u32 max_ulen,
 		      enum utf16_endian endian);
-struct inode *dir_search_u(struct inode *dir, const struct cpu_str *uni,
-			   struct ntfs_fnd *fnd);
+struct inode *dir_search_flags(struct inode *dir, const struct cpu_str *uni,
+			       struct ntfs_fnd *fnd, u32 flags);
+static inline struct inode *dir_search(struct inode *dir,
+				       const struct cpu_str *uni)
+{
+	return dir_search_flags(dir, uni, NULL, 0);
+}
+
 bool dir_is_empty(struct inode *dir);
 extern const struct file_operations ntfs_dir_operations;
-extern const struct file_operations ntfs_legacy_dir_operations;
 
 /* Globals from file.c */
+int ntfs_fileattr_get(struct dentry *dentry, struct file_kattr *fa);
+int ntfs_fileattr_set(struct mnt_idmap *idmap, struct dentry *dentry,
+		      struct file_kattr *fa);
 int ntfs_getattr(struct mnt_idmap *idmap, const struct path *path,
 		 struct kstat *stat, u32 request_mask, u32 flags);
 int ntfs_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
@@ -546,7 +566,6 @@ long ntfs_compat_ioctl(struct file *filp, u32 cmd, unsigned long arg);
 extern const struct inode_operations ntfs_special_inode_operations;
 extern const struct inode_operations ntfs_file_inode_operations;
 extern const struct file_operations ntfs_file_operations;
-extern const struct file_operations ntfs_legacy_file_operations;
 
 /* Globals from frecord.c */
 void ni_remove_mi(struct ntfs_inode *ni, struct mft_inode *mi);
@@ -621,6 +640,7 @@ loff_t ni_seek_data_or_hole(struct ntfs_inode *ni, loff_t offset, bool data);
 int ni_write_parents(struct ntfs_inode *ni, int sync);
 int ni_allocate_da_blocks(struct ntfs_inode *ni);
 int ni_allocate_da_blocks_locked(struct ntfs_inode *ni);
+ssize_t ni_query_ads(struct ntfs_inode *ni, loff_t *pos, struct iov_iter *iter);
 
 /* Globals from fslog.c */
 bool check_index_header(const struct INDEX_HDR *hdr, size_t bytes);
@@ -678,7 +698,6 @@ static inline int ntfs_read_bh(struct ntfs_sb_info *sbi,
 {
 	return ntfs_read_bh_ra(sbi, run, vbo, rhdr, bytes, nb, NULL);
 }
-
 int ntfs_get_bh(struct ntfs_sb_info *sbi, const struct runs_tree *run, u64 vbo,
 		u32 bytes, struct ntfs_buffers *nb);
 int ntfs_write_bh(struct ntfs_sb_info *sbi, struct NTFS_RECORD_HEADER *rhdr,
@@ -771,8 +790,15 @@ int indx_update_dup(struct ntfs_inode *ni, struct ntfs_sb_info *sbi,
 		    const struct NTFS_DUP_INFO *dup, int sync);
 
 /* Globals from inode.c */
-struct inode *ntfs_iget5(struct super_block *sb, const struct MFT_REF *ref,
-			 const struct cpu_str *name);
+struct inode *ntfs_iget5_flags(struct super_block *sb,
+			       const struct MFT_REF *ref,
+			       const struct cpu_str *name, u32 flags);
+static inline struct inode *ntfs_iget5(struct super_block *sb,
+				       const struct MFT_REF *ref,
+				       const struct cpu_str *name)
+{
+	return ntfs_iget5_flags(sb, ref, name, 0);
+}
 int ntfs_set_size(struct inode *inode, u64 new_size);
 int ntfs3_write_inode(struct inode *inode, struct writeback_control *wbc);
 int ntfs_sync_inode(struct inode *inode);
@@ -857,6 +883,9 @@ static inline void mi_get_ref(const struct mft_inode *mi, struct MFT_REF *ref)
 /* Globals from run.c */
 bool run_lookup_entry(const struct runs_tree *run, CLST vcn, CLST *lcn,
 		      CLST *len, size_t *index);
+bool run_lookup_entry_da(const struct runs_tree *run,
+			 const struct runs_tree *run_da, CLST vcn, CLST *lcn,
+			 CLST *len);
 void run_truncate(struct runs_tree *run, CLST vcn);
 void run_truncate_head(struct runs_tree *run, CLST vcn);
 void run_truncate_around(struct runs_tree *run, CLST vcn);
@@ -882,7 +911,8 @@ int run_unpack_ex(struct runs_tree *run, struct ntfs_sb_info *sbi, CLST ino,
 #else
 #define run_unpack_ex run_unpack
 #endif
-int run_get_highest_vcn(CLST vcn, const u8 *run_buf, u64 *highest_vcn);
+int run_get_highest_vcn(CLST vcn, const u8 *run_buf, size_t run_buf_size,
+			u64 *highest_vcn);
 int run_clone(const struct runs_tree *run, struct runs_tree *new_run);
 bool run_remove_range(struct runs_tree *run, CLST vcn, CLST len, CLST *done);
 CLST run_len(const struct runs_tree *run);
@@ -1214,27 +1244,27 @@ static inline void mi_clear(struct mft_inode *mi)
 
 static inline void ni_lock(struct ntfs_inode *ni)
 {
-	mutex_lock_nested(&ni->ni_lock, NTFS_INODE_MUTEX_NORMAL);
+	mutex_lock_nested(&ni->base->ni_lock, NTFS_INODE_MUTEX_NORMAL);
 }
 
 static inline void ni_lock_dir(struct ntfs_inode *ni)
 {
-	mutex_lock_nested(&ni->ni_lock, NTFS_INODE_MUTEX_PARENT);
+	mutex_lock_nested(&ni->base->ni_lock, NTFS_INODE_MUTEX_PARENT);
 }
 
 static inline void ni_lock_dir2(struct ntfs_inode *ni)
 {
-	mutex_lock_nested(&ni->ni_lock, NTFS_INODE_MUTEX_PARENT2);
+	mutex_lock_nested(&ni->base->ni_lock, NTFS_INODE_MUTEX_PARENT2);
 }
 
 static inline void ni_unlock(struct ntfs_inode *ni)
 {
-	mutex_unlock(&ni->ni_lock);
+	mutex_unlock(&ni->base->ni_lock);
 }
 
 static inline int ni_trylock(struct ntfs_inode *ni)
 {
-	return mutex_trylock(&ni->ni_lock);
+	return mutex_trylock(&ni->base->ni_lock);
 }
 
 static inline int attr_load_runs_attr(struct ntfs_inode *ni,
@@ -1249,14 +1279,5 @@ static inline void le64_sub_cpu(__le64 *var, u64 val)
 {
 	*var = cpu_to_le64(le64_to_cpu(*var) - val);
 }
-
-#if IS_ENABLED(CONFIG_NTFS_FS)
-bool is_legacy_ntfs(struct super_block *sb);
-#else
-static inline bool is_legacy_ntfs(struct super_block *sb)
-{
-	return false;
-}
-#endif
 
 #endif /* _LINUX_NTFS3_NTFS_FS_H */

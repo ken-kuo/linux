@@ -2340,6 +2340,7 @@ static struct wmi_driver ideapad_wmi_driver = {
 		.name = "ideapad_wmi",
 	},
 	.id_table = ideapad_wmi_ids,
+	.min_event_size = sizeof(u32),
 	.probe = ideapad_wmi_probe,
 	.notify = ideapad_wmi_notify,
 };
@@ -2563,8 +2564,8 @@ module_init(ideapad_laptop_init)
 
 static void __exit ideapad_laptop_exit(void)
 {
-	ideapad_wmi_driver_unregister();
 	platform_driver_unregister(&ideapad_acpi_driver);
+	ideapad_wmi_driver_unregister();
 }
 module_exit(ideapad_laptop_exit)
 

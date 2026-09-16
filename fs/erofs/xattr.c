@@ -89,13 +89,11 @@ static int erofs_init_inode_xattrs(struct inode *inode)
 	    vi->xattr_isize - sizeof(struct erofs_xattr_ibody_header)) {
 		erofs_err(sb, "invalid h_shared_count %u @ nid %llu",
 			  vi->xattr_shared_count, vi->nid);
-		erofs_put_metabuf(&buf);
 		ret = -EFSCORRUPTED;
 		goto out_unlock;
 	}
 	vi->xattr_shared_xattrs = kmalloc_objs(uint, vi->xattr_shared_count);
 	if (!vi->xattr_shared_xattrs) {
-		erofs_put_metabuf(&buf);
 		ret = -ENOMEM;
 		goto out_unlock;
 	}
@@ -112,12 +110,12 @@ static int erofs_init_inode_xattrs(struct inode *inode)
 		}
 		vi->xattr_shared_xattrs[i] = le32_to_cpu(*xattr_id);
 	}
-	erofs_put_metabuf(&buf);
 
 	/* paired with smp_mb() at the beginning of the function. */
 	smp_mb();
 	set_bit(EROFS_I_EA_INITED_BIT, &vi->flags);
 out_unlock:
+	erofs_put_metabuf(&buf);
 	clear_and_wake_up_bit(EROFS_I_BL_XATTR_BIT, &vi->flags);
 	return ret;
 }
@@ -622,8 +620,8 @@ int erofs_xattr_fill_inode_fingerprint(struct erofs_inode_fingerprint *fp,
 {
 	struct erofs_sb_info *sbi = EROFS_SB(inode->i_sb);
 	struct erofs_xattr_prefix_item *prefix;
+	int domainlen, valuelen, base_index;
 	const char *infix;
-	int valuelen, base_index;
 
 	if (!test_opt(&sbi->opt, INODE_SHARE))
 		return -EOPNOTSUPP;
@@ -635,17 +633,18 @@ int erofs_xattr_fill_inode_fingerprint(struct erofs_inode_fingerprint *fp,
 	valuelen = erofs_getxattr(inode, base_index, infix, NULL, 0);
 	if (valuelen <= 0 || valuelen > (1 << sbi->blkszbits))
 		return -EFSCORRUPTED;
-	fp->size = valuelen + (domain_id ? strlen(domain_id) : 0);
+	domainlen = strlen(domain_id);
+	fp->size = domainlen + 1 + valuelen;
 	fp->opaque = kmalloc(fp->size, GFP_KERNEL);
 	if (!fp->opaque)
 		return -ENOMEM;
+	memcpy(fp->opaque, domain_id, domainlen + 1);
 	if (valuelen != erofs_getxattr(inode, base_index, infix,
-				       fp->opaque, valuelen)) {
+				       fp->opaque + domainlen + 1, valuelen)) {
 		kfree(fp->opaque);
 		fp->opaque = NULL;
 		return -EFSCORRUPTED;
 	}
-	memcpy(fp->opaque + valuelen, domain_id, fp->size - valuelen);
 	return 0;
 }
 #endif

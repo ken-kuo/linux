@@ -7,6 +7,7 @@
 #include <linux/kvm_types.h>
 
 #include <asm/asm.h>
+#include <asm/frame.h>
 #include <asm/fred.h>
 #include <asm/segment.h>
 
@@ -19,6 +20,7 @@
 	UNWIND_HINT_END_OF_STACK
 	ANNOTATE_NOENDBR
 	PUSH_AND_CLEAR_REGS
+	ENCODE_FRAME_POINTER
 	movq	%rsp, %rdi	/* %rdi -> pt_regs */
 .endm
 
@@ -147,5 +149,4 @@ SYM_FUNC_START(asm_fred_entry_from_kvm)
 	RET
 
 SYM_FUNC_END(asm_fred_entry_from_kvm)
-EXPORT_SYMBOL_FOR_KVM(asm_fred_entry_from_kvm);
 #endif

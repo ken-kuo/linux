@@ -21,6 +21,7 @@
 #include "mds_client.h"
 #include "cache.h"
 #include "crypto.h"
+#include "subvolume_metrics.h"
 
 #include <linux/ceph/ceph_features.h>
 #include <linux/ceph/decode.h>
@@ -176,6 +177,7 @@ enum {
 	Opt_wsync,
 	Opt_pagecache,
 	Opt_sparseread,
+	Opt_nearfull_sync,
 };
 
 enum ceph_recover_session_mode {
@@ -204,6 +206,7 @@ static const struct fs_parameter_spec ceph_mount_parameters[] = {
 	fsparam_flag_no ("ino32",			Opt_ino32),
 	fsparam_string	("mds_namespace",		Opt_mds_namespace),
 	fsparam_string	("mon_addr",			Opt_mon_addr),
+	fsparam_flag_no	("nearfull_sync",		Opt_nearfull_sync),
 	fsparam_flag_no ("poolperm",			Opt_poolperm),
 	fsparam_flag_no ("quotadf",			Opt_quotadf),
 	fsparam_u32	("rasize",			Opt_rasize),
@@ -592,6 +595,12 @@ static int ceph_parse_mount_param(struct fs_context *fc,
 		else
 			fsopt->flags |= CEPH_MOUNT_OPT_SPARSEREAD;
 		break;
+	case Opt_nearfull_sync:
+		if (result.negated)
+			fsopt->flags &= ~CEPH_MOUNT_OPT_NEARFULL_SYNC;
+		else
+			fsopt->flags |= CEPH_MOUNT_OPT_NEARFULL_SYNC;
+		break;
 	case Opt_test_dummy_encryption:
 #ifdef CONFIG_FS_ENCRYPTION
 		fscrypt_free_dummy_policy(&fsopt->dummy_enc_policy);
@@ -748,6 +757,8 @@ static int ceph_show_options(struct seq_file *m, struct dentry *root)
 		seq_puts(m, ",nopagecache");
 	if (fsopt->flags & CEPH_MOUNT_OPT_SPARSEREAD)
 		seq_puts(m, ",sparseread");
+	if (fsopt->flags & CEPH_MOUNT_OPT_NEARFULL_SYNC)
+		seq_puts(m, ",nearfull_sync");
 
 	fscrypt_show_test_dummy_encryption(m, ',', root->d_sb);
 
@@ -966,8 +977,14 @@ static int __init init_caches(void)
 	if (!ceph_wb_pagevec_pool)
 		goto bad_pagevec_pool;
 
+	error = ceph_subvolume_metrics_cache_init();
+	if (error)
+		goto bad_subvol_metrics;
+
 	return 0;
 
+bad_subvol_metrics:
+	mempool_destroy(ceph_wb_pagevec_pool);
 bad_pagevec_pool:
 	kmem_cache_destroy(ceph_mds_request_cachep);
 bad_mds_req:
@@ -1004,6 +1021,7 @@ static void destroy_caches(void)
 	kmem_cache_destroy(ceph_dir_file_cachep);
 	kmem_cache_destroy(ceph_mds_request_cachep);
 	mempool_destroy(ceph_wb_pagevec_pool);
+	ceph_subvolume_metrics_cache_destroy();
 }
 
 static void __ceph_umount_begin(struct ceph_fs_client *fsc)
@@ -1401,6 +1419,11 @@ static int ceph_reconfigure_fc(struct fs_context *fc)
 		ceph_set_mount_opt(fsc, SPARSEREAD);
 	else
 		ceph_clear_mount_opt(fsc, SPARSEREAD);
+
+	if (fsopt->flags & CEPH_MOUNT_OPT_NEARFULL_SYNC)
+		ceph_set_mount_opt(fsc, NEARFULL_SYNC);
+	else
+		ceph_clear_mount_opt(fsc, NEARFULL_SYNC);
 
 	if (strcmp_null(fsc->mount_options->mon_addr, fsopt->mon_addr)) {
 		kfree(fsc->mount_options->mon_addr);

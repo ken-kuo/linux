@@ -154,7 +154,7 @@ TRACE_EVENT(kvm_xen_hypercall,
 		__entry->a2 = a2;
 		__entry->a3 = a3;
 		__entry->a4 = a4;
-		__entry->a4 = a5;
+		__entry->a5 = a5;
 	),
 
 	TP_printk("cpl %d nr 0x%lx a0 0x%lx a1 0x%lx a2 0x%lx a3 0x%lx a4 0x%lx a5 %lx",
@@ -490,7 +490,7 @@ TRACE_EVENT(kvm_inj_exception,
 	TP_printk("%s%s%s%s%s",
 		  __print_symbolic(__entry->exception, kvm_trace_sym_exc),
 		  !__entry->has_error ? "" : " (",
-		  !__entry->has_error ? "" : __print_symbolic(__entry->error_code, { }),
+		  !__entry->has_error ? "" : __print_symbolic(__entry->error_code),
 		  !__entry->has_error ? "" : ")",
 		  __entry->reinjected ? " [reinjected]" : "")
 );

@@ -201,7 +201,7 @@ static int quirks_param_set(const char *value, const struct kernel_param *kp)
 			count++;
 	}
 
-	qlist = kcalloc(count, sizeof(*qlist), GFP_KERNEL);
+	qlist = kzalloc_objs(*qlist, count);
 	if (!qlist) {
 		err = -ENOMEM;
 		goto out_free_val;
@@ -213,6 +213,7 @@ static int quirks_param_set(const char *value, const struct kernel_param *kp)
 		if (nvme_parse_quirk_entry(field, &qlist[i])) {
 			pr_err("nvme: failed to parse quirk string %s\n",
 				value);
+			err = -EINVAL;
 			goto out_free_qlist;
 		}
 
@@ -366,7 +367,8 @@ struct nvme_queue {
 	struct nvme_dev *dev;
 	struct nvme_descriptor_pools descriptor_pools;
 	spinlock_t sq_lock;
-	void *sq_cmds;
+	void *sq_cmds
+		__guarded_by(&sq_lock);
 	 /* only used for poll queues: */
 	spinlock_t cq_poll_lock ____cacheline_aligned_in_smp;
 	struct nvme_completion *cqes;
@@ -375,9 +377,11 @@ struct nvme_queue {
 	u32 __iomem *q_db;
 	u32 q_depth;
 	u16 cq_vector;
-	u16 sq_tail;
-	u16 last_sq_tail;
 	u16 cq_head;
+	u16 sq_tail
+		__guarded_by(&sq_lock);
+	u16 last_sq_tail
+		__guarded_by(&sq_lock);
 	u16 qid;
 	u8 cq_phase;
 	u8 sqes;
@@ -587,10 +591,15 @@ static bool nvme_dbbuf_update_and_check_event(u16 value, __le32 *dbbuf_db,
 }
 
 static struct nvme_descriptor_pools *
-nvme_setup_descriptor_pools(struct nvme_dev *dev, unsigned numa_node)
+nvme_setup_descriptor_pools(struct nvme_dev *dev, int numa_node)
 {
-	struct nvme_descriptor_pools *pools = &dev->descriptor_pools[numa_node];
+	struct nvme_descriptor_pools *pools;
 	size_t small_align = NVME_SMALL_POOL_SIZE;
+
+	if (numa_node == NUMA_NO_NODE)
+		numa_node = 0;
+
+	pools = &dev->descriptor_pools[numa_node];
 
 	if (pools->small)
 		return pools; /* already initialized */
@@ -660,7 +669,7 @@ static int nvme_init_hctx(struct blk_mq_hw_ctx *hctx, void *data,
 
 static int nvme_pci_init_request(struct blk_mq_tag_set *set,
 		struct request *req, unsigned int hctx_idx,
-		unsigned int numa_node)
+		int numa_node)
 {
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
 
@@ -711,6 +720,7 @@ static void nvme_pci_map_queues(struct blk_mq_tag_set *set)
  * Write sq tail if we are asked to, or if the next command would wrap.
  */
 static inline void nvme_write_sq_db(struct nvme_queue *nvmeq, bool write_sq)
+	__must_hold(&nvmeq->sq_lock)
 {
 	if (!write_sq) {
 		u16 next_tail = nvmeq->sq_tail + 1;
@@ -729,6 +739,7 @@ static inline void nvme_write_sq_db(struct nvme_queue *nvmeq, bool write_sq)
 
 static inline void nvme_sq_copy_cmd(struct nvme_queue *nvmeq,
 				    struct nvme_command *cmd)
+	__must_hold(&nvmeq->sq_lock)
 {
 	memcpy(nvmeq->sq_cmds + (nvmeq->sq_tail << nvmeq->sqes),
 		absolute_pointer(cmd), sizeof(*cmd));
@@ -966,7 +977,8 @@ static bool nvme_pci_prp_save_mapping(struct request *req,
 {
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
 
-	if (dma_use_iova(&iod->dma_state) || !dma_need_unmap(dma_dev))
+	if (dma_use_iova(&iod->dma_state) || !dma_need_unmap(dma_dev) ||
+	    (iod->flags & IOD_DATA_P2P))
 		return true;
 
 	if (!iod->nr_dma_vecs) {
@@ -996,6 +1008,23 @@ static bool nvme_pci_prp_iter_next(struct request *req, struct device *dma_dev,
 	return nvme_pci_prp_save_mapping(req, dma_dev, iter);
 }
 
+static void nvme_unmap_iter(struct request *req, struct blk_dma_iter *iter,
+			    struct dma_iova_state *state)
+{
+	struct nvme_queue *nvmeq = req->mq_hctx->driver_data;
+	struct device *dev = nvmeq->dev->dev;
+
+	if (!blk_rq_dma_unmap(req, dev, state, iter->len, iter->p2pdma.map)) {
+		unsigned int attrs = 0;
+
+		if (iter->p2pdma.map == PCI_P2PDMA_MAP_THRU_HOST_BRIDGE)
+			attrs |= DMA_ATTR_MMIO;
+
+		dma_unmap_phys(dev, iter->addr, iter->len, rq_dma_dir(req),
+			       attrs);
+	}
+}
+
 static blk_status_t nvme_pci_setup_data_prp(struct request *req,
 		struct blk_dma_iter *iter)
 {
@@ -1006,8 +1035,10 @@ static blk_status_t nvme_pci_setup_data_prp(struct request *req,
 	unsigned int prp_len, i;
 	__le64 *prp_list;
 
-	if (!nvme_pci_prp_save_mapping(req, nvmeq->dev->dev, iter))
+	if (!nvme_pci_prp_save_mapping(req, nvmeq->dev->dev, iter)) {
+		nvme_unmap_iter(req, iter, &iod->dma_state);
 		return iter->status;
+	}
 
 	/*
 	 * PRP1 always points to the start of the DMA transfers.
@@ -1112,6 +1143,7 @@ bad_sgl:
 	dev_err_once(nvmeq->dev->dev,
 		"Incorrectly formed request for payload:%d nents:%d\n",
 		blk_rq_payload_bytes(req), blk_rq_nr_phys_segments(req));
+	nvme_unmap_data(req);
 	return BLK_STS_IOERR;
 }
 
@@ -1155,8 +1187,11 @@ static blk_status_t nvme_pci_setup_data_sgl(struct request *req,
 
 	sg_list = dma_pool_alloc(nvme_dma_pool(nvmeq, iod), GFP_ATOMIC,
 			&sgl_dma);
-	if (!sg_list)
+	if (!sg_list) {
+		nvme_unmap_iter(req, iter, &iod->dma_state);
 		return BLK_STS_RESOURCE;
+	}
+
 	iod->descriptors[iod->nr_descriptors++] = sg_list;
 
 	do {
@@ -1313,8 +1348,10 @@ static blk_status_t nvme_pci_setup_meta_iter(struct request *req)
 
 	sg_list = dma_pool_alloc(nvmeq->descriptor_pools.small, GFP_ATOMIC,
 			&sgl_dma);
-	if (!sg_list)
+	if (!sg_list) {
+		nvme_unmap_iter(req, &iter, &iod->meta_dma_state);
 		return BLK_STS_RESOURCE;
+	}
 
 	iod->meta_descriptor = sg_list;
 	iod->meta_dma = sgl_dma;
@@ -1549,13 +1586,18 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq,
 
 	req = nvme_find_rq(nvme_queue_tagset(nvmeq), command_id);
 	if (unlikely(!req)) {
-		dev_warn(nvmeq->dev->ctrl.device,
-			"invalid id %d completed on queue %d\n",
-			command_id, le16_to_cpu(cqe->sq_id));
+		dev_warn_ratelimited(nvmeq->dev->ctrl.device,
+				     "invalid id %d completed on queue %d\n",
+				     command_id, le16_to_cpu(cqe->sq_id));
 		return;
 	}
 
-	trace_nvme_sq(req, cqe->sq_head, nvmeq->sq_tail);
+	/*
+	 * Tracing only; annotate a lockless snapshot of nvmeq->sq_tail using
+	 * data_race(). This would also help suppress context analysis warning
+	 * while accessing nvmeq->sq_tail without acquiring ->sq_lock.
+	 */
+	trace_nvme_sq(req, cqe->sq_head, data_race(nvmeq->sq_tail));
 	if (!nvme_try_complete_req(req, cqe->status, cqe->result) &&
 	    !blk_mq_add_to_batch(req, iob,
 				 nvme_req(req)->status != NVME_SC_SUCCESS,
@@ -1982,6 +2024,7 @@ disable:
 }
 
 static void nvme_free_queue(struct nvme_queue *nvmeq)
+	__context_unsafe(/* frees queue which is no longer in use */)
 {
 	dma_free_coherent(nvmeq->dev->dev, CQ_SIZE(nvmeq),
 				(void *)nvmeq->cqes, nvmeq->cq_dma_addr);
@@ -2076,6 +2119,7 @@ static int nvme_cmb_qdepth(struct nvme_dev *dev, int nr_io_queues,
 
 static int nvme_alloc_sq_cmds(struct nvme_dev *dev, struct nvme_queue *nvmeq,
 				int qid)
+	__context_unsafe(/* safe to allocate sq_cmds without any protection */)
 {
 	struct pci_dev *pdev = to_pci_dev(dev->dev);
 
@@ -2150,6 +2194,7 @@ static int queue_request_irq(struct nvme_queue *nvmeq)
 }
 
 static void nvme_init_queue(struct nvme_queue *nvmeq, u16 qid)
+	__context_unsafe(/* initialize unpublished/lock-guarded variables */)
 {
 	struct nvme_dev *dev = nvmeq->dev;
 
@@ -2168,6 +2213,7 @@ static void nvme_init_queue(struct nvme_queue *nvmeq, u16 qid)
  * Try getting shutdown_lock while setting up IO queues.
  */
 static int nvme_setup_io_queues_trylock(struct nvme_dev *dev)
+	__cond_acquires(0, &dev->shutdown_lock)
 {
 	/*
 	 * Give up if the lock is being held by nvme_dev_disable.
@@ -2241,6 +2287,7 @@ release_cq:
 static const struct blk_mq_ops nvme_mq_admin_ops = {
 	.queue_rq	= nvme_queue_rq,
 	.complete	= nvme_pci_complete_rq,
+	.commit_rqs	= nvme_commit_rqs,
 	.init_hctx	= nvme_admin_init_hctx,
 	.init_request	= nvme_pci_init_request,
 	.timeout	= nvme_timeout,
@@ -2368,6 +2415,7 @@ static int nvme_pci_configure_admin_queue(struct nvme_dev *dev)
 	result = queue_request_irq(nvmeq);
 	if (result) {
 		dev->online_queues--;
+		nvme_disable_ctrl(&dev->ctrl, false);
 		return result;
 	}
 
@@ -2532,11 +2580,13 @@ static void nvme_free_host_mem_multi(struct nvme_dev *dev)
 
 static void nvme_free_host_mem(struct nvme_dev *dev)
 {
-	if (dev->hmb_sgt)
+	if (dev->hmb_sgt) {
 		dma_free_noncontiguous(dev->dev, dev->host_mem_size,
 				dev->hmb_sgt, DMA_BIDIRECTIONAL);
-	else
+		dev->hmb_sgt = NULL;
+	} else {
 		nvme_free_host_mem_multi(dev);
+	}
 
 	dma_free_coherent(dev->dev, dev->host_mem_descs_size,
 			dev->host_mem_descs, dev->host_mem_descs_dma);
@@ -2809,6 +2859,7 @@ static const struct attribute_group nvme_pci_dev_attrs_group = {
 static const struct attribute_group *nvme_pci_dev_attr_groups[] = {
 	&nvme_dev_attrs_group,
 	&nvme_pci_dev_attrs_group,
+	&nvme_dev_diag_attrs_group,
 	NULL,
 };
 
@@ -3093,7 +3144,7 @@ static bool __nvme_delete_io_queues(struct nvme_dev *dev, u8 opcode)
 	unsigned long timeout;
 
  retry:
-	timeout = NVME_ADMIN_TIMEOUT;
+	timeout = dev->ctrl.admin_timeout;
 	while (nr_queues > 0) {
 		if (nvme_delete_queue(&dev->queues[nr_queues], opcode))
 			break;
@@ -3275,7 +3326,7 @@ static void nvme_dev_disable(struct nvme_dev *dev, bool shutdown)
 		 * if doing a safe shutdown.
 		 */
 		if (!dead && shutdown)
-			nvme_wait_freeze_timeout(&dev->ctrl, NVME_IO_TIMEOUT);
+			nvme_wait_freeze_timeout(&dev->ctrl);
 	}
 
 	nvme_quiesce_io_queues(&dev->ctrl);
@@ -3803,6 +3854,7 @@ out_disable:
 	nvme_dev_remove_admin(dev);
 	nvme_dbbuf_dma_free(dev);
 	nvme_free_queues(dev, 0);
+	nvme_release_descriptor_pools(dev);
 out_release_iod_mempool:
 	mempool_destroy(dev->dmavec_mempool);
 out_dev_unmap:
@@ -3915,6 +3967,7 @@ static int nvme_suspend(struct device *dev)
 	 * use host managed nvme power settings for lowest idle power if
 	 * possible. This should have quicker resume latency than a full device
 	 * shutdown.  But if the firmware is involved after the suspend or the
+	 * platform has any limitation in waking from low power states or the
 	 * device does not support any non-default power states, shut down the
 	 * device fully.
 	 *
@@ -3923,7 +3976,7 @@ static int nvme_suspend(struct device *dev)
 	 * down, so as to allow the platform to achieve its minimum low-power
 	 * state (which may not be possible if the link is up).
 	 */
-	if (pm_suspend_via_firmware() || !ctrl->npss ||
+	if (!pci_suspend_retains_context(pdev) || !ctrl->npss ||
 	    !pcie_aspm_enabled(pdev) ||
 	    (ndev->ctrl.quirks & NVME_QUIRK_SIMPLE_SUSPEND))
 		return nvme_disable_prepare_reset(ndev, true);
@@ -4104,6 +4157,8 @@ static const struct pci_device_id nvme_id_table[] = {
 		.driver_data = NVME_QUIRK_DELAY_BEFORE_CHK_RDY, },
 	{ PCI_DEVICE(0x1c5f, 0x0540),	/* Memblaze Pblaze4 adapter */
 		.driver_data = NVME_QUIRK_DELAY_BEFORE_CHK_RDY, },
+	{ PCI_DEVICE(0x1c5f, 0x0555),	/* Memblaze Pblaze5 adapter */
+		.driver_data = NVME_QUIRK_NO_NS_DESC_LIST, },
 	{ PCI_DEVICE(0x144d, 0xa821),   /* Samsung PM1725 */
 		.driver_data = NVME_QUIRK_DELAY_BEFORE_CHK_RDY, },
 	{ PCI_DEVICE(0x144d, 0xa822),   /* Samsung PM1725a */

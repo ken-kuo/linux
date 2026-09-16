@@ -18,7 +18,6 @@
 #include <linux/init.h>
 #include <linux/io.h>
 #include <linux/iopoll.h>
-#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/of_address.h>
 #include <linux/platform_device.h>
@@ -253,6 +252,22 @@ static void cpg_rzt2h_mstp_write(struct cpg_mssr_priv *priv, u16 offset, u32 val
 	writel(value, base + RZT2H_MSTPCR_OFFSET(offset));
 }
 
+static void cpg_rzt2h_mstp_delay(u32 idx, bool bit_valid)
+{
+	unsigned int mask = bit_valid ? GENMASK(31, 0) : GENMASK(31, 5);
+
+	if (idx == (MOD_CLK_PACK(1204) & mask)) {
+		/* LCDC needs 100 dummy reads, or 142us */
+		udelay(142);
+	} else if (idx == (MOD_CLK_PACK(605) & mask)) {
+		/* RTC needs 300 dummy reads, or 428us */
+		udelay(428);
+	} else {
+		/* default 7 dummy reads, or 10us */
+		udelay(10);
+	}
+}
+
 static int cpg_mstp_clock_endisable(struct clk_hw *hw, bool enable)
 {
 	struct mstp_clock *clock = to_mstp_clock(hw);
@@ -312,7 +327,7 @@ static int cpg_mstp_clock_endisable(struct clk_hw *hw, bool enable)
 		 * register, we simply add a delay after the read operation.
 		 */
 		cpg_rzt2h_mstp_read(priv, priv->control_regs[reg]);
-		udelay(10);
+		cpg_rzt2h_mstp_delay(clock->index, true);
 		return 0;
 	}
 
@@ -369,6 +384,9 @@ struct clk *cpg_mssr_clk_src_twocell_get(struct of_phandle_args *clkspec,
 	const char *type;
 	struct clk *clk;
 	int range_check;
+
+	if (clkspec->args_count != 2)
+		return ERR_PTR(-EINVAL);
 
 	switch (clkspec->args[0]) {
 	case CPG_CORE:
@@ -569,7 +587,7 @@ fail:
 struct cpg_mssr_clk_domain {
 	struct generic_pm_domain genpd;
 	unsigned int num_core_pm_clks;
-	unsigned int core_pm_clks[];
+	unsigned int core_pm_clks[] __counted_by(num_core_pm_clks);
 };
 
 static struct cpg_mssr_clk_domain *cpg_mssr_clk_domain;
@@ -667,7 +685,7 @@ static int __init cpg_mssr_add_clk_domain(struct device *dev,
 	size_t pm_size = num_core_pm_clks * sizeof(core_pm_clks[0]);
 	int ret;
 
-	pd = devm_kzalloc(dev, sizeof(*pd) + pm_size, GFP_KERNEL);
+	pd = devm_kzalloc(dev, struct_size(pd, core_pm_clks, num_core_pm_clks), GFP_KERNEL);
 	if (!pd)
 		return -ENOMEM;
 
@@ -1139,7 +1157,7 @@ static int cpg_mssr_resume_noirq(struct device *dev)
 			cpg_rzt2h_mstp_write(priv, priv->control_regs[reg], newval);
 			/* See cpg_mstp_clock_endisable() on why this is necessary. */
 			cpg_rzt2h_mstp_read(priv, priv->control_regs[reg]);
-			udelay(10);
+			cpg_rzt2h_mstp_delay(reg * 32, false);
 			continue;
 		} else
 			writel(newval, priv->pub.base0 + priv->control_regs[reg]);

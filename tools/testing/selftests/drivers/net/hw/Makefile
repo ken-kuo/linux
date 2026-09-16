@@ -19,7 +19,7 @@ TEST_GEN_FILES := \
 
 TEST_PROGS = \
 	csum.py \
-	devlink_port_split.py \
+	devlink_rate_cross_esw.py \
 	devlink_rate_tc_bw.py \
 	devmem.py \
 	ethtool.sh \
@@ -31,9 +31,11 @@ TEST_PROGS = \
 	hw_stats_l3.sh \
 	hw_stats_l3_gre.sh \
 	iou-zcrx.py \
+	ipsec_vxlan.py \
 	irq.py \
 	loopback.sh \
 	nic_timestamp.py \
+	nk_devmem.py \
 	nk_netns.py \
 	nk_qlease.py \
 	ntuple.py \
@@ -45,12 +47,18 @@ TEST_PROGS = \
 	rss_input_xfrm.py \
 	toeplitz.py \
 	tso.py \
+	userns_devmem.py \
 	uso.py \
 	xdp_metadata.py \
 	xsk_reconfig.py \
 	#
 
+TEST_PROGS_EXTENDED := \
+	devlink_port_split.py \
+# end of TEST_PROGS_EXTENDED
+
 TEST_FILES := \
+	devmem_lib.py \
 	ethtool_lib.sh \
 	#
 

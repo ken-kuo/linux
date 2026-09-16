@@ -1029,6 +1029,15 @@ xfs_trans_roll(
 	 * duplicate transaction that gets returned.
 	 */
 	error = __xfs_trans_commit(tp, true);
+
+	tp = *tpp;
+	/*
+	 * __xfs_trans_commit cleared the NOFS flag by calling into
+	 * xfs_trans_free.  Set it again here before doing memory
+	 * allocations.
+	 */
+	xfs_trans_set_context(tp);
+
 	if (error)
 		return error;
 
@@ -1040,13 +1049,6 @@ xfs_trans_roll(
 	 * either nothing be locked across this call, or that anything that is
 	 * locked be logged in the prior and the next transactions.
 	 */
-	tp = *tpp;
-	/*
-	 * __xfs_trans_commit cleared the NOFS flag by calling into
-	 * xfs_trans_free.  Set it again here before doing memory
-	 * allocations.
-	 */
-	xfs_trans_set_context(tp);
 	error = xfs_log_regrant(tp->t_mountp, tp->t_ticket);
 	if (error)
 		return error;
@@ -1164,7 +1166,7 @@ xfs_trans_reserve_more_inode(
 	if (error)
 		return error;
 
-	if (!XFS_IS_QUOTA_ON(mp) || xfs_is_quota_inode(&mp->m_sb, ip->i_ino))
+	if (!XFS_IS_QUOTA_ON(mp) || xfs_is_quota_inode(&mp->m_sb, I_INO(ip)))
 		return 0;
 
 	if (tp->t_flags & XFS_TRANS_RESERVE)
@@ -1199,10 +1201,21 @@ xfs_trans_alloc_icreate(
 {
 	struct xfs_trans	*tp;
 	bool			retried = false;
+	bool			flushed = false;
 	int			error;
 
 retry:
 	error = xfs_trans_alloc(mp, resv, dblocks, 0, 0, &tp);
+	if (error == -ENOSPC && !flushed) {
+		/*
+		 * Flush all delalloc blocks to reclaim space from speculative
+		 * preallocation.  This is similar to the quota retry below
+		 * but targets FS-wide ENOSPC.
+		 */
+		xfs_flush_inodes(mp);
+		flushed = true;
+		goto retry;
+	}
 	if (error)
 		return error;
 

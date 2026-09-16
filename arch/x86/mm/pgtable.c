@@ -74,9 +74,9 @@ static void pgd_set_mm(pgd_t *pgd, struct mm_struct *mm)
 	virt_to_ptdesc(pgd)->pt_mm = mm;
 }
 
-struct mm_struct *pgd_page_get_mm(struct page *page)
+struct mm_struct *pgd_page_get_mm(struct ptdesc *pt)
 {
-	return page_ptdesc(page)->pt_mm;
+	return pt->pt_mm;
 }
 
 static void pgd_ctor(struct mm_struct *mm, pgd_t *pgd)
@@ -98,17 +98,6 @@ static void pgd_dtor(pgd_t *pgd)
 	pgd_list_del(pgd);
 	spin_unlock(&pgd_lock);
 }
-
-/*
- * List of all pgd's needed for non-PAE so it can invalidate entries
- * in both cached and uncached pgd's; not needed for PAE since the
- * kernel pmd is shared. If PAE were not to share the pmd a similar
- * tactic would be needed. This is essentially codepath-based locking
- * against pageattr.c; it is the unique case in which a valid change
- * of kernel pagetables can't be lazily synchronized by vmalloc faults.
- * vmalloc faults work because attached pagetables are never freed.
- * -- nyc
- */
 
 #ifdef CONFIG_X86_PAE
 /*

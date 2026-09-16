@@ -134,7 +134,7 @@ static inline void coda_dir_drop_nlink(struct inode *dir)
 
 /* creation routines: create, mknod, mkdir, link, symlink */
 static int coda_create(struct mnt_idmap *idmap, struct inode *dir,
-		       struct dentry *de, umode_t mode, bool excl)
+		       struct dentry *de, umode_t mode)
 {
 	int error;
 	const char *name=de->d_name.name;
@@ -179,7 +179,12 @@ static struct dentry *coda_mkdir(struct mnt_idmap *idmap, struct inode *dir,
 	if (is_root_inode(dir) && coda_iscontrol(name, len))
 		return ERR_PTR(-EPERM);
 
-	attrs.va_mode = mode;
+	/*
+	 * vfs_mkdir() now passes S_IFDIR in @mode, but @mode is forwarded
+	 * verbatim to userspace, which has only ever been given the permission
+	 * bits. Strip the type bit until venus is known to cope with it.
+	 */
+	attrs.va_mode = mode & ~S_IFDIR;
 	error = venus_mkdir(dir->i_sb, coda_i2f(dir),
 			       name, len, &newfid, &attrs);
 	if (error)
@@ -449,8 +454,6 @@ static int coda_dentry_revalidate(struct inode *dir, const struct qstr *name,
 	inode = d_inode(de);
 	if (!inode || is_root_inode(inode))
 		goto out;
-	if (is_bad_inode(inode))
-		goto bad;
 
 	cii = ITOC(d_inode(de));
 	if (!(cii->c_flags & (C_PURGE | C_FLUSH)))
@@ -470,7 +473,6 @@ static int coda_dentry_revalidate(struct inode *dir, const struct qstr *name,
 	spin_lock(&cii->c_lock);
 	cii->c_flags &= ~(C_VATTR | C_PURGE | C_FLUSH);
 	spin_unlock(&cii->c_lock);
-bad:
 	return 0;
 out:
 	return 1;
@@ -482,18 +484,12 @@ out:
  */
 static int coda_dentry_delete(const struct dentry * dentry)
 {
-	struct inode *inode;
-	struct coda_inode_info *cii;
+	struct inode *inode = d_inode(dentry);
 
-	if (d_really_is_negative(dentry)) 
+	if (!inode)
 		return 0;
 
-	inode = d_inode(dentry);
-	if (!inode || is_bad_inode(inode))
-		return 1;
-
-	cii = ITOC(inode);
-	if (cii->c_flags & C_PURGE)
+	if (ITOC(inode)->c_flags & C_PURGE)
 		return 1;
 
 	return 0;

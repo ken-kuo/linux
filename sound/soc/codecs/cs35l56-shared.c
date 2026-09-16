@@ -96,6 +96,7 @@ int cs35l56_set_patch(struct cs35l56_base *cs35l56_base)
 					    ARRAY_SIZE(cs35l56_patch_fw));
 		break;
 	case 0x63:
+	case 0x62:
 		ret = regmap_register_patch(cs35l56_base->regmap, cs35l63_patch_fw,
 					    ARRAY_SIZE(cs35l63_patch_fw));
 		break;
@@ -108,8 +109,6 @@ int cs35l56_set_patch(struct cs35l56_base *cs35l56_base)
 EXPORT_SYMBOL_NS_GPL(cs35l56_set_patch, "SND_SOC_CS35L56_SHARED");
 
 static const struct reg_default cs35l56_reg_defaults[] = {
-	/* no defaults for OTP_MEM - first read populates cache */
-
 	{ CS35L56_ASP1_ENABLES1,		0x00000000 },
 	{ CS35L56_ASP1_CONTROL1,		0x00000028 },
 	{ CS35L56_ASP1_CONTROL2,		0x18180200 },
@@ -138,8 +137,6 @@ static const struct reg_default cs35l56_reg_defaults[] = {
 };
 
 static const struct reg_default cs35l63_reg_defaults[] = {
-	/* no defaults for OTP_MEM - first read populates cache */
-
 	{ CS35L56_ASP1_ENABLES1,		0x00000000 },
 	{ CS35L56_ASP1_CONTROL1,		0x00000028 },
 	{ CS35L56_ASP1_CONTROL2,		0x18180200 },
@@ -282,6 +279,9 @@ static bool cs35l56_common_volatile_reg(unsigned int reg)
 	case CS35L56_GLOBAL_ENABLES:		   /* owned by firmware */
 	case CS35L56_BLOCK_ENABLES:		   /* owned by firmware */
 	case CS35L56_BLOCK_ENABLES2:		   /* owned by firmware */
+	case CS35L56_OTP_MEM_53:
+	case CS35L56_OTP_MEM_54:
+	case CS35L56_OTP_MEM_55:
 	case CS35L56_SYNC_GPIO1_CFG ... CS35L56_ASP2_DIO_GPIO13_CFG:
 	case CS35L56_UPDATE_REGS:
 	case CS35L56_REFCLK_INPUT:		   /* owned by firmware */
@@ -390,6 +390,7 @@ static void cs35l56_set_fw_reg_table(struct cs35l56_base *cs35l56_base)
 		}
 		break;
 	case 0x63:
+	case 0x62:
 		cs35l56_base->fw_reg = &cs35l63_fw_reg;
 		break;
 	}
@@ -535,6 +536,7 @@ static void cs35l56_spi_system_reset(struct cs35l56_base *cs35l56_base)
 	 * The regmap must remain in cache-only until the chip has
 	 * booted, so use a bypassed read.
 	 */
+	val = 0;
 	ret = read_poll_timeout(regmap_read_bypassed, read_ret,
 				(val > 0) && (val < 0xffffffff),
 				CS35L56_HALO_STATE_POLL_US,
@@ -595,6 +597,7 @@ void cs35l56_system_reset(struct cs35l56_base *cs35l56_base, bool is_soundwire)
 		}
 		break;
 	case 0x63:
+	case 0x62:
 		regmap_multi_reg_write_bypassed(cs35l56_base->regmap,
 						cs35l63_system_reset_seq,
 						ARRAY_SIZE(cs35l63_system_reset_seq));
@@ -613,26 +616,7 @@ void cs35l56_system_reset(struct cs35l56_base *cs35l56_base, bool is_soundwire)
 }
 EXPORT_SYMBOL_NS_GPL(cs35l56_system_reset, "SND_SOC_CS35L56_SHARED");
 
-int cs35l56_irq_request(struct cs35l56_base *cs35l56_base, int irq)
-{
-	int ret;
-
-	if (irq < 1)
-		return 0;
-
-	ret = devm_request_threaded_irq(cs35l56_base->dev, irq, NULL, cs35l56_irq,
-					IRQF_ONESHOT | IRQF_SHARED | IRQF_TRIGGER_LOW,
-					"cs35l56", cs35l56_base);
-	if (!ret)
-		cs35l56_base->irq = irq;
-	else
-		dev_err(cs35l56_base->dev, "Failed to get IRQ: %d\n", ret);
-
-	return ret;
-}
-EXPORT_SYMBOL_NS_GPL(cs35l56_irq_request, "SND_SOC_CS35L56_SHARED");
-
-irqreturn_t cs35l56_irq(int irq, void *data)
+static irqreturn_t cs35l56_irq(int irq, void *data)
 {
 	struct cs35l56_base *cs35l56_base = data;
 	unsigned int status1 = 0, status8 = 0, status20 = 0;
@@ -640,23 +624,22 @@ irqreturn_t cs35l56_irq(int irq, void *data)
 	unsigned int val;
 	int rv;
 
-	irqreturn_t ret = IRQ_NONE;
-
 	if (!cs35l56_base->init_done)
 		return IRQ_NONE;
 
-	mutex_lock(&cs35l56_base->irq_lock);
+	guard(mutex)(&cs35l56_base->irq_lock);
 
-	rv = pm_runtime_resume_and_get(cs35l56_base->dev);
+	PM_RUNTIME_ACQUIRE_IF_ENABLED(cs35l56_base->dev, pm);
+	rv = PM_RUNTIME_ACQUIRE_ERR(&pm);
 	if (rv < 0) {
 		dev_err(cs35l56_base->dev, "irq: failed to get pm_runtime: %d\n", rv);
-		goto err_unlock;
+		return IRQ_NONE;
 	}
 
 	regmap_read(cs35l56_base->regmap, CS35L56_IRQ1_STATUS, &val);
 	if ((val & CS35L56_IRQ1_STS_MASK) == 0) {
 		dev_dbg(cs35l56_base->dev, "Spurious IRQ: no pending interrupt\n");
-		goto err;
+		return IRQ_NONE;
 	}
 
 	/* Ack interrupts */
@@ -680,7 +663,7 @@ irqreturn_t cs35l56_irq(int irq, void *data)
 
 	/* Check to see if unmasked bits are active */
 	if (!status1 && !status8 && !status20)
-		goto err;
+		return IRQ_NONE;
 
 	if (status1 & CS35L56_AMP_SHORT_ERR_EINT1_MASK)
 		dev_crit(cs35l56_base->dev, "Amp short error\n");
@@ -688,16 +671,27 @@ irqreturn_t cs35l56_irq(int irq, void *data)
 	if (status8 & CS35L56_TEMP_ERR_EINT1_MASK)
 		dev_crit(cs35l56_base->dev, "Overtemp error\n");
 
-	ret = IRQ_HANDLED;
+	return IRQ_HANDLED;
+}
 
-err:
-	pm_runtime_put(cs35l56_base->dev);
-err_unlock:
-	mutex_unlock(&cs35l56_base->irq_lock);
+int cs35l56_irq_request(struct cs35l56_base *cs35l56_base, int irq)
+{
+	int ret;
+
+	if (irq < 1)
+		return 0;
+
+	ret = devm_request_threaded_irq(cs35l56_base->dev, irq, NULL, cs35l56_irq,
+					IRQF_ONESHOT | IRQF_SHARED | IRQF_TRIGGER_LOW,
+					"cs35l56", cs35l56_base);
+	if (!ret)
+		cs35l56_base->irq = irq;
+	else
+		dev_err(cs35l56_base->dev, "Failed to get IRQ: %d\n", ret);
 
 	return ret;
 }
-EXPORT_SYMBOL_NS_GPL(cs35l56_irq, "SND_SOC_CS35L56_SHARED");
+EXPORT_SYMBOL_NS_GPL(cs35l56_irq_request, "SND_SOC_CS35L56_SHARED");
 
 int cs35l56_is_fw_reload_needed(struct cs35l56_base *cs35l56_base)
 {
@@ -816,14 +810,10 @@ int cs35l56_runtime_resume_common(struct cs35l56_base *cs35l56_base, bool is_sou
 	if (!cs35l56_base->init_done)
 		return 0;
 
-	if (!cs35l56_base->can_hibernate)
-		goto out_sync;
-
-	/* Must be done before releasing cache-only */
-	if (!is_soundwire)
+	/* Hibernate wake must be done before releasing cache-only */
+	if (cs35l56_base->can_hibernate && !is_soundwire)
 		cs35l56_issue_wake_event(cs35l56_base);
 
-out_sync:
 	ret = cs35l56_wait_for_firmware_boot(cs35l56_base);
 	if (ret) {
 		dev_err(cs35l56_base->dev, "Hibernate wake failed: %d\n", ret);
@@ -852,9 +842,11 @@ out_sync:
 err:
 	regcache_cache_only(cs35l56_base->regmap, true);
 
-	regmap_multi_reg_write_bypassed(cs35l56_base->regmap,
-					cs35l56_hibernate_seq,
-					ARRAY_SIZE(cs35l56_hibernate_seq));
+	if (cs35l56_base->can_hibernate) {
+		regmap_multi_reg_write_bypassed(cs35l56_base->regmap,
+						cs35l56_hibernate_seq,
+						ARRAY_SIZE(cs35l56_hibernate_seq));
+	}
 
 	return ret;
 }
@@ -1258,7 +1250,7 @@ ssize_t cs35l56_cal_data_debugfs_write(struct cs35l56_base *cs35l56_base,
 		return -EMSGSIZE;
 
 	ret = simple_write_to_buffer(&cal_data, sizeof(cal_data), ppos, from, count);
-	if (ret)
+	if (ret < 0)
 		return ret;
 
 	ret = cs35l56_stash_calibration(cs35l56_base, &cal_data);
@@ -1292,6 +1284,7 @@ EXPORT_SYMBOL_NS_GPL(cs35l56_create_cal_debugfs, "SND_SOC_CS35L56_SHARED");
 void cs35l56_remove_cal_debugfs(struct cs35l56_base *cs35l56_base)
 {
 	debugfs_remove_recursive(cs35l56_base->debugfs);
+	cs35l56_base->debugfs = ERR_PTR(-ENOENT);
 }
 EXPORT_SYMBOL_NS_GPL(cs35l56_remove_cal_debugfs, "SND_SOC_CS35L56_SHARED");
 
@@ -1467,6 +1460,7 @@ int cs35l56_hw_init(struct cs35l56_base *cs35l56_base)
 		cs35l56_base->calibration_controls = &cs35l56_calibration_controls;
 		break;
 	case 0x35A630:
+	case 0x35A620:
 		cs35l56_base->calibration_controls = &cs35l63_calibration_controls;
 		devid = devid >> 4;
 		break;
@@ -1729,8 +1723,7 @@ int cs35l56_read_onchip_spkid(struct cs35l56_base *cs35l56_base)
 
 	ret = regmap_read(regmap, CS35L56_GPIO_STATUS1, &val);
 	if (ret) {
-		dev_err(cs35l56_base->dev, "GPIO%d status read failed: %d\n",
-			cs35l56_base->onchip_spkid_gpios[i] + 1, ret);
+		dev_err(cs35l56_base->dev, "GPIO status read failed: %d\n", ret);
 		return ret;
 	}
 
@@ -1880,6 +1873,7 @@ EXPORT_SYMBOL_NS_GPL(cs35l56_regmap_spi, "SND_SOC_CS35L56_SHARED");
 
 const struct regmap_config cs35l56_regmap_sdw = {
 	.reg_bits = 32,
+	.reg_base = 0x8000,
 	.val_bits = 32,
 	.reg_stride = 4,
 	.reg_format_endian = REGMAP_ENDIAN_LITTLE,
@@ -1915,6 +1909,7 @@ const struct regmap_config cs35l63_regmap_sdw = {
 	.reg_bits = 32,
 	.val_bits = 32,
 	.reg_stride = 4,
+	.reg_base = 0x8000,
 	.reg_format_endian = REGMAP_ENDIAN_LITTLE,
 	.val_format_endian = REGMAP_ENDIAN_BIG,
 	.max_register = CS35L56_DSP1_PMEM_5114,

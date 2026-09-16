@@ -12,6 +12,7 @@
 #include <linux/iommu.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
+#include <linux/sizes.h>
 #include <linux/xarray.h>
 #include <uapi/linux/iommufd.h>
 #include <linux/generic_pt/iommu.h>
@@ -177,6 +178,7 @@ struct mock_dev {
 	struct device dev;
 	struct mock_viommu *viommu;
 	struct rw_semaphore viommu_rwsem;
+	struct rw_semaphore iopf_rwsem;
 	unsigned long flags;
 	unsigned long vdev_id;
 	int id;
@@ -421,19 +423,6 @@ static const struct iommu_dirty_ops amdv1_mock_dirty_ops = {
 	.set_dirty_tracking = mock_domain_set_dirty_tracking,
 };
 
-static const struct iommu_domain_ops amdv1_ops = {
-	IOMMU_PT_DOMAIN_OPS(amdv1),
-	.free = mock_domain_free,
-	.attach_dev = mock_domain_nop_attach,
-	.set_dev_pasid = mock_domain_set_dev_pasid_nop,
-	.iotlb_sync = &mock_iotlb_sync,
-};
-
-static const struct iommu_dirty_ops amdv1_dirty_ops = {
-	IOMMU_PT_DIRTY_OPS(amdv1),
-	.set_dirty_tracking = mock_domain_set_dirty_tracking,
-};
-
 static struct mock_iommu_domain *
 mock_domain_alloc_pgtable(struct device *dev,
 			  const struct iommu_hwpt_selftest *user_cfg, u32 flags)
@@ -475,24 +464,6 @@ mock_domain_alloc_pgtable(struct device *dev,
 						     PAGE_SIZE;
 		if (flags & IOMMU_HWPT_ALLOC_DIRTY_TRACKING)
 			mock->domain.dirty_ops = &amdv1_mock_dirty_ops;
-		break;
-	}
-
-	case MOCK_IOMMUPT_AMDV1: {
-		struct pt_iommu_amdv1_cfg cfg = {};
-
-		cfg.common.hw_max_vasz_lg2 = 64;
-		cfg.common.hw_max_oasz_lg2 = 52;
-		cfg.common.features = BIT(PT_FEAT_DYNAMIC_TOP) |
-				      BIT(PT_FEAT_AMDV1_ENCRYPT_TABLES) |
-				      BIT(PT_FEAT_AMDV1_FORCE_COHERENCE);
-		cfg.starting_level = 2;
-		mock->domain.ops = &amdv1_ops;
-		rc = pt_iommu_amdv1_init(&mock->amdv1, &cfg, GFP_KERNEL);
-		if (rc)
-			goto err_free;
-		if (flags & IOMMU_HWPT_ALLOC_DIRTY_TRACKING)
-			mock->domain.dirty_ops = &amdv1_dirty_ops;
 		break;
 	}
 	default:
@@ -636,7 +607,7 @@ static void mock_viommu_destroy(struct iommufd_viommu *viommu)
 	if (mock_viommu->mmap_offset)
 		iommufd_viommu_destroy_mmap(&mock_viommu->core,
 					    mock_viommu->mmap_offset);
-	free_page((unsigned long)mock_viommu->page);
+	free_pages((unsigned long)mock_viommu->page, 1);
 	mutex_destroy(&mock_viommu->queue_mutex);
 
 	/* iommufd core frees mock_viommu and viommu */
@@ -870,7 +841,7 @@ err_destroy_mmap:
 	iommufd_viommu_destroy_mmap(&mock_viommu->core,
 				    mock_viommu->mmap_offset);
 err_free_page:
-	free_page((unsigned long)mock_viommu->page);
+	free_pages((unsigned long)mock_viommu->page, 1);
 	return rc;
 }
 
@@ -1028,6 +999,7 @@ static struct mock_dev *mock_dev_create(unsigned long dev_flags)
 		return ERR_PTR(-ENOMEM);
 
 	init_rwsem(&mdev->viommu_rwsem);
+	init_rwsem(&mdev->iopf_rwsem);
 	device_initialize(&mdev->dev);
 	mdev->flags = dev_flags;
 	mdev->dev.release = mock_dev_release;
@@ -1053,7 +1025,9 @@ static struct mock_dev *mock_dev_create(unsigned long dev_flags)
 		goto err_put;
 	}
 
+	down_write(&mdev->iopf_rwsem);
 	rc = iommu_mock_device_add(&mdev->dev, &mock_iommu.iommu_dev);
+	up_write(&mdev->iopf_rwsem);
 	if (rc)
 		goto err_put;
 	return mdev;
@@ -1108,7 +1082,9 @@ static int iommufd_test_mock_domain(struct iommufd_ucmd *ucmd,
 	}
 	sobj->idev.idev = idev;
 
+	down_write(&sobj->idev.mock_dev->iopf_rwsem);
 	rc = iommufd_device_attach(idev, IOMMU_NO_PASID, &pt_id);
+	up_write(&sobj->idev.mock_dev->iopf_rwsem);
 	if (rc)
 		goto out_unbind;
 
@@ -1123,7 +1099,9 @@ static int iommufd_test_mock_domain(struct iommufd_ucmd *ucmd,
 	return 0;
 
 out_detach:
+	down_write(&sobj->idev.mock_dev->iopf_rwsem);
 	iommufd_device_detach(idev, IOMMU_NO_PASID);
+	up_write(&sobj->idev.mock_dev->iopf_rwsem);
 out_unbind:
 	iommufd_device_unbind(idev);
 out_mdev:
@@ -1167,7 +1145,9 @@ static int iommufd_test_mock_domain_replace(struct iommufd_ucmd *ucmd,
 	if (IS_ERR(sobj))
 		return PTR_ERR(sobj);
 
+	down_write(&sobj->idev.mock_dev->iopf_rwsem);
 	rc = iommufd_device_replace(sobj->idev.idev, IOMMU_NO_PASID, &pt_id);
+	up_write(&sobj->idev.mock_dev->iopf_rwsem);
 	if (rc)
 		goto out_sobj;
 
@@ -1726,6 +1706,9 @@ static int iommufd_test_dirty(struct iommufd_ucmd *ucmd, unsigned int mockpt_id,
 	if (!page_size || !length || iova % page_size || length % page_size ||
 	    !uptr)
 		return -EINVAL;
+	max = length / page_size;
+	if (max > SZ_16M * BITS_PER_BYTE)
+		return -EOVERFLOW;
 
 	hwpt = get_md_pagetable(ucmd, mockpt_id, &mock);
 	if (IS_ERR(hwpt))
@@ -1736,7 +1719,6 @@ static int iommufd_test_dirty(struct iommufd_ucmd *ucmd, unsigned int mockpt_id,
 		goto out_put;
 	}
 
-	max = length / page_size;
 	tmp = kvzalloc(DIV_ROUND_UP(max, BITS_PER_LONG) * sizeof(unsigned long),
 		       GFP_KERNEL_ACCOUNT);
 	if (!tmp) {
@@ -1770,10 +1752,16 @@ static int iommufd_test_trigger_iopf(struct iommufd_ucmd *ucmd,
 {
 	struct iopf_fault event = {};
 	struct iommufd_device *idev;
+	struct mock_dev *mdev;
 
 	idev = iommufd_get_device(ucmd, cmd->trigger_iopf.dev_id);
 	if (IS_ERR(idev))
 		return PTR_ERR(idev);
+	if (!iommufd_selftest_is_mock_dev(idev->dev)) {
+		iommufd_put_object(ucmd->ictx, &idev->obj);
+		return -EINVAL;
+	}
+	mdev = to_mock_dev(idev->dev);
 
 	event.fault.prm.flags = IOMMU_FAULT_PAGE_REQUEST_LAST_PAGE;
 	if (cmd->trigger_iopf.pasid != IOMMU_NO_PASID)
@@ -1784,7 +1772,9 @@ static int iommufd_test_trigger_iopf(struct iommufd_ucmd *ucmd,
 	event.fault.prm.grpid = cmd->trigger_iopf.grpid;
 	event.fault.prm.perm = cmd->trigger_iopf.perm;
 
+	down_read(&mdev->iopf_rwsem);
 	iommu_report_device_fault(idev->dev, &event);
+	up_read(&mdev->iopf_rwsem);
 	iommufd_put_object(ucmd->ictx, &idev->obj);
 
 	return 0;
@@ -1892,14 +1882,19 @@ static int iommufd_test_pasid_attach(struct iommufd_ucmd *ucmd,
 	if (IS_ERR(sobj))
 		return PTR_ERR(sobj);
 
+	down_write(&sobj->idev.mock_dev->iopf_rwsem);
 	rc = iommufd_device_attach(sobj->idev.idev, cmd->pasid_attach.pasid,
 				   &cmd->pasid_attach.pt_id);
+	up_write(&sobj->idev.mock_dev->iopf_rwsem);
 	if (rc)
 		goto out_sobj;
 
 	rc = iommufd_ucmd_respond(ucmd, sizeof(*cmd));
-	if (rc)
+	if (rc) {
+		down_write(&sobj->idev.mock_dev->iopf_rwsem);
 		iommufd_device_detach(sobj->idev.idev, cmd->pasid_attach.pasid);
+		up_write(&sobj->idev.mock_dev->iopf_rwsem);
+	}
 
 out_sobj:
 	iommufd_put_object(ucmd->ictx, &sobj->obj);
@@ -1916,8 +1911,10 @@ static int iommufd_test_pasid_replace(struct iommufd_ucmd *ucmd,
 	if (IS_ERR(sobj))
 		return PTR_ERR(sobj);
 
+	down_write(&sobj->idev.mock_dev->iopf_rwsem);
 	rc = iommufd_device_replace(sobj->idev.idev, cmd->pasid_attach.pasid,
 				    &cmd->pasid_attach.pt_id);
+	up_write(&sobj->idev.mock_dev->iopf_rwsem);
 	if (rc)
 		goto out_sobj;
 
@@ -1937,7 +1934,9 @@ static int iommufd_test_pasid_detach(struct iommufd_ucmd *ucmd,
 	if (IS_ERR(sobj))
 		return PTR_ERR(sobj);
 
+	down_write(&sobj->idev.mock_dev->iopf_rwsem);
 	iommufd_device_detach(sobj->idev.idev, cmd->pasid_detach.pasid);
+	up_write(&sobj->idev.mock_dev->iopf_rwsem);
 	iommufd_put_object(ucmd->ictx, &sobj->obj);
 	return 0;
 }
@@ -1948,7 +1947,9 @@ void iommufd_selftest_destroy(struct iommufd_object *obj)
 
 	switch (sobj->type) {
 	case TYPE_IDEV:
+		down_write(&sobj->idev.mock_dev->iopf_rwsem);
 		iommufd_device_detach(sobj->idev.idev, IOMMU_NO_PASID);
+		up_write(&sobj->idev.mock_dev->iopf_rwsem);
 		iommufd_device_unbind(sobj->idev.idev);
 		mock_dev_destroy(sobj->idev.mock_dev);
 		break;
@@ -2054,7 +2055,12 @@ static int iommufd_test_dmabuf_get(struct iommufd_ucmd *ucmd,
 		goto err_free;
 	}
 
-	return dma_buf_fd(dmabuf, open_flags);
+	rc = dma_buf_fd(dmabuf, open_flags);
+	if (rc < 0) {
+		dma_buf_put(dmabuf);
+		return rc;
+	}
+	return 0;
 
 err_free:
 	kfree(priv->memory);

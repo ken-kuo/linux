@@ -272,6 +272,9 @@ void hv_synic_free(void)
 /*
  * hv_hyp_synic_enable_regs - Initialize the Synthetic Interrupt Controller
  * with the hypervisor.
+ *
+ * Note: When MSHV is present, mshv_synic_cpu_init() intializes further
+ * registers later.
  */
 void hv_hyp_synic_enable_regs(unsigned int cpu)
 {
@@ -395,8 +398,6 @@ int hv_synic_init(unsigned int cpu)
 		hv_para_synic_enable_interrupts();
 	else
 		hv_hyp_synic_enable_interrupts();
-
-	hv_stimer_legacy_init(cpu, VMBUS_MESSAGE_SINT);
 
 	return 0;
 }
@@ -627,8 +628,6 @@ int hv_synic_cleanup(unsigned int cpu)
 		return -EBUSY;
 
 always_cleanup:
-	hv_stimer_legacy_cleanup(cpu);
-
 	/*
 	 * First, disable the event and message pages
 	 * used for communicating with the host, and then

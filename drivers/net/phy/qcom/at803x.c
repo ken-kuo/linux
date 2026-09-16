@@ -19,6 +19,7 @@
 #include <linux/regulator/consumer.h>
 #include <linux/of.h>
 #include <linux/phylink.h>
+#include <linux/clk.h>
 #include <linux/reset.h>
 #include <linux/phy_port.h>
 #include <dt-bindings/net/qca-ar803x.h>
@@ -536,7 +537,7 @@ static void at803x_link_change_notify(struct phy_device *phydev)
 	 * in the FIFO. In such cases, the FIFO enters an error mode it
 	 * cannot recover from by software.
 	 */
-	if (phydev->state == PHY_NOLINK && phydev->mdio.reset_gpio) {
+	if (phydev->state == PHY_NOLINK && phy_device_has_reset(phydev)) {
 		struct at803x_context context;
 
 		at803x_context_save(phydev, &context);
@@ -1074,6 +1075,7 @@ static void ipq5018_link_change_notify(struct phy_device *phydev)
 static int ipq5018_probe(struct phy_device *phydev)
 {
 	struct device *dev = &phydev->mdio.dev;
+	struct clk *rx_clk, *tx_clk;
 	struct ipq5018_priv *priv;
 	int ret;
 
@@ -1083,6 +1085,16 @@ static int ipq5018_probe(struct phy_device *phydev)
 
 	priv->set_short_cable_dac = of_property_read_bool(dev->of_node,
 							  "qcom,dac-preset-short-cable");
+
+	rx_clk = devm_clk_get_enabled(dev, "rx");
+	if (IS_ERR(rx_clk))
+		return dev_err_probe(dev, PTR_ERR(rx_clk),
+				     "failed to get and enable RX clock\n");
+
+	tx_clk = devm_clk_get_enabled(dev, "tx");
+	if (IS_ERR(tx_clk))
+		return dev_err_probe(dev, PTR_ERR(tx_clk),
+				     "failed to get and enable TX clock\n");
 
 	priv->rst = devm_reset_control_array_get_exclusive(dev);
 	if (IS_ERR(priv->rst))

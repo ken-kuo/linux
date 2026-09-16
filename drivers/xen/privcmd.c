@@ -794,7 +794,7 @@ static long privcmd_ioctl_mmap_resource(struct file *file,
 		goto out;
 	}
 
-	if (IS_ENABLED(CONFIG_XEN_AUTO_XLATE) && !xen_pv_domain()) {
+	if (!xen_pv_domain()) {
 		unsigned int nr = DIV_ROUND_UP(kdata.num, XEN_PFN_PER_PAGE);
 		struct page **pages;
 		unsigned int i;
@@ -825,7 +825,7 @@ static long privcmd_ioctl_mmap_resource(struct file *file,
 	if (rc)
 		goto out;
 
-	if (IS_ENABLED(CONFIG_XEN_AUTO_XLATE) && !xen_pv_domain()) {
+	if (!xen_pv_domain()) {
 		rc = xen_remap_vma_range(vma, kdata.addr, kdata.num << PAGE_SHIFT);
 	} else {
 		unsigned int domid =
@@ -1620,6 +1620,12 @@ static void privcmd_close(struct vm_area_struct *vma)
 	kvfree(pages);
 }
 
+static int privcmd_may_split(struct vm_area_struct *area, unsigned long addr)
+{
+	/* Forbid splitting, avoids double free via privcmd_close(). */
+	return -EINVAL;
+}
+
 static vm_fault_t privcmd_fault(struct vm_fault *vmf)
 {
 	printk(KERN_DEBUG "privcmd_fault: vma=%p %lx-%lx, pgoff=%lx, uv=%p\n",
@@ -1631,6 +1637,7 @@ static vm_fault_t privcmd_fault(struct vm_fault *vmf)
 
 static const struct vm_operations_struct privcmd_vm_ops = {
 	.close = privcmd_close,
+	.may_split = privcmd_may_split,
 	.fault = privcmd_fault
 };
 

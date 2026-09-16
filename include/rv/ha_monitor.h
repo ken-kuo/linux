@@ -28,6 +28,7 @@ static inline void ha_monitor_init_env(struct da_monitor *da_mon);
 static inline void ha_monitor_reset_env(struct da_monitor *da_mon);
 static inline void ha_setup_timer(struct ha_monitor *ha_mon);
 static inline bool ha_cancel_timer(struct ha_monitor *ha_mon);
+static inline void ha_cancel_timer_sync(struct ha_monitor *ha_mon);
 static bool ha_monitor_handle_constraint(struct da_monitor *da_mon,
 					 enum states curr_state,
 					 enum events event,
@@ -36,6 +37,27 @@ static bool ha_monitor_handle_constraint(struct da_monitor *da_mon,
 #define da_monitor_event_hook ha_monitor_handle_constraint
 #define da_monitor_init_hook ha_monitor_init_env
 #define da_monitor_reset_hook ha_monitor_reset_env
+#define da_monitor_sync_hook() synchronize_rcu()
+
+#if !defined(HA_SKIP_AUTO_CLEANUP) && RV_MON_TYPE == RV_MON_PER_TASK
+/*
+ * Automatic cleanup handlers for per-task HA monitors, only skip if you know
+ * what you are doing (e.g. you want to implement cleanup manually in another
+ * handler doing more things).
+ */
+static void ha_handle_sched_process_exit(void *data, struct task_struct *p,
+					 bool group_dead);
+
+#define ha_monitor_enable_hook()                                             \
+	rv_attach_trace_probe(__stringify(MONITOR_NAME), sched_process_exit, \
+			      ha_handle_sched_process_exit)
+#define ha_monitor_disable_hook()                                            \
+	rv_detach_trace_probe(__stringify(MONITOR_NAME), sched_process_exit, \
+			      ha_handle_sched_process_exit)
+#else
+#define ha_monitor_enable_hook() ((void)0)
+#define ha_monitor_disable_hook() ((void)0)
+#endif
 
 #include <rv/da_monitor.h>
 #include <linux/seq_buf.h>
@@ -115,6 +137,26 @@ static enum hrtimer_restart ha_monitor_timer_callback(struct hrtimer *hrtimer);
 #define ha_get_ns() 0
 #endif /* HA_CLK_NS */
 
+static bool ha_mon_destroying;
+
+static int ha_monitor_init(void)
+{
+	int ret;
+
+	WRITE_ONCE(ha_mon_destroying, false);
+	ret = da_monitor_init();
+	if (ret == 0)
+		ha_monitor_enable_hook();
+	return ret;
+}
+
+static void ha_monitor_destroy(void)
+{
+	WRITE_ONCE(ha_mon_destroying, true);
+	ha_monitor_disable_hook();
+	da_monitor_destroy();
+}
+
 /* Should be supplied by the monitor */
 static u64 ha_get_env(struct ha_monitor *ha_mon, enum envs env, u64 time_ns);
 static bool ha_verify_constraint(struct ha_monitor *ha_mon,
@@ -153,12 +195,12 @@ static inline void ha_monitor_init_env(struct da_monitor *da_mon)
  * Called from a hook in the DA reset functions, it supplies the da_mon
  * corresponding to the current ha_mon.
  * Not all hybrid automata require the timer, still clear it for simplicity.
+ * Monitors that never started have their timer uninitialized, do not stop those.
  */
 static inline void ha_monitor_reset_env(struct da_monitor *da_mon)
 {
 	struct ha_monitor *ha_mon = to_ha_monitor(da_mon);
 
-	/* Initialisation resets the monitor before initialising the timer */
 	if (likely(da_monitoring(da_mon)))
 		ha_cancel_timer(ha_mon);
 }
@@ -200,6 +242,20 @@ static inline void ha_trace_error_env(struct ha_monitor *ha_mon,
 {
 	CONCATENATE(trace_error_env_, MONITOR_NAME)(id, curr_state, event, env);
 }
+
+#if !defined(HA_SKIP_AUTO_CLEANUP) && RV_MON_TYPE == RV_MON_PER_TASK
+static void ha_handle_sched_process_exit(void *data, struct task_struct *p,
+					 bool group_dead)
+{
+	struct da_monitor *da_mon = da_get_monitor(p);
+
+	if (likely(da_monitoring(da_mon))) {
+		da_monitor_reset(da_mon);
+		ha_cancel_timer_sync(to_ha_monitor(da_mon));
+	}
+}
+#endif
+
 #endif /* RV_MON_TYPE */
 
 /*
@@ -237,12 +293,30 @@ static bool ha_monitor_handle_constraint(struct da_monitor *da_mon,
 	return false;
 }
 
+/*
+ * __ha_monitor_timer_callback - generic callback representation
+ *
+ * This callback runs in an RCU read-side critical section to allow the
+ * destruction sequence to easily synchronize_rcu() with all pending timers
+ * after asynchronously disabling them. The ha_mon_destroying check ensures
+ * any callback entering the RCU section after synchronize_rcu() completes
+ * will see the flag and bail out immediately.
+ */
 static inline void __ha_monitor_timer_callback(struct ha_monitor *ha_mon)
 {
-	enum states curr_state = READ_ONCE(ha_mon->da_mon.curr_state);
 	DECLARE_SEQ_BUF(env_string, ENV_BUFFER_SIZE);
-	u64 time_ns = ha_get_ns();
+	enum states curr_state;
+	u64 time_ns;
 
+	guard(rcu)();
+	if (unlikely(READ_ONCE(ha_mon_destroying)))
+		return;
+	/* Ensure consistent curr_state if we race with da_monitor_reset */
+	curr_state = smp_load_acquire(&ha_mon->da_mon.curr_state);
+	if (unlikely(!da_monitor_handling_event(&ha_mon->da_mon)))
+		return;
+
+	time_ns = ha_get_ns();
 	ha_get_env_string(&env_string, ha_mon, time_ns);
 	ha_react(curr_state, EVENT_NONE, env_string.buffer);
 	ha_trace_error_env(ha_mon, model_get_state_name(curr_state),
@@ -253,19 +327,8 @@ static inline void __ha_monitor_timer_callback(struct ha_monitor *ha_mon)
 }
 
 /*
- * The clock variables have 2 different representations in the env_store:
- * - The guard representation is the timestamp of the last reset
- * - The invariant representation is the timestamp when the invariant expires
- * As the representations are incompatible, care must be taken when switching
- * between them: the invariant representation can only be used when starting a
- * timer when the previous representation was guard (e.g. no other invariant
- * started since the last reset operation).
- * Likewise, switching from invariant to guard representation without a reset
- * can be done only by subtracting the exact value used to start the invariant.
- *
- * Reading the environment variable (ha_get_clk) also reflects this difference
- * any reads in states that have an invariant return the (possibly negative)
- * time since expiration, other reads return the time since last reset.
+ * The clock variables store the time epoch - the timestamp when the clock was last reset.
+ * They are read by subtracting the time epoch from the current time.
  */
 
 /*
@@ -279,31 +342,21 @@ static inline void ha_reset_clk_ns(struct ha_monitor *ha_mon, enum envs env, u64
 {
 	WRITE_ONCE(ha_mon->env_store[env], time_ns);
 }
-static inline void ha_set_invariant_ns(struct ha_monitor *ha_mon, enum envs env,
-				       u64 value, u64 time_ns)
+static inline bool ha_check_invariant_ns(struct ha_monitor *ha_mon, enum envs env,
+					 u64 time_ns, u64 expire_ns)
 {
-	WRITE_ONCE(ha_mon->env_store[env], time_ns + value);
-}
-static inline bool ha_check_invariant_ns(struct ha_monitor *ha_mon,
-					 enum envs env, u64 time_ns)
-{
-	return READ_ONCE(ha_mon->env_store[env]) >= time_ns;
+	return READ_ONCE(ha_mon->env_store[env]) >= time_ns - expire_ns;
 }
 /*
  * ha_invariant_passed_ns - prepare the invariant and return the time since reset
  */
-static inline u64 ha_invariant_passed_ns(struct ha_monitor *ha_mon, enum envs env,
-				   u64 expire, u64 time_ns)
+static inline u64 ha_invariant_passed_ns(struct ha_monitor *ha_mon, enum envs env, u64 time_ns)
 {
-	u64 passed = 0;
-
 	if (env < 0 || env >= ENV_MAX_STORED)
 		return 0;
 	if (ha_monitor_env_invalid(ha_mon, env))
 		return 0;
-	passed = ha_get_env(ha_mon, env, time_ns);
-	ha_set_invariant_ns(ha_mon, env, expire - passed, time_ns);
-	return passed;
+	return ha_get_env(ha_mon, env, time_ns);
 }
 
 /*
@@ -317,32 +370,21 @@ static inline void ha_reset_clk_jiffy(struct ha_monitor *ha_mon, enum envs env)
 {
 	WRITE_ONCE(ha_mon->env_store[env], get_jiffies_64());
 }
-static inline void ha_set_invariant_jiffy(struct ha_monitor *ha_mon,
-					  enum envs env, u64 value)
+static inline bool ha_check_invariant_jiffy(struct ha_monitor *ha_mon, enum envs env,
+					    u64 time_ns, u64 expire_jiffy)
 {
-	WRITE_ONCE(ha_mon->env_store[env], get_jiffies_64() + value);
-}
-static inline bool ha_check_invariant_jiffy(struct ha_monitor *ha_mon,
-					    enum envs env, u64 time_ns)
-{
-	return time_after64(READ_ONCE(ha_mon->env_store[env]), get_jiffies_64());
-
+	return time_after64(READ_ONCE(ha_mon->env_store[env]), get_jiffies_64() - expire_jiffy);
 }
 /*
  * ha_invariant_passed_jiffy - prepare the invariant and return the time since reset
  */
-static inline u64 ha_invariant_passed_jiffy(struct ha_monitor *ha_mon, enum envs env,
-				      u64 expire, u64 time_ns)
+static inline u64 ha_invariant_passed_jiffy(struct ha_monitor *ha_mon, enum envs env, u64 time_ns)
 {
-	u64 passed = 0;
-
 	if (env < 0 || env >= ENV_MAX_STORED)
 		return 0;
 	if (ha_monitor_env_invalid(ha_mon, env))
 		return 0;
-	passed = ha_get_env(ha_mon, env, time_ns);
-	ha_set_invariant_jiffy(ha_mon, env, expire - passed);
-	return passed;
+	return ha_get_env(ha_mon, env, time_ns);
 }
 
 /*
@@ -389,14 +431,14 @@ static inline void ha_setup_timer(struct ha_monitor *ha_mon)
 static inline void ha_start_timer_jiffy(struct ha_monitor *ha_mon, enum envs env,
 					u64 expire, u64 time_ns)
 {
-	u64 passed = ha_invariant_passed_jiffy(ha_mon, env, expire, time_ns);
+	u64 passed = ha_invariant_passed_jiffy(ha_mon, env, time_ns);
 
 	mod_timer(&ha_mon->timer, get_jiffies_64() + expire - passed);
 }
 static inline void ha_start_timer_ns(struct ha_monitor *ha_mon, enum envs env,
 				     u64 expire, u64 time_ns)
 {
-	u64 passed = ha_invariant_passed_ns(ha_mon, env, expire, time_ns);
+	u64 passed = ha_invariant_passed_ns(ha_mon, env, time_ns);
 
 	ha_start_timer_jiffy(ha_mon, ENV_MAX_STORED,
 			     nsecs_to_jiffies(expire - passed + TICK_NSEC - 1), time_ns);
@@ -411,6 +453,10 @@ static inline void ha_start_timer_ns(struct ha_monitor *ha_mon, enum envs env,
 static inline bool ha_cancel_timer(struct ha_monitor *ha_mon)
 {
 	return timer_delete(&ha_mon->timer);
+}
+static inline void ha_cancel_timer_sync(struct ha_monitor *ha_mon)
+{
+	timer_delete_sync(&ha_mon->timer);
 }
 #elif HA_TIMER_TYPE == HA_TIMER_HRTIMER
 /*
@@ -438,7 +484,7 @@ static inline void ha_start_timer_ns(struct ha_monitor *ha_mon, enum envs env,
 				     u64 expire, u64 time_ns)
 {
 	int mode = HRTIMER_MODE_REL_HARD;
-	u64 passed = ha_invariant_passed_ns(ha_mon, env, expire, time_ns);
+	u64 passed = ha_invariant_passed_ns(ha_mon, env, time_ns);
 
 	if (RV_MON_TYPE == RV_MON_PER_CPU)
 		mode |= HRTIMER_MODE_PINNED;
@@ -447,7 +493,7 @@ static inline void ha_start_timer_ns(struct ha_monitor *ha_mon, enum envs env,
 static inline void ha_start_timer_jiffy(struct ha_monitor *ha_mon, enum envs env,
 					u64 expire, u64 time_ns)
 {
-	u64 passed = ha_invariant_passed_jiffy(ha_mon, env, expire, time_ns);
+	u64 passed = ha_invariant_passed_jiffy(ha_mon, env, time_ns);
 
 	ha_start_timer_ns(ha_mon, ENV_MAX_STORED,
 			  jiffies_to_nsecs(expire - passed), time_ns);
@@ -463,6 +509,10 @@ static inline bool ha_cancel_timer(struct ha_monitor *ha_mon)
 {
 	return hrtimer_try_to_cancel(&ha_mon->hrtimer) == 1;
 }
+static inline void ha_cancel_timer_sync(struct ha_monitor *ha_mon)
+{
+	hrtimer_cancel(&ha_mon->hrtimer);
+}
 #else /* HA_TIMER_NONE */
 /*
  * Start function is intentionally not defined, monitors using timers must
@@ -473,6 +523,28 @@ static inline bool ha_cancel_timer(struct ha_monitor *ha_mon)
 {
 	return false;
 }
+static inline void ha_cancel_timer_sync(struct ha_monitor *ha_mon) { }
 #endif
+
+#if IS_ENABLED(CONFIG_RV_MONITORS_KUNIT_TEST)
+#ifdef RV_MON_OPS_INIT
+#undef RV_MON_OPS_INIT
+#endif
+
+#if RV_MON_TYPE == RV_MON_PER_TASK
+#define RV_MON_OPS_INIT() {             \
+	.rv_this = &rv_this,            \
+	.is_per_task = true,            \
+	.task_slot = &task_mon_slot,    \
+	.task_reset = da_reset,         \
+}
+#else
+#define RV_MON_OPS_INIT() {                     \
+	.rv_this = &rv_this,                    \
+	.monitor_init = ha_monitor_init,        \
+	.monitor_destroy = ha_monitor_destroy,  \
+}
+#endif /* RV_MON_TYPE */
+#endif /* CONFIG_RV_MONITORS_KUNIT_TEST */
 
 #endif

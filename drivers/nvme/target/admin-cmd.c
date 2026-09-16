@@ -309,8 +309,10 @@ static void nvmet_execute_get_log_page_rmi(struct nvmet_req *req)
 	}
 
 	log = kzalloc_obj(*log);
-	if (!log)
+	if (!log) {
+		status = NVME_SC_INTERNAL;
 		goto out;
+	}
 
 	log->endgid = req->cmd->get_log_page.lsi;
 	disk = req->ns->bdev->bd_disk;
@@ -687,12 +689,8 @@ static void nvmet_execute_identify_ctrl(struct nvmet_req *req)
 	id->cmic = NVME_CTRL_CMIC_MULTI_PORT | NVME_CTRL_CMIC_MULTI_CTRL |
 		NVME_CTRL_CMIC_ANA;
 
-	/* Limit MDTS according to transport capability */
-	if (ctrl->ops->get_mdts)
-		id->mdts = ctrl->ops->get_mdts(ctrl);
-	else
-		id->mdts = 0;
-
+	/* Limit MDTS according to port config or transport capability */
+	id->mdts = nvmet_ctrl_mdts(req);
 	id->cntlid = cpu_to_le16(ctrl->cntlid);
 	id->ver = cpu_to_le32(ctrl->subsys->ver);
 
@@ -962,7 +960,7 @@ static void nvmet_execute_identify_nslist(struct nvmet_req *req, bool match_css)
 	nvmet_for_each_enabled_ns(&ctrl->subsys->namespaces, idx, ns) {
 		if (ns->nsid <= min_nsid)
 			continue;
-		if (match_css && req->ns->csi != req->cmd->identify.csi)
+		if (match_css && ns->csi != req->cmd->identify.csi)
 			continue;
 		list[i++] = cpu_to_le32(ns->nsid);
 		if (i == buf_size / sizeof(__le32))
@@ -1339,7 +1337,7 @@ static u16 nvmet_set_feat_arbitration(struct nvmet_req *req)
 
 void nvmet_execute_set_features(struct nvmet_req *req)
 {
-	struct nvmet_subsys *subsys = nvmet_req_subsys(req);
+	struct nvmet_ctrl *ctrl = nvmet_req_ctrl(req);
 	u32 cdw10 = le32_to_cpu(req->cmd->common.cdw10);
 	u32 cdw11 = le32_to_cpu(req->cmd->common.cdw11);
 	u16 status = 0;
@@ -1361,7 +1359,7 @@ void nvmet_execute_set_features(struct nvmet_req *req)
 			break;
 		}
 		nvmet_set_result(req,
-			(subsys->max_qid - 1) | ((subsys->max_qid - 1) << 16));
+			(ctrl->max_qid - 1) | ((ctrl->max_qid - 1) << 16));
 		break;
 	case NVME_FEAT_IRQ_COALESCE:
 		status = nvmet_set_feat_irq_coalesce(req);
@@ -1498,7 +1496,7 @@ void nvmet_get_feat_async_event(struct nvmet_req *req)
 
 void nvmet_execute_get_features(struct nvmet_req *req)
 {
-	struct nvmet_subsys *subsys = nvmet_req_subsys(req);
+	struct nvmet_ctrl *ctrl = nvmet_req_ctrl(req);
 	u32 cdw10 = le32_to_cpu(req->cmd->common.cdw10);
 	u16 status = 0;
 
@@ -1538,7 +1536,7 @@ void nvmet_execute_get_features(struct nvmet_req *req)
 		break;
 	case NVME_FEAT_NUM_QUEUES:
 		nvmet_set_result(req,
-			(subsys->max_qid-1) | ((subsys->max_qid-1) << 16));
+			(ctrl->max_qid-1) | ((ctrl->max_qid-1) << 16));
 		break;
 	case NVME_FEAT_KATO:
 		nvmet_get_feat_kato(req);

@@ -26,20 +26,6 @@ enum dml2_swizzle_mode {
 	dml2_gfx11_sw_64kb_r_x,
 	dml2_gfx11_sw_256kb_d_x,
 	dml2_gfx11_sw_256kb_r_x,
-
-	dml2_sw_linear_256b, // GFX10 SW_LINEAR only accepts 256 byte aligned pitch
-	dml2_gfx10_sw_64kb_r_x,
-	dml2_gfx102_sw_64kb_s,
-	dml2_gfx102_sw_64kb_s_t,
-	dml2_gfx102_sw_64kb_s_x,
-	dml2_gfx102_sw_64kb_r_x,
-
-	dml2_linear_64elements, // GFX7 LINEAR_ALIGNED accepts pitch alignment of the maximum of 64 elements or 256 bytes
-	dml2_gfx7_1d_thin,
-	dml2_gfx7_2d_thin_gen_zero,
-	dml2_gfx7_2d_thin_gen_one,
-	dml2_gfx7_2d_thin_arlene,
-	dml2_gfx7_2d_thin_anubis
 };
 
 enum dml2_source_format_class {
@@ -116,6 +102,7 @@ enum dml2_uclk_pstate_change_strategy {
 	dml2_uclk_pstate_change_strategy_force_drr = 3,
 	dml2_uclk_pstate_change_strategy_force_mall_svp = 4,
 	dml2_uclk_pstate_change_strategy_force_mall_full_frame = 5,
+	dml2_uclk_pstate_change_strategy_force_alternate = 6,
 };
 
 enum dml2_svp_mode_override {
@@ -488,6 +475,15 @@ struct dml2_display_cfg {
 				bool value;
 			} force_nom_det_size_kbytes;
 
+			struct {
+				bool enable; // So copy time can be forced to 0
+				unsigned int copy_time_us;
+			} force_alt_chan_copy_time;
+
+			struct {
+				bool enable; // So fw delay can be forced to 0
+				unsigned int fw_delay_us;
+			} force_alt_chan_fw_delay;
 			bool mode_support_check_disable;
 			bool mcache_admissibility_check_disable;
 			bool surface_viewport_size_check_disable;

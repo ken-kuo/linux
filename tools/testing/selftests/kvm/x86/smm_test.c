@@ -22,9 +22,6 @@
 #define SMRAM_GPA 0x1000000
 #define SMRAM_STAGE 0xfe
 
-#define STR(x) #x
-#define XSTR(s) STR(s)
-
 #define SYNC_PORT 0xe
 #define DONE 0xff
 
@@ -34,15 +31,15 @@
  * independent subset of asm here.
  * SMI handler always report back fixed stage SMRAM_STAGE.
  */
-uint8_t smi_handler[] = {
+u8 smi_handler[] = {
 	0xb0, SMRAM_STAGE,    /* mov $SMRAM_STAGE, %al */
 	0xe4, SYNC_PORT,      /* in $SYNC_PORT, %al */
 	0x0f, 0xaa,           /* rsm */
 };
 
-static inline void sync_with_host(uint64_t phase)
+static inline void sync_with_host(u64 phase)
 {
-	asm volatile("in $" XSTR(SYNC_PORT)", %%al \n"
+	asm volatile("in $" __stringify(SYNC_PORT)", %%al \n"
 		     : "+a" (phase));
 }
 
@@ -63,9 +60,7 @@ static void l2_guest_code(void)
 
 static void guest_code(void *arg)
 {
-	#define L2_GUEST_STACK_SIZE 64
-	unsigned long l2_guest_stack[L2_GUEST_STACK_SIZE];
-	uint64_t apicbase = rdmsr(MSR_IA32_APICBASE);
+	u64 apicbase = rdmsr(MSR_IA32_APICBASE);
 	struct svm_test_data *svm = arg;
 	struct vmx_pages *vmx_pages = arg;
 
@@ -81,13 +76,11 @@ static void guest_code(void *arg)
 
 	if (arg) {
 		if (this_cpu_has(X86_FEATURE_SVM)) {
-			generic_svm_setup(svm, l2_guest_code,
-					  &l2_guest_stack[L2_GUEST_STACK_SIZE]);
+			generic_svm_setup(svm, l2_guest_code);
 		} else {
 			GUEST_ASSERT(prepare_for_vmx_operation(vmx_pages));
 			GUEST_ASSERT(load_vmcs(vmx_pages));
-			prepare_vmcs(vmx_pages, l2_guest_code,
-				     &l2_guest_stack[L2_GUEST_STACK_SIZE]);
+			prepare_vmcs(vmx_pages, l2_guest_code);
 		}
 
 		sync_with_host(5);
@@ -113,7 +106,7 @@ static void guest_code(void *arg)
 
 int main(int argc, char *argv[])
 {
-	vm_vaddr_t nested_gva = 0;
+	gva_t nested_gva = 0;
 
 	struct kvm_vcpu *vcpu;
 	struct kvm_regs regs;

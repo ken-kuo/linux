@@ -26,18 +26,18 @@
 #include <linux/interrupt.h>
 #include <linux/rhashtable.h>
 #include <linux/crash_dump.h>
-#include <linux/auxiliary_bus.h>
 #include <net/devlink.h>
 #include <net/dst_metadata.h>
 #include <net/xdp.h>
 #include <linux/dim.h>
 #include <linux/io-64-nonatomic-lo-hi.h>
+#include <linux/bnxt/ulp.h>
 #ifdef CONFIG_TEE_BNXT_FW
 #include <linux/firmware/broadcom/tee_bnxt_fw.h>
 #endif
 
-#define BNXT_DEFAULT_RX_COPYBREAK 256
-#define BNXT_MAX_RX_COPYBREAK 1024
+#define BNXT_MIN_RX_HDR_BUF	256
+#define BNXT_MAX_RX_HDR_BUF	1024
 
 extern struct list_head bnxt_block_cb_list;
 
@@ -789,7 +789,6 @@ struct nqe_cn {
 
 #define MAX_TPA		64
 #define MAX_TPA_P5	256
-#define MAX_TPA_P5_MASK	(MAX_TPA_P5 - 1)
 #define MAX_TPA_SEGS_P5	0x3f
 
 #if (BNXT_PAGE_SHIFT == 16)
@@ -911,6 +910,7 @@ struct bnxt_sw_rx_bd {
 	void			*data;
 	u8			*data_ptr;
 	dma_addr_t		mapping;
+	unsigned int		offset;
 };
 
 struct bnxt_sw_rx_agg_bd {
@@ -992,6 +992,7 @@ struct bnxt_tx_ring_info {
 	u16			txq_index;
 	u8			tx_napi_idx;
 	u8			kick_pending;
+	struct tx_bd		*kick_txbd0;
 	struct bnxt_db_info	tx_db;
 
 	struct tx_bd		*tx_desc_ring[MAX_TX_PAGES];
@@ -1260,13 +1261,13 @@ struct bnxt_irq {
 	irq_handler_t	handler;
 	unsigned int	vector;
 	u8		requested:1;
-	u8		have_cpumask:1;
 	char		name[IFNAMSIZ + BNXT_IRQ_NAME_EXTRA];
-	cpumask_var_t	cpu_mask;
 
 	struct bnxt	*bp;
 	int		msix_nr;
 	int		ring_nr;
+	u16		tag;
+	u16		new_tag;
 	struct irq_affinity_notify affinity_notify;
 };
 
@@ -1333,6 +1334,7 @@ struct bnxt_vnic_info {
 #define BNXT_VNIC_RSSCTX_FLAG		0x40
 	struct ethtool_rxfh_context *rss_ctx;
 	u32		vnic_id;
+	u16		default_rx_ring;
 };
 
 struct bnxt_rss_ctx {
@@ -2100,12 +2102,6 @@ struct bnxt_fw_health {
 #define BNXT_FW_IF_RETRY		10
 #define BNXT_FW_SLOT_RESET_RETRY	4
 
-struct bnxt_aux_priv {
-	struct auxiliary_device aux_dev;
-	struct bnxt_en_dev *edev;
-	int id;
-};
-
 enum board_idx {
 	BCM57301,
 	BCM57302,
@@ -2365,8 +2361,8 @@ struct bnxt {
 #define BNXT_CHIP_P5_AND_MINUS(bp)		\
 	(BNXT_CHIP_P3(bp) || BNXT_CHIP_P4(bp) || BNXT_CHIP_P5(bp))
 
-	struct bnxt_aux_priv	*aux_priv;
-	struct bnxt_en_dev	*edev;
+	struct bnxt_aux_priv	*aux_priv[__BNXT_AUXDEV_MAX];
+	struct bnxt_en_dev	*edev[__BNXT_AUXDEV_MAX];
 
 	struct bnxt_napi	**bnapi;
 
@@ -2384,6 +2380,7 @@ struct bnxt {
 
 	u16			max_tpa_v2;
 	u16			max_tpa;
+	u16			max_tpa_roundup_size;
 	u32			rx_buf_size;
 	u32			rx_buf_use_size;	/* useable size */
 	u16			rx_offset;
@@ -2473,7 +2470,6 @@ struct bnxt {
 #define BNXT_STATE_DRV_REGISTERED	7
 #define BNXT_STATE_PCI_CHANNEL_IO_FROZEN	8
 #define BNXT_STATE_NAPI_DISABLED	9
-#define BNXT_STATE_L2_FILTER_RETRY	10
 #define BNXT_STATE_FW_ACTIVATE		11
 #define BNXT_STATE_RECOVER		12
 #define BNXT_STATE_FW_NON_FATAL_COND	13
@@ -2485,6 +2481,15 @@ struct bnxt {
 	 pci_channel_offline((bp)->pdev))
 
 	struct bnxt_irq	*irq_tbl;
+	/* IRQ affinity, indexed by completion ring. Kept across IRQ
+	 * reallocation, the MSI-X vector index is not stable.
+	 */
+	cpumask_var_t		*ring_cpu_mask;
+	/* Rings for which the mask above was configured from the outside,
+	 * rather than being our own default placement.
+	 */
+	unsigned long		*ring_affinity_set;
+	int			max_irqs;
 	int			total_irqs;
 	int			ulp_num_msix_want;
 	u8			mac_addr[ETH_ALEN];
@@ -2626,9 +2631,12 @@ struct bnxt {
 #define BNXT_MIN_STATS_COAL_TICKS	  250000
 #define BNXT_MAX_STATS_COAL_TICKS	 1000000
 
+	/* Protects stats_updated_jiffies and writes to sw_stats */
+	spinlock_t		stats_lock;
+	unsigned long		stats_updated_jiffies;
+
 	struct work_struct	sp_task;
 	unsigned long		sp_event;
-#define BNXT_RX_MASK_SP_EVENT		0
 #define BNXT_RX_NTP_FLTR_SP_EVENT	1
 #define BNXT_LINK_CHNG_SP_EVENT		2
 #define BNXT_HWRM_EXEC_FWD_REQ_SP_EVENT	3
@@ -2644,6 +2652,7 @@ struct bnxt {
 #define BNXT_RING_COAL_NOW_SP_EVENT	17
 #define BNXT_FW_RESET_NOTIFY_SP_EVENT	18
 #define BNXT_FW_EXCEPTION_SP_EVENT	19
+#define BNXT_TPH_UPDATE_SP_EVENT	20
 #define BNXT_LINK_CFG_CHANGE_SP_EVENT	21
 #define BNXT_THERMAL_THRESHOLD_SP_EVENT	22
 #define BNXT_FW_ECHO_REQUEST_SP_EVENT	23
@@ -2778,6 +2787,13 @@ struct bnxt {
 	struct bnxt_ctx_pg_info	*fw_crash_mem;
 	u32			fw_crash_len;
 	struct bnxt_bs_trace_info bs_trace[BNXT_TRACE_MAX];
+	int			auxdev_id;
+	/* synchronize validity checks of available aux devices */
+	struct mutex		auxdev_lock;
+	u8			auxdev_state[__BNXT_AUXDEV_MAX];
+#define	BNXT_ADEV_STATE_NONE	0
+#define	BNXT_ADEV_STATE_INIT	1
+#define	BNXT_ADEV_STATE_ADD	2
 };
 
 #define BNXT_NUM_RX_RING_STATS			8
@@ -3027,6 +3043,7 @@ void bnxt_reenable_sriov(struct bnxt *bp);
 void bnxt_close_nic(struct bnxt *, bool, bool);
 void bnxt_get_ring_drv_stats(struct bnxt *bp,
 			     struct bnxt_total_ring_drv_stats *stats);
+void bnxt_sync_ring_stats(struct bnxt *bp);
 bool bnxt_rfs_capable(struct bnxt *bp, bool new_rss_ctx);
 int bnxt_dbg_hwrm_rd_reg(struct bnxt *bp, u32 reg_off, u16 num_words,
 			 u32 *reg_buf);

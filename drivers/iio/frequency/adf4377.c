@@ -7,6 +7,7 @@
 
 #include <linux/bitfield.h>
 #include <linux/bits.h>
+#include <linux/cleanup.h>
 #include <linux/clk.h>
 #include <linux/clk-provider.h>
 #include <linux/clkdev.h>
@@ -518,14 +519,15 @@ static int adf4377_get_freq(struct adf4377_state *st, u64 *freq)
 	u64 clkin_freq;
 	int ret;
 
-	mutex_lock(&st->lock);
+	guard(mutex)(&st->lock);
+
 	ret = regmap_read(st->regmap, 0x12, &ref_div_factor);
 	if (ret)
-		goto exit;
+		return ret;
 
 	ret = regmap_bulk_read(st->regmap, 0x10, st->buf, sizeof(st->buf));
 	if (ret)
-		goto exit;
+		return ret;
 
 	clkin_freq = clk_get_rate(st->clkin);
 	ref_div_factor = FIELD_GET(ADF4377_0012_R_DIV_MSK, ref_div_factor);
@@ -533,10 +535,8 @@ static int adf4377_get_freq(struct adf4377_state *st, u64 *freq)
 			  get_unaligned_le16(&st->buf));
 
 	*freq = div_u64(clkin_freq, ref_div_factor) * n_int;
-exit:
-	mutex_unlock(&st->lock);
 
-	return ret;
+	return 0;
 }
 
 static int adf4377_set_freq(struct adf4377_state *st, u64 freq)
@@ -545,26 +545,24 @@ static int adf4377_set_freq(struct adf4377_state *st, u64 freq)
 	u64 f_vco;
 	int ret;
 
-	mutex_lock(&st->lock);
+	guard(mutex)(&st->lock);
 
-	if (freq > ADF4377_MAX_CLKPN_FREQ || freq < ADF4377_MIN_CLKPN_FREQ) {
-		ret = -EINVAL;
-		goto exit;
-	}
+	if (freq > ADF4377_MAX_CLKPN_FREQ || freq < ADF4377_MIN_CLKPN_FREQ)
+		return -EINVAL;
 
 	ret = regmap_update_bits(st->regmap, 0x1C, ADF4377_001C_EN_DNCLK_MSK |
 				 ADF4377_001C_EN_DRCLK_MSK,
 				 FIELD_PREP(ADF4377_001C_EN_DNCLK_MSK, 1) |
 				 FIELD_PREP(ADF4377_001C_EN_DRCLK_MSK, 1));
 	if (ret)
-		goto exit;
+		return ret;
 
 	ret = regmap_update_bits(st->regmap, 0x11, ADF4377_0011_EN_AUTOCAL_MSK |
 				 ADF4377_0011_DCLK_DIV2_MSK,
 				 FIELD_PREP(ADF4377_0011_EN_AUTOCAL_MSK, 1) |
 				 FIELD_PREP(ADF4377_0011_DCLK_DIV2_MSK, st->dclk_div2));
 	if (ret)
-		goto exit;
+		return ret;
 
 	ret = regmap_update_bits(st->regmap, 0x2E, ADF4377_002E_EN_ADC_CNV_MSK |
 				 ADF4377_002E_EN_ADC_MSK |
@@ -574,56 +572,56 @@ static int adf4377_set_freq(struct adf4377_state *st, u64 freq)
 				 FIELD_PREP(ADF4377_002E_ADC_A_CONV_MSK,
 					    ADF4377_002E_ADC_A_CONV_VCO_CALIB));
 	if (ret)
-		goto exit;
+		return ret;
 
 	ret = regmap_update_bits(st->regmap, 0x20, ADF4377_0020_EN_ADC_CLK_MSK,
 				 FIELD_PREP(ADF4377_0020_EN_ADC_CLK_MSK, 1));
 	if (ret)
-		goto exit;
+		return ret;
 
 	ret = regmap_update_bits(st->regmap, 0x2F, ADF4377_002F_DCLK_DIV1_MSK,
 				 FIELD_PREP(ADF4377_002F_DCLK_DIV1_MSK, st->dclk_div1));
 	if (ret)
-		goto exit;
+		return ret;
 
 	ret = regmap_update_bits(st->regmap, 0x24, ADF4377_0024_DCLK_MODE_MSK,
 				 FIELD_PREP(ADF4377_0024_DCLK_MODE_MSK, st->dclk_mode));
 	if (ret)
-		goto exit;
+		return ret;
 
 	ret = regmap_write(st->regmap, 0x27,
 			   FIELD_PREP(ADF4377_0027_SYNTH_LOCK_TO_LSB_MSK,
 				      st->synth_lock_timeout));
 	if (ret)
-		goto exit;
+		return ret;
 
 	ret = regmap_update_bits(st->regmap, 0x28, ADF4377_0028_SYNTH_LOCK_TO_MSB_MSK,
 				 FIELD_PREP(ADF4377_0028_SYNTH_LOCK_TO_MSB_MSK,
 					    st->synth_lock_timeout >> 8));
 	if (ret)
-		goto exit;
+		return ret;
 
 	ret = regmap_write(st->regmap, 0x29,
 			   FIELD_PREP(ADF4377_0029_VCO_ALC_TO_LSB_MSK,
 				      st->vco_alc_timeout));
 	if (ret)
-		goto exit;
+		return ret;
 
 	ret = regmap_update_bits(st->regmap, 0x2A, ADF4377_002A_VCO_ALC_TO_MSB_MSK,
 				 FIELD_PREP(ADF4377_002A_VCO_ALC_TO_MSB_MSK,
 					    st->vco_alc_timeout >> 8));
 	if (ret)
-		goto exit;
+		return ret;
 
 	ret = regmap_write(st->regmap, 0x26,
 			   FIELD_PREP(ADF4377_0026_VCO_BAND_DIV_MSK, st->vco_band_div));
 	if (ret)
-		goto exit;
+		return ret;
 
 	ret = regmap_write(st->regmap, 0x2D,
 			   FIELD_PREP(ADF4377_002D_ADC_CLK_DIV_MSK, st->adc_clk_div));
 	if (ret)
-		goto exit;
+		return ret;
 
 	st->clkout_div_sel = 0;
 
@@ -641,24 +639,24 @@ static int adf4377_set_freq(struct adf4377_state *st, u64 freq)
 				 FIELD_PREP(ADF4377_0011_EN_RDBLR_MSK, 0) |
 				 FIELD_PREP(ADF4377_0011_N_INT_MSB_MSK, st->n_int >> 8));
 	if (ret)
-		goto exit;
+		return ret;
 
 	ret = regmap_update_bits(st->regmap, 0x12, ADF4377_0012_R_DIV_MSK |
 				 ADF4377_0012_CLKOUT_DIV_MSK,
 				 FIELD_PREP(ADF4377_0012_CLKOUT_DIV_MSK, st->clkout_div_sel) |
 				 FIELD_PREP(ADF4377_0012_R_DIV_MSK, st->ref_div_factor));
 	if (ret)
-		goto exit;
+		return ret;
 
 	ret = regmap_write(st->regmap, 0x10,
 			   FIELD_PREP(ADF4377_0010_N_INT_LSB_MSK, st->n_int));
 	if (ret)
-		goto exit;
+		return ret;
 
 	ret = regmap_read_poll_timeout(st->regmap, 0x49, read_val,
 				       !(read_val & (ADF4377_0049_FSM_BUSY_MSK)), 200, 200 * 100);
 	if (ret)
-		goto exit;
+		return ret;
 
 	/* Disable EN_DNCLK, EN_DRCLK */
 	ret = regmap_update_bits(st->regmap, 0x1C, ADF4377_001C_EN_DNCLK_MSK |
@@ -666,26 +664,21 @@ static int adf4377_set_freq(struct adf4377_state *st, u64 freq)
 				 FIELD_PREP(ADF4377_001C_EN_DNCLK_MSK, 0) |
 				 FIELD_PREP(ADF4377_001C_EN_DRCLK_MSK, 0));
 	if (ret)
-		goto exit;
+		return ret;
 
 	/* Disable EN_ADC_CLK */
 	ret = regmap_update_bits(st->regmap, 0x20, ADF4377_0020_EN_ADC_CLK_MSK,
 				 FIELD_PREP(ADF4377_0020_EN_ADC_CLK_MSK, 0));
 	if (ret)
-		goto exit;
+		return ret;
 
 	/* Set output Amplitude */
-	ret = regmap_update_bits(st->regmap, 0x19, ADF4377_0019_CLKOUT2_OP_MSK |
-				 ADF4377_0019_CLKOUT1_OP_MSK,
-				 FIELD_PREP(ADF4377_0019_CLKOUT1_OP_MSK,
-					    ADF4377_0019_CLKOUT_420MV) |
-				 FIELD_PREP(ADF4377_0019_CLKOUT2_OP_MSK,
-					    ADF4377_0019_CLKOUT_420MV));
-
-exit:
-	mutex_unlock(&st->lock);
-
-	return ret;
+	return regmap_update_bits(st->regmap, 0x19, ADF4377_0019_CLKOUT2_OP_MSK |
+				  ADF4377_0019_CLKOUT1_OP_MSK,
+				  FIELD_PREP(ADF4377_0019_CLKOUT1_OP_MSK,
+					     ADF4377_0019_CLKOUT_420MV) |
+				  FIELD_PREP(ADF4377_0019_CLKOUT2_OP_MSK,
+					     ADF4377_0019_CLKOUT_420MV));
 }
 
 static void adf4377_gpio_init(struct adf4377_state *st)
@@ -706,23 +699,20 @@ static void adf4377_gpio_init(struct adf4377_state *st)
 
 static int adf4377_init(struct adf4377_state *st)
 {
-	struct spi_device *spi = st->spi;
+	struct device *dev = &st->spi->dev;
 	int ret;
 
 	adf4377_gpio_init(st);
 
 	ret = adf4377_soft_reset(st);
-	if (ret) {
-		dev_err(&spi->dev, "Failed to soft reset.\n");
-		return ret;
-	}
+	if (ret)
+		return dev_err_probe(dev, ret, "Failed to soft reset.\n");
 
 	ret = regmap_multi_reg_write(st->regmap, adf4377_reg_defaults,
 				     ARRAY_SIZE(adf4377_reg_defaults));
-	if (ret) {
-		dev_err(&spi->dev, "Failed to set default registers.\n");
-		return ret;
-	}
+	if (ret)
+		return dev_err_probe(dev, ret,
+				     "Failed to set default registers.\n");
 
 	ret = regmap_update_bits(st->regmap, 0x00,
 				 ADF4377_0000_SDO_ACTIVE_MSK | ADF4377_0000_SDO_ACTIVE_R_MSK,
@@ -730,10 +720,9 @@ static int adf4377_init(struct adf4377_state *st)
 					    ADF4377_0000_SDO_ACTIVE_SPI_4W) |
 				 FIELD_PREP(ADF4377_0000_SDO_ACTIVE_R_MSK,
 					    ADF4377_0000_SDO_ACTIVE_SPI_4W));
-	if (ret) {
-		dev_err(&spi->dev, "Failed to set 4-Wire Operation.\n");
-		return ret;
-	}
+	if (ret)
+		return dev_err_probe(dev, ret,
+				     "Failed to set 4-Wire Operation.\n");
 
 	st->clkin_freq = clk_get_rate(st->clkin);
 
@@ -747,10 +736,9 @@ static int adf4377_init(struct adf4377_state *st)
 			   FIELD_PREP(ADF4377_001A_PD_PFDCP_MSK, 0) |
 			   FIELD_PREP(ADF4377_001A_PD_CLKOUT1_MSK, 0) |
 			   FIELD_PREP(ADF4377_001A_PD_CLKOUT2_MSK, 0));
-	if (ret) {
-		dev_err(&spi->dev, "Failed to set power down registers.\n");
-		return ret;
-	}
+	if (ret)
+		return dev_err_probe(dev, ret,
+				     "Failed to set power down registers.\n");
 
 	/* Set Mux Output */
 	ret = regmap_update_bits(st->regmap, 0x1D,
@@ -882,35 +870,35 @@ static const struct iio_chan_spec adf4377_channels[] = {
 
 static int adf4377_properties_parse(struct adf4377_state *st)
 {
-	struct spi_device *spi = st->spi;
+	struct device *dev = &st->spi->dev;
 	int ret;
 
-	st->clkin = devm_clk_get_enabled(&spi->dev, "ref_in");
+	st->clkin = devm_clk_get_enabled(dev, "ref_in");
 	if (IS_ERR(st->clkin))
-		return dev_err_probe(&spi->dev, PTR_ERR(st->clkin),
+		return dev_err_probe(dev, PTR_ERR(st->clkin),
 				     "failed to get the reference input clock\n");
 
-	st->gpio_ce = devm_gpiod_get_optional(&st->spi->dev, "chip-enable",
+	st->gpio_ce = devm_gpiod_get_optional(dev, "chip-enable",
 					      GPIOD_OUT_LOW);
 	if (IS_ERR(st->gpio_ce))
-		return dev_err_probe(&spi->dev, PTR_ERR(st->gpio_ce),
+		return dev_err_probe(dev, PTR_ERR(st->gpio_ce),
 				     "failed to get the CE GPIO\n");
 
-	st->gpio_enclk1 = devm_gpiod_get_optional(&st->spi->dev, "clk1-enable",
+	st->gpio_enclk1 = devm_gpiod_get_optional(dev, "clk1-enable",
 						  GPIOD_OUT_LOW);
 	if (IS_ERR(st->gpio_enclk1))
-		return dev_err_probe(&spi->dev, PTR_ERR(st->gpio_enclk1),
+		return dev_err_probe(dev, PTR_ERR(st->gpio_enclk1),
 				     "failed to get the CE GPIO\n");
 
 	if (st->chip_info->has_gpio_enclk2) {
-		st->gpio_enclk2 = devm_gpiod_get_optional(&st->spi->dev, "clk2-enable",
+		st->gpio_enclk2 = devm_gpiod_get_optional(dev, "clk2-enable",
 							  GPIOD_OUT_LOW);
 		if (IS_ERR(st->gpio_enclk2))
-			return dev_err_probe(&spi->dev, PTR_ERR(st->gpio_enclk2),
+			return dev_err_probe(dev, PTR_ERR(st->gpio_enclk2),
 					"failed to get the CE GPIO\n");
 	}
 
-	ret = device_property_match_property_string(&spi->dev, "adi,muxout-select",
+	ret = device_property_match_property_string(dev, "adi,muxout-select",
 						    adf4377_muxout_modes,
 						    ARRAY_SIZE(adf4377_muxout_modes));
 	if (ret >= 0)
@@ -924,13 +912,11 @@ static int adf4377_properties_parse(struct adf4377_state *st)
 static int adf4377_freq_change(struct notifier_block *nb, unsigned long action, void *data)
 {
 	struct adf4377_state *st = container_of(nb, struct adf4377_state, nb);
-	int ret;
 
 	if (action == POST_RATE_CHANGE) {
-		mutex_lock(&st->lock);
-		ret = notifier_from_errno(adf4377_init(st));
-		mutex_unlock(&st->lock);
-		return ret;
+		guard(mutex)(&st->lock);
+
+		return notifier_from_errno(adf4377_init(st));
 	}
 
 	return NOTIFY_OK;
@@ -1055,9 +1041,10 @@ static int adf4377_probe(struct spi_device *spi)
 	struct iio_dev *indio_dev;
 	struct regmap *regmap;
 	struct adf4377_state *st;
+	struct device *dev = &spi->dev;
 	int ret;
 
-	indio_dev = devm_iio_device_alloc(&spi->dev, sizeof(*st));
+	indio_dev = devm_iio_device_alloc(dev, sizeof(*st));
 	if (!indio_dev)
 		return -ENOMEM;
 
@@ -1080,7 +1067,7 @@ static int adf4377_probe(struct spi_device *spi)
 		return ret;
 
 	st->nb.notifier_call = adf4377_freq_change;
-	ret = devm_clk_notifier_register(&spi->dev, st->clkin, &st->nb);
+	ret = devm_clk_notifier_register(dev, st->clkin, &st->nb);
 	if (ret)
 		return ret;
 
@@ -1097,12 +1084,12 @@ static int adf4377_probe(struct spi_device *spi)
 		indio_dev->num_channels = ARRAY_SIZE(adf4377_channels);
 	}
 
-	return devm_iio_device_register(&spi->dev, indio_dev);
+	return devm_iio_device_register(dev, indio_dev);
 }
 
 static const struct spi_device_id adf4377_id[] = {
-	{ "adf4377", (kernel_ulong_t)&adf4377_chip_info },
-	{ "adf4378", (kernel_ulong_t)&adf4378_chip_info },
+	{ .name = "adf4377", .driver_data = (kernel_ulong_t)&adf4377_chip_info },
+	{ .name = "adf4378", .driver_data = (kernel_ulong_t)&adf4378_chip_info },
 	{ }
 };
 MODULE_DEVICE_TABLE(spi, adf4377_id);

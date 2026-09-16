@@ -277,7 +277,7 @@ int bnge_hwrm_func_backing_store_qcaps(struct bnge_dev *bd)
 	struct hwrm_func_backing_store_qcaps_v2_output *resp;
 	struct hwrm_func_backing_store_qcaps_v2_input *req;
 	struct bnge_ctx_mem_info *ctx;
-	u16 type;
+	u16 type, next_type;
 	int rc;
 
 	if (bd->ctx)
@@ -294,8 +294,8 @@ int bnge_hwrm_func_backing_store_qcaps(struct bnge_dev *bd)
 
 	resp = bnge_hwrm_req_hold(bd, req);
 
-	for (type = 0; type < BNGE_CTX_V2_MAX; ) {
-		struct bnge_ctx_mem_type *ctxm = &ctx->ctx_arr[type];
+	for (type = 0; type < BNGE_CTX_INV; type = next_type) {
+		struct bnge_ctx_mem_type *ctxm;
 		u8 init_val, init_off, i;
 		__le32 *p;
 		u32 flags;
@@ -304,8 +304,14 @@ int bnge_hwrm_func_backing_store_qcaps(struct bnge_dev *bd)
 		rc = bnge_hwrm_req_send(bd, req);
 		if (rc)
 			goto ctx_done;
+
+		next_type = le16_to_cpu(resp->next_valid_type);
+		if (type >= BNGE_CTX_V2_MAX)
+			continue;
+
+		ctxm = &ctx->ctx_arr[type];
 		flags = le32_to_cpu(resp->flags);
-		type = le16_to_cpu(resp->next_valid_type);
+
 		if (!(flags &
 		      FUNC_BACKING_STORE_QCAPS_V2_RESP_FLAGS_TYPE_VALID))
 			continue;
@@ -1277,7 +1283,7 @@ int bnge_hwrm_stat_ctx_alloc(struct bnge_net *bn)
 
 int hwrm_ring_free_send_msg(struct bnge_net *bn,
 			    struct bnge_ring_struct *ring,
-			    u32 ring_type, int cmpl_ring_id)
+			    u32 ring_type, u32 cmpl_ring_id)
 {
 	struct hwrm_ring_free_input *req;
 	struct bnge_dev *bd = bn->bd;
@@ -1289,7 +1295,7 @@ int hwrm_ring_free_send_msg(struct bnge_net *bn,
 
 	req->cmpl_ring = cpu_to_le16(cmpl_ring_id);
 	req->ring_type = ring_type;
-	req->ring_id = cpu_to_le16(ring->fw_ring_id);
+	req->ring_id = cpu_to_le32(ring->fw_ring_id);
 
 	bnge_hwrm_req_hold(bd, req);
 	rc = bnge_hwrm_req_send(bd, req);
@@ -1311,7 +1317,7 @@ int hwrm_ring_alloc_send_msg(struct bnge_net *bn,
 	struct hwrm_ring_alloc_output *resp;
 	struct hwrm_ring_alloc_input *req;
 	struct bnge_dev *bd = bn->bd;
-	u16 ring_id, flags = 0;
+	u32 ring_id, flags = 0;
 	int rc;
 
 	rc = bnge_hwrm_req_init(bd, req, HWRM_RING_ALLOC);
@@ -1395,7 +1401,7 @@ int hwrm_ring_alloc_send_msg(struct bnge_net *bn,
 
 	resp = bnge_hwrm_req_hold(bd, req);
 	rc = bnge_hwrm_req_send(bd, req);
-	ring_id = le16_to_cpu(resp->ring_id);
+	ring_id = le32_to_cpu(resp->ring_id);
 	bnge_hwrm_req_drop(bd, req);
 
 exit:

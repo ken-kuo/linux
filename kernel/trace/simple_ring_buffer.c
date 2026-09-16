@@ -160,8 +160,8 @@ int simple_ring_buffer_swap_reader_page(struct simple_rb_per_cpu *cpu_buffer)
 		overrun = cpu_buffer->meta->overrun;
 	} while (!simple_bpage_unset_head_link(last, reader, SIMPLE_RB_LINK_NORMAL) && retry--);
 
-	if (!retry)
-		return -EINVAL;
+	if (retry < 0)
+		return -EBUSY;
 
 	cpu_buffer->head_page = simple_bpage_from_link(reader->link.next);
 	cpu_buffer->head_page->link.prev = &reader->link;
@@ -395,7 +395,6 @@ int simple_ring_buffer_init_mm(struct simple_rb_per_cpu *cpu_buffer,
 
 	memset(cpu_buffer->meta, 0, sizeof(*cpu_buffer->meta));
 	cpu_buffer->meta->meta_page_size = PAGE_SIZE;
-	cpu_buffer->meta->nr_subbufs = cpu_buffer->nr_pages;
 
 	/* The reader page is not part of the ring initially */
 	page = load_page(desc->page_va[0]);
@@ -431,12 +430,13 @@ int simple_ring_buffer_init_mm(struct simple_rb_per_cpu *cpu_buffer,
 
 	if (ret) {
 		for (i--; i >= 0; i--)
-			unload_page((void *)desc->page_va[i]);
+			unload_page(bpages[i].page);
 		unload_page(cpu_buffer->meta);
 
 		return ret;
 	}
 
+	cpu_buffer->meta->nr_subbufs = cpu_buffer->nr_pages;
 	/* Close the ring */
 	bpage->link.next = &cpu_buffer->tail_page->link;
 	cpu_buffer->tail_page->link.prev = &bpage->link;

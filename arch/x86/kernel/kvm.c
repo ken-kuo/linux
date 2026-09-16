@@ -41,6 +41,7 @@
 #include <asm/hypervisor.h>
 #include <asm/mtrr.h>
 #include <asm/tlb.h>
+#include <asm/cpuid/api.h>
 #include <asm/cpuidle_haltpoll.h>
 #include <asm/msr.h>
 #include <asm/ptrace.h>
@@ -304,7 +305,7 @@ DEFINE_IDTENTRY_SYSVEC(sysvec_kvm_asyncpf_interrupt)
 
 	apic_eoi();
 
-	inc_irq_stat(irq_hv_callback_count);
+	inc_irq_stat(HYPERVISOR_CALLBACK);
 
 	if (__this_cpu_read(async_pf_enabled)) {
 		token = __this_cpu_read(apf_reason.token);
@@ -662,8 +663,10 @@ static void kvm_flush_tlb_multi(const struct cpumask *cpumask,
 	u8 state;
 	int cpu;
 	struct kvm_steal_time *src;
-	struct cpumask *flushmask = this_cpu_cpumask_var_ptr(__pv_cpu_mask);
+	struct cpumask *flushmask;
 
+	guard(preempt)();
+	flushmask = this_cpu_cpumask_var_ptr(__pv_cpu_mask);
 	cpumask_copy(flushmask, cpumask);
 	/*
 	 * We have to call flush only on online vCPUs. And
@@ -1135,9 +1138,8 @@ void __init kvm_spinlock_init(void)
 	pr_info("PV spinlocks enabled\n");
 
 	__pv_init_lock_hash();
-	pv_ops_lock.queued_spin_lock_slowpath = __pv_queued_spin_lock_slowpath;
-	pv_ops_lock.queued_spin_unlock =
-		PV_CALLEE_SAVE(__pv_queued_spin_unlock);
+	static_call_update(queued_spin_lock_slowpath, __pv_queued_spin_lock_slowpath);
+	static_call_update(queued_spin_unlock, __raw_callee_save___pv_queued_spin_unlock);
 	pv_ops_lock.wait = kvm_wait;
 	pv_ops_lock.kick = kvm_kick_cpu;
 

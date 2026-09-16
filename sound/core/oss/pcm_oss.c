@@ -32,8 +32,8 @@
 
 #define OSS_ALSAEMULVER		_SIOR ('M', 249, int)
 
-static int dsp_map[SNDRV_CARDS];
-static int adsp_map[SNDRV_CARDS] = {[0 ... (SNDRV_CARDS-1)] = 1};
+static int dsp_map[SNDRV_CARDS] __ro_after_init;
+static int adsp_map[SNDRV_CARDS] __ro_after_init = {[0 ... (SNDRV_CARDS-1)] = 1};
 static bool nonblock_open = 1;
 
 MODULE_AUTHOR("Jaroslav Kysela <perex@perex.cz>, Abramo Bagnara <abramo@alsa-project.org>");
@@ -879,11 +879,11 @@ static int snd_pcm_oss_change_params_locked(struct snd_pcm_substream *substream)
 	_snd_pcm_hw_param_min(sparams, SNDRV_PCM_HW_PARAM_PERIODS, 2, 0);
 	snd_mask_none(&mask);
 	if (atomic_read(&substream->mmap_count))
-		snd_mask_set(&mask, (__force int)SNDRV_PCM_ACCESS_MMAP_INTERLEAVED);
+		snd_mask_set(&mask, SNDRV_PCM_ACCESS_MMAP_INTERLEAVED);
 	else {
-		snd_mask_set(&mask, (__force int)SNDRV_PCM_ACCESS_RW_INTERLEAVED);
+		snd_mask_set(&mask, SNDRV_PCM_ACCESS_RW_INTERLEAVED);
 		if (!direct)
-			snd_mask_set(&mask, (__force int)SNDRV_PCM_ACCESS_RW_NONINTERLEAVED);
+			snd_mask_set(&mask, SNDRV_PCM_ACCESS_RW_NONINTERLEAVED);
 	}
 	err = snd_pcm_hw_param_mask(substream, sparams, SNDRV_PCM_HW_PARAM_ACCESS, &mask);
 	if (err < 0) {
@@ -909,7 +909,7 @@ static int snd_pcm_oss_change_params_locked(struct snd_pcm_substream *substream)
 	else
 		sformat = snd_pcm_plug_slave_format(format, sformat_mask);
 
-	if ((__force int)sformat < 0 ||
+	if (sformat < 0 ||
 	    !snd_mask_test_format(sformat_mask, sformat)) {
 		pcm_for_each_format(sformat) {
 			if (snd_mask_test_format(sformat_mask, sformat) &&
@@ -921,7 +921,7 @@ static int snd_pcm_oss_change_params_locked(struct snd_pcm_substream *substream)
 		goto failure;
 	}
  format_found:
-	err = _snd_pcm_hw_param_set(sparams, SNDRV_PCM_HW_PARAM_FORMAT, (__force int)sformat, 0);
+	err = _snd_pcm_hw_param_set(sparams, SNDRV_PCM_HW_PARAM_FORMAT, sformat, 0);
 	if (err < 0)
 		goto failure;
 
@@ -930,9 +930,9 @@ static int snd_pcm_oss_change_params_locked(struct snd_pcm_substream *substream)
 	} else {
 		_snd_pcm_hw_params_any(params);
 		_snd_pcm_hw_param_set(params, SNDRV_PCM_HW_PARAM_ACCESS,
-				      (__force int)SNDRV_PCM_ACCESS_RW_INTERLEAVED, 0);
+				      SNDRV_PCM_ACCESS_RW_INTERLEAVED, 0);
 		_snd_pcm_hw_param_set(params, SNDRV_PCM_HW_PARAM_FORMAT,
-				      (__force int)snd_pcm_oss_format_from(runtime->oss.format), 0);
+				      snd_pcm_oss_format_from(runtime->oss.format), 0);
 		_snd_pcm_hw_param_set(params, SNDRV_PCM_HW_PARAM_CHANNELS,
 				      runtime->oss.channels, 0);
 		_snd_pcm_hw_param_set(params, SNDRV_PCM_HW_PARAM_RATE,
@@ -1875,7 +1875,7 @@ static int snd_pcm_oss_get_formats(struct snd_pcm_oss_file *pcm_oss_file)
 	format_mask = hw_param_mask_c(params, SNDRV_PCM_HW_PARAM_FORMAT);
 	for (fmt = 0; fmt < 32; ++fmt) {
 		if (snd_mask_test(format_mask, fmt)) {
-			int f = snd_pcm_oss_format_to((__force snd_pcm_format_t)fmt);
+			int f = snd_pcm_oss_format_to(fmt);
 			if (f >= 0)
 				formats |= f;
 		}
@@ -2155,10 +2155,16 @@ static int snd_pcm_oss_get_trigger(struct snd_pcm_oss_file *pcm_oss_file)
 
 	psubstream = pcm_oss_file->streams[SNDRV_PCM_STREAM_PLAYBACK];
 	csubstream = pcm_oss_file->streams[SNDRV_PCM_STREAM_CAPTURE];
-	if (psubstream && psubstream->runtime && psubstream->runtime->oss.trigger)
-		result |= PCM_ENABLE_OUTPUT;
-	if (csubstream && csubstream->runtime && csubstream->runtime->oss.trigger)
-		result |= PCM_ENABLE_INPUT;
+	if (psubstream && psubstream->runtime) {
+		guard(mutex)(&psubstream->runtime->oss.params_lock);
+		if (psubstream->runtime->oss.trigger)
+			result |= PCM_ENABLE_OUTPUT;
+	}
+	if (csubstream && csubstream->runtime) {
+		guard(mutex)(&csubstream->runtime->oss.params_lock);
+		if (csubstream->runtime->oss.trigger)
+			result |= PCM_ENABLE_INPUT;
+	}
 	return result;
 }
 
@@ -2489,9 +2495,7 @@ static int snd_pcm_oss_open(struct inode *inode, struct file *file)
 	int nonblock;
 	wait_queue_entry_t wait;
 
-	err = nonseekable_open(inode, file);
-	if (err < 0)
-		return err;
+	nonseekable_open(inode, file);
 
 	pcm = snd_lookup_oss_minor_data(iminor(inode),
 					SNDRV_OSS_DEVICE_TYPE_PCM);
@@ -2503,7 +2507,7 @@ static int snd_pcm_oss_open(struct inode *inode, struct file *file)
 	if (err < 0)
 		goto __error1;
 	if (!try_module_get(pcm->card->module)) {
-		err = -EFAULT;
+		err = -ENODEV;
 		goto __error2;
 	}
 	if (snd_task_name(current, task_name, sizeof(task_name)) < 0) {
@@ -2832,6 +2836,17 @@ static int snd_pcm_oss_capture_ready(struct snd_pcm_substream *substream)
 						runtime->oss.period_frames;
 }
 
+static bool need_input_retrigger(struct snd_pcm_runtime *runtime)
+{
+	bool ret;
+
+	guard(mutex)(&runtime->oss.params_lock);
+	ret = runtime->oss.trigger;
+	if (ret)
+		runtime->oss.trigger = 0;
+	return ret;
+}
+
 static __poll_t snd_pcm_oss_poll(struct file *file, poll_table * wait)
 {
 	struct snd_pcm_oss_file *pcm_oss_file;
@@ -2864,11 +2879,11 @@ static __poll_t snd_pcm_oss_poll(struct file *file, poll_table * wait)
 			    snd_pcm_oss_capture_ready(csubstream))
 				mask |= EPOLLIN | EPOLLRDNORM;
 		}
-		if (ostate != SNDRV_PCM_STATE_RUNNING && runtime->oss.trigger) {
+		if (ostate != SNDRV_PCM_STATE_RUNNING &&
+		    need_input_retrigger(runtime)) {
 			struct snd_pcm_oss_file ofile;
 			memset(&ofile, 0, sizeof(ofile));
 			ofile.streams[SNDRV_PCM_STREAM_CAPTURE] = pcm_oss_file->streams[SNDRV_PCM_STREAM_CAPTURE];
-			runtime->oss.trigger = 0;
 			snd_pcm_oss_set_trigger(&ofile, PCM_ENABLE_INPUT);
 		}
 	}
@@ -2957,8 +2972,10 @@ static void snd_pcm_oss_proc_read(struct snd_info_entry *entry,
 				  struct snd_info_buffer *buffer)
 {
 	struct snd_pcm_str *pstr = entry->private_data;
-	struct snd_pcm_oss_setup *setup = pstr->oss.setup_list;
+	struct snd_pcm_oss_setup *setup;
+
 	guard(mutex)(&pstr->oss.setup_mutex);
+	setup = pstr->oss.setup_list;
 	while (setup) {
 		snd_iprintf(buffer, "%s %u %u%s%s%s%s%s%s\n",
 			    setup->task_name,
@@ -3043,6 +3060,13 @@ static void snd_pcm_oss_proc_write(struct snd_info_entry *entry,
 				buffer->error = -ENOMEM;
 				return;
 			}
+			template.task_name = kstrdup(task_name, GFP_KERNEL);
+			if (!template.task_name) {
+				kfree(setup);
+				buffer->error = -ENOMEM;
+				return;
+			}
+			*setup = template;
 			if (pstr->oss.setup_list == NULL)
 				pstr->oss.setup_list = setup;
 			else {
@@ -3050,12 +3074,7 @@ static void snd_pcm_oss_proc_write(struct snd_info_entry *entry,
 				     setup1->next; setup1 = setup1->next);
 				setup1->next = setup;
 			}
-			template.task_name = kstrdup(task_name, GFP_KERNEL);
-			if (! template.task_name) {
-				kfree(setup);
-				buffer->error = -ENOMEM;
-				return;
-			}
+			continue;
 		}
 		*setup = template;
 	}
@@ -3108,17 +3127,16 @@ static inline void snd_pcm_oss_proc_done(struct snd_pcm *pcm)
  *  ENTRY functions
  */
 
-static const struct file_operations snd_pcm_oss_f_reg =
-{
-	.owner =	THIS_MODULE,
-	.read =		snd_pcm_oss_read,
-	.write =	snd_pcm_oss_write,
-	.open =		snd_pcm_oss_open,
-	.release =	snd_pcm_oss_release,
-	.poll =		snd_pcm_oss_poll,
-	.unlocked_ioctl =	snd_pcm_oss_ioctl,
-	.compat_ioctl =	snd_pcm_oss_ioctl_compat,
-	.mmap =		snd_pcm_oss_mmap,
+static const struct file_operations snd_pcm_oss_f_reg = {
+	.owner		=	THIS_MODULE,
+	.read		=	snd_pcm_oss_read,
+	.write		=	snd_pcm_oss_write,
+	.open		=	snd_pcm_oss_open,
+	.release	=	snd_pcm_oss_release,
+	.poll		=	snd_pcm_oss_poll,
+	.unlocked_ioctl	=	snd_pcm_oss_ioctl,
+	.compat_ioctl	=	snd_pcm_oss_ioctl_compat,
+	.mmap		=	snd_pcm_oss_mmap,
 };
 
 static void register_oss_dsp(struct snd_pcm *pcm, int index)

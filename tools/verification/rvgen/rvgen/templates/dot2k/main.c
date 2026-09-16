@@ -35,7 +35,7 @@ static int enable_%%MODEL_NAME%%(void)
 {
 	int retval;
 
-	retval = da_monitor_init();
+	retval = %%MONITOR_CLASS%%_monitor_init();
 	if (retval)
 		return retval;
 
@@ -50,7 +50,7 @@ static void disable_%%MODEL_NAME%%(void)
 
 %%TRACEPOINT_DETACH%%
 
-	da_monitor_destroy();
+	%%MONITOR_CLASS%%_monitor_destroy();
 }
 
 /*
@@ -79,5 +79,5 @@ module_init(register_%%MODEL_NAME%%);
 module_exit(unregister_%%MODEL_NAME%%);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("dot2k: auto-generated");
+MODULE_AUTHOR("rvgen: auto-generated");
 MODULE_DESCRIPTION("%%MODEL_NAME%%: %%DESCRIPTION%%");

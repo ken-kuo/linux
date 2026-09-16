@@ -17,6 +17,7 @@
 #include <linux/ptrace.h>
 #include <linux/ctype.h>
 #include <linux/sysctl.h>
+#include <linux/sysfs.h>
 #include <linux/audit.h>
 #include <linux/user_namespace.h>
 #include <linux/netfilter_ipv4.h>
@@ -27,6 +28,7 @@
 #include <uapi/linux/lsm.h>
 
 #include "include/af_unix.h"
+#include "include/af_inet.h"
 #include "include/apparmor.h"
 #include "include/apparmorfs.h"
 #include "include/audit.h"
@@ -366,15 +368,16 @@ static int apparmor_path_link(struct dentry *old_dentry, const struct path *new_
 {
 	struct aa_label *label;
 	int error = 0;
+	bool needput;
 
 	if (!path_mediated_fs(old_dentry))
 		return 0;
 
-	label = begin_current_label_crit_section();
+	label = begin_current_label_crit_section(&needput);
 	if (!unconfined(label))
 		error = aa_path_link(current_cred(), label, old_dentry, new_dir,
 				     new_dentry);
-	end_current_label_crit_section(label);
+	end_current_label_crit_section(label, needput);
 
 	return error;
 }
@@ -385,13 +388,14 @@ static int apparmor_path_rename(const struct path *old_dir, struct dentry *old_d
 {
 	struct aa_label *label;
 	int error = 0;
+	bool needput;
 
 	if (!path_mediated_fs(old_dentry))
 		return 0;
 	if ((flags & RENAME_EXCHANGE) && !path_mediated_fs(new_dentry))
 		return 0;
 
-	label = begin_current_label_crit_section();
+	label = begin_current_label_crit_section(&needput);
 	if (!unconfined(label)) {
 		struct mnt_idmap *idmap = mnt_idmap(old_dir->mnt);
 		vfsuid_t vfsuid;
@@ -409,7 +413,7 @@ static int apparmor_path_rename(const struct path *old_dir, struct dentry *old_d
 			struct path_cond cond_exchange = {
 				.mode = d_backing_inode(new_dentry)->i_mode,
 			};
-			vfsuid = i_uid_into_vfsuid(idmap, d_backing_inode(old_dentry));
+			vfsuid = i_uid_into_vfsuid(idmap, d_backing_inode(new_dentry));
 			cond_exchange.uid = vfsuid_into_kuid(vfsuid);
 
 			error = aa_path_perm(OP_RENAME_SRC, current_cred(),
@@ -437,7 +441,7 @@ static int apparmor_path_rename(const struct path *old_dir, struct dentry *old_d
 					     AA_MAY_CREATE, &cond);
 
 	}
-	end_current_label_crit_section(label);
+	end_current_label_crit_section(label, needput);
 
 	return error;
 }
@@ -504,11 +508,12 @@ static int apparmor_file_open(struct file *file)
 static int apparmor_file_alloc_security(struct file *file)
 {
 	struct aa_file_ctx *ctx = file_ctx(file);
-	struct aa_label *label = begin_current_label_crit_section();
+	bool needput;
+	struct aa_label *label = begin_current_label_crit_section(&needput);
 
 	spin_lock_init(&ctx->lock);
 	rcu_assign_pointer(ctx->label, aa_get_label(label));
-	end_current_label_crit_section(label);
+	end_current_label_crit_section(label, needput);
 	return 0;
 }
 
@@ -523,11 +528,12 @@ static void apparmor_file_free_security(struct file *file)
 static int common_file_perm(const char *op, struct file *file, u32 mask)
 {
 	struct aa_label *label;
+	bool needput;
 	int error = 0;
 
-	label = begin_current_label_crit_section();
+	label = begin_current_label_crit_section(&needput);
 	error = aa_file_perm(op, current_cred(), label, file, mask, false);
-	end_current_label_crit_section(label);
+	end_current_label_crit_section(label, needput);
 
 	return error;
 }
@@ -822,25 +828,23 @@ static int apparmor_getprocattr(struct task_struct *task, const char *name,
 				char **value)
 {
 	int error = -ENOENT;
-	/* released below */
-	const struct cred *cred = get_task_cred(task);
-	struct aa_task_ctx *ctx = task_ctx(current);
 	struct aa_label *label = NULL;
 
+	rcu_read_lock();
 	if (strcmp(name, "current") == 0)
-		label = aa_get_newest_label(cred_label(cred));
-	else if (strcmp(name, "prev") == 0  && ctx->previous)
-		label = aa_get_newest_label(ctx->previous);
-	else if (strcmp(name, "exec") == 0 && ctx->onexec)
-		label = aa_get_newest_label(ctx->onexec);
+		label = aa_get_newest_cred_label(__task_cred(task));
+	else if (strcmp(name, "prev") == 0  && task_ctx(task)->previous)
+		label = aa_get_newest_label(task_ctx(task)->previous);
+	else if (strcmp(name, "exec") == 0 && task_ctx(task)->onexec)
+		label = aa_get_newest_label(task_ctx(task)->onexec);
 	else
 		error = -EINVAL;
+	rcu_read_unlock();
 
 	if (label)
 		error = aa_getprocattr(label, value, true);
 
 	aa_put_label(label);
-	put_cred(cred);
 
 	return error;
 }
@@ -850,6 +854,7 @@ static int do_setattr(u64 attr, void *value, size_t size)
 	char *command, *largs = NULL, *args = value;
 	size_t arg_size;
 	int error;
+	bool needput;
 	DEFINE_AUDIT_DATA(ad, LSM_AUDIT_DATA_NONE, AA_CLASS_NONE,
 			  OP_SETPROCATTR);
 
@@ -858,12 +863,9 @@ static int do_setattr(u64 attr, void *value, size_t size)
 
 	/* AppArmor requires that the buffer must be null terminated atm */
 	if (args[size - 1] != '\0') {
-		/* null terminate */
-		largs = args = kmalloc(size + 1, GFP_KERNEL);
+		largs = args = kmemdup_nul(value, size, GFP_KERNEL);
 		if (!args)
 			return -ENOMEM;
-		memcpy(args, value, size);
-		args[size] = '\0';
 	}
 
 	error = -EINVAL;
@@ -910,7 +912,7 @@ out:
 	return error;
 
 fail:
-	ad.subj_label = begin_current_label_crit_section();
+	ad.subj_label = begin_current_label_crit_section(&needput);
 	if (attr == LSM_ATTR_CURRENT)
 		ad.info = "current";
 	else if (attr == LSM_ATTR_EXEC)
@@ -919,7 +921,7 @@ fail:
 		ad.info = "invalid";
 	ad.error = error = -EINVAL;
 	aa_audit_msg(AUDIT_APPARMOR_DENIED, &ad, NULL);
-	end_current_label_crit_section(ad.subj_label);
+	end_current_label_crit_section(ad.subj_label, needput);
 	goto out;
 }
 
@@ -1050,18 +1052,19 @@ static int apparmor_userns_create(const struct cred *cred)
 	struct aa_label *label;
 	struct aa_profile *profile;
 	int error = 0;
+	bool needput;
 	DEFINE_AUDIT_DATA(ad, LSM_AUDIT_DATA_TASK, AA_CLASS_NS,
 			  OP_USERNS_CREATE);
 
 	ad.subj_cred = current_cred();
 
-	label = begin_current_label_crit_section();
+	label = begin_current_label_crit_section(&needput);
 	if (!unconfined(label)) {
 		error = fn_for_each(label, profile,
 				    aa_profile_ns_perm(profile, &ad,
 						       AA_USERNS_CREATE));
 	}
-	end_current_label_crit_section(label);
+	end_current_label_crit_section(label, needput);
 
 	return error;
 }
@@ -1255,23 +1258,32 @@ static int apparmor_socket_create(int family, int type, int protocol, int kern)
 {
 	struct aa_label *label;
 	int error = 0;
+	bool needput;
 
 	AA_BUG(in_interrupt());
 
 	if (kern)
 		return 0;
 
-	label = begin_current_label_crit_section();
+	label = begin_current_label_crit_section(&needput);
 	if (!unconfined(label)) {
-		if (family == PF_UNIX)
+		switch (family) {
+		case PF_UNIX:
 			error = aa_unix_create_perm(label, family, type,
 						    protocol);
-		else
+			break;
+		case PF_INET:
+		case PF_INET6:
+			error = aa_inet_create_perm(label, family, type,
+						    protocol);
+			break;
+		default:
 			error = aa_af_perm(current_cred(), label, OP_CREATE,
 					   AA_MAY_CREATE, family, type,
 					   protocol);
+		}
 	}
-	end_current_label_crit_section(label);
+	end_current_label_crit_section(label, needput);
 
 	return error;
 }
@@ -1318,9 +1330,10 @@ static int apparmor_socket_socketpair(struct socket *socka,
 	struct aa_sk_ctx *a_ctx = aa_sock(socka->sk);
 	struct aa_sk_ctx *b_ctx = aa_sock(sockb->sk);
 	struct aa_label *label;
+	bool needput;
 
 	/* socks not live yet - initial values set in sk_alloc */
-	label = begin_current_label_crit_section();
+	label = begin_current_label_crit_section(&needput);
 	if (rcu_access_pointer(a_ctx->label) != label) {
 		AA_BUG("a_ctx != label");
 		aa_put_label(rcu_dereference_protected(a_ctx->label, true));
@@ -1336,7 +1349,7 @@ static int apparmor_socket_socketpair(struct socket *socka,
 		/* unix socket pairs by-pass unix_stream_connect */
 		unix_connect_peers(a_ctx, b_ctx);
 	}
-	end_current_label_crit_section(label);
+	end_current_label_crit_section(label, needput);
 
 	return 0;
 }
@@ -1363,8 +1376,13 @@ static int apparmor_socket_bind(struct socket *sock,
 	AA_BUG(!address);
 	AA_BUG(in_interrupt());
 
-	if (sock->sk->sk_family == PF_UNIX)
+	switch (sock->sk->sk_family) {
+	case PF_UNIX:
 		return aa_unix_bind_perm(sock, address, addrlen);
+	case PF_INET:
+	case PF_INET6:
+		return aa_inet_bind_perm(sock, address, addrlen);
+	}
 	return aa_sk_perm(OP_BIND, AA_MAY_BIND, sock->sk);
 }
 
@@ -1377,8 +1395,13 @@ static int apparmor_socket_connect(struct socket *sock,
 	AA_BUG(in_interrupt());
 
 	/* PF_UNIX goes through unix_stream_connect && unix_may_send */
-	if (sock->sk->sk_family == PF_UNIX)
+	switch (sock->sk->sk_family) {
+	case PF_UNIX:
 		return 0;
+	case PF_INET:
+	case PF_INET6:
+		return aa_inet_connect_perm(sock, address, addrlen);
+	}
 	return aa_sk_perm(OP_CONNECT, AA_MAY_CONNECT, sock->sk);
 }
 
@@ -1388,8 +1411,13 @@ static int apparmor_socket_listen(struct socket *sock, int backlog)
 	AA_BUG(!sock->sk);
 	AA_BUG(in_interrupt());
 
-	if (sock->sk->sk_family == PF_UNIX)
+	switch (sock->sk->sk_family) {
+	case PF_UNIX:
 		return aa_unix_listen_perm(sock, backlog);
+	case PF_INET:
+	case PF_INET6:
+		return aa_inet_listen_perm(sock, backlog);
+	}
 	return aa_sk_perm(OP_LISTEN, AA_MAY_LISTEN, sock->sk);
 }
 
@@ -1404,8 +1432,13 @@ static int apparmor_socket_accept(struct socket *sock, struct socket *newsock)
 	AA_BUG(!newsock);
 	AA_BUG(in_interrupt());
 
-	if (sock->sk->sk_family == PF_UNIX)
+	switch (sock->sk->sk_family) {
+	case PF_UNIX:
 		return aa_unix_accept_perm(sock, newsock);
+	case PF_INET:
+	case PF_INET6:
+		return aa_inet_accept_perm(sock, newsock);
+	}
 	return aa_sk_perm(OP_ACCEPT, AA_MAY_ACCEPT, sock->sk);
 }
 
@@ -1418,15 +1451,36 @@ static int aa_sock_msg_perm(const char *op, u32 request, struct socket *sock,
 	AA_BUG(in_interrupt());
 
 	/* PF_UNIX goes through unix_may_send */
-	if (sock->sk->sk_family == PF_UNIX)
+	switch (sock->sk->sk_family) {
+	case PF_UNIX:
 		return 0;
+	case PF_INET:
+	case PF_INET6:
+		return aa_inet_msg_perm(op, request, sock, msg, size);
+	}
+
 	return aa_sk_perm(op, request, sock->sk);
 }
 
 static int apparmor_socket_sendmsg(struct socket *sock,
 				   struct msghdr *msg, int size)
 {
-	return aa_sock_msg_perm(OP_SENDMSG, AA_MAY_SEND, sock, msg, size);
+	int error = aa_sock_msg_perm(OP_SENDMSG, AA_MAY_SEND, sock, msg, size);
+
+	if (error)
+		return error;
+
+	/* TCP fast open carries connect() semantics in sendmsg(); mediate
+	 * the implicit connect so it cannot bypass the connect permission.
+	 */
+	if ((msg->msg_flags & MSG_FASTOPEN) && msg->msg_name &&
+	    (sk_is_tcp(sock->sk) ||
+	     (sk_is_inet(sock->sk) && sock->sk->sk_type == SOCK_STREAM &&
+	      sock->sk->sk_protocol == IPPROTO_MPTCP)))
+		error = aa_sock_msg_perm(OP_CONNECT, AA_MAY_CONNECT, sock,
+					 msg, size);
+
+	return error;
 }
 
 static int apparmor_socket_recvmsg(struct socket *sock,
@@ -1442,8 +1496,13 @@ static int aa_sock_perm(const char *op, u32 request, struct socket *sock)
 	AA_BUG(!sock->sk);
 	AA_BUG(in_interrupt());
 
-	if (sock->sk->sk_family == PF_UNIX)
+	switch (sock->sk->sk_family) {
+	case PF_UNIX:
 		return aa_unix_sock_perm(op, request, sock);
+	case PF_INET:
+	case PF_INET6:
+		return aa_inet_sock_perm(op, request, sock);
+	}
 	return aa_sk_perm(op, request, sock->sk);
 }
 
@@ -1465,8 +1524,13 @@ static int aa_sock_opt_perm(const char *op, u32 request, struct socket *sock,
 	AA_BUG(!sock->sk);
 	AA_BUG(in_interrupt());
 
-	if (sock->sk->sk_family == PF_UNIX)
+	switch (sock->sk->sk_family) {
+	case PF_UNIX:
 		return aa_unix_opt_perm(op, request, sock, level, optname);
+	case PF_INET:
+	case PF_INET6:
+		return aa_inet_opt_perm(op, request, sock, level, optname);
+	}
 	return aa_sk_perm(op, request, sock->sk);
 }
 
@@ -1489,54 +1553,14 @@ static int apparmor_socket_shutdown(struct socket *sock, int how)
 	return aa_sock_perm(OP_SHUTDOWN, AA_MAY_SHUTDOWN, sock);
 }
 
-#ifdef CONFIG_NETWORK_SECMARK
-/**
- * apparmor_socket_sock_rcv_skb - check perms before associating skb to sk
- * @sk: sk to associate @skb with
- * @skb: skb to check for perms
- *
- * Note: can not sleep may be called with locks held
- *
- * dont want protocol specific in __skb_recv_datagram()
- * to deny an incoming connection  socket_sock_rcv_skb()
- */
-static int apparmor_socket_sock_rcv_skb(struct sock *sk, struct sk_buff *skb)
-{
-	struct aa_sk_ctx *ctx = aa_sock(sk);
-	int error;
-
-	if (!skb->secmark)
-		return 0;
-
-	/*
-	 * If reach here before socket_post_create hook is called, in which
-	 * case label is null, drop the packet.
-	 */
-	if (!rcu_access_pointer(ctx->label))
-		return -EACCES;
-
-	rcu_read_lock();
-	error = apparmor_secmark_check(rcu_dereference(ctx->label), OP_RECVMSG,
-				       AA_MAY_RECEIVE, skb->secmark, sk);
-	rcu_read_unlock();
-
-	return error;
-}
-#endif
-
-
 static struct aa_label *sk_peer_get_label(struct sock *sk)
 {
 	struct aa_sk_ctx *ctx = aa_sock(sk);
-	struct aa_label *label = ERR_PTR(-ENOPROTOOPT);
 
 	if (rcu_access_pointer(ctx->peer))
 		return aa_get_label_rcu(&ctx->peer);
 
-	if (sk->sk_family != PF_UNIX)
-		return ERR_PTR(-ENOPROTOOPT);
-
-	return label;
+	return ERR_PTR(-ENOPROTOOPT);
 }
 
 /**
@@ -1557,13 +1581,14 @@ static int apparmor_socket_getpeersec_stream(struct socket *sock,
 	int slen, error = 0;
 	struct aa_label *label;
 	struct aa_label *peer;
+	bool needput;
 
 	peer = sk_peer_get_label(sock->sk);
 	if (IS_ERR(peer)) {
 		error = PTR_ERR(peer);
 		goto done;
 	}
-	label = begin_current_label_crit_section();
+	label = begin_current_label_crit_section(&needput);
 	slen = aa_label_asxprint(&name, labels_ns(label), peer,
 				 FLAG_SHOW_MODE | FLAG_VIEW_SUBNS |
 				 FLAG_HIDDEN_UNCONFINED, GFP_KERNEL);
@@ -1584,7 +1609,7 @@ done_len:
 		error = -EFAULT;
 
 done_put:
-	end_current_label_crit_section(label);
+	end_current_label_crit_section(label, needput);
 	aa_put_label(peer);
 done:
 	kfree(name);
@@ -1628,6 +1653,39 @@ static void apparmor_sock_graft(struct sock *sk, struct socket *parent)
 }
 
 #ifdef CONFIG_NETWORK_SECMARK
+/**
+ * apparmor_socket_sock_rcv_skb - check perms before associating skb to sk
+ * @sk: sk to associate @skb with
+ * @skb: skb to check for perms
+ *
+ * Note: can not sleep may be called with locks held
+ *
+ * don't want protocol specific in __skb_recv_datagram()
+ * to deny an incoming connection  socket_sock_rcv_skb()
+ */
+static int apparmor_socket_sock_rcv_skb(struct sock *sk, struct sk_buff *skb)
+{
+	struct aa_sk_ctx *ctx = aa_sock(sk);
+	int error;
+
+	if (!skb->secmark)
+		return 0;
+
+	/*
+	 * If reach here before socket_post_create hook is called, in which
+	 * case label is null, drop the packet.
+	 */
+	if (!rcu_access_pointer(ctx->label))
+		return -EACCES;
+
+	rcu_read_lock();
+	error = apparmor_secmark_check(rcu_dereference(ctx->label), OP_RECVMSG,
+				       AA_MAY_RECEIVE, skb->secmark, sk);
+	rcu_read_unlock();
+
+	return error;
+}
+
 static int apparmor_inet_conn_request(const struct sock *sk, struct sk_buff *skb,
 				      struct request_sock *req)
 {
@@ -1644,6 +1702,51 @@ static int apparmor_inet_conn_request(const struct sock *sk, struct sk_buff *skb
 
 	return error;
 }
+#endif
+
+#if defined(CONFIG_NETFILTER) && defined(CONFIG_NETWORK_SECMARK)
+static unsigned int apparmor_ip_postroute(void *priv,
+					  struct sk_buff *skb,
+					  const struct nf_hook_state *state)
+{
+	struct aa_sk_ctx *ctx;
+	struct sock *sk;
+	int error;
+
+	if (!skb->secmark)
+		return NF_ACCEPT;
+
+	sk = skb_to_full_sk(skb);
+	if (sk == NULL)
+		return NF_ACCEPT;
+
+	ctx = aa_sock(sk);
+	rcu_read_lock();
+	error = apparmor_secmark_check(rcu_dereference(ctx->label), OP_SENDMSG,
+				       AA_MAY_SEND, skb->secmark, sk);
+	rcu_read_unlock();
+	if (!error)
+		return NF_ACCEPT;
+
+	return NF_DROP_ERR(-ECONNREFUSED);
+}
+
+static const struct nf_hook_ops apparmor_nf_ops[] = {
+	{
+		.hook =         apparmor_ip_postroute,
+		.pf =           NFPROTO_IPV4,
+		.hooknum =      NF_INET_POST_ROUTING,
+		.priority =     NF_IP_PRI_SELINUX_FIRST,
+	},
+#if IS_ENABLED(CONFIG_IPV6)
+	{
+		.hook =         apparmor_ip_postroute,
+		.pf =           NFPROTO_IPV6,
+		.hooknum =      NF_INET_POST_ROUTING,
+		.priority =     NF_IP6_PRI_SELINUX_FIRST,
+	},
+#endif
+};
 #endif
 
 /*
@@ -2073,7 +2176,7 @@ static int param_get_audit(char *buffer, const struct kernel_param *kp)
 		return -EINVAL;
 	if (apparmor_initialized && !aa_current_policy_view_capable(NULL))
 		return -EPERM;
-	return sprintf(buffer, "%s", audit_mode_names[aa_g_audit]);
+	return sysfs_emit(buffer, "%s\n", audit_mode_names[aa_g_audit]);
 }
 
 static int param_set_audit(const char *val, const struct kernel_param *kp)
@@ -2087,7 +2190,7 @@ static int param_set_audit(const char *val, const struct kernel_param *kp)
 	if (apparmor_initialized && !aa_current_policy_admin_capable(NULL))
 		return -EPERM;
 
-	i = match_string(audit_mode_names, AUDIT_MAX_INDEX, val);
+	i = match_string(audit_mode_names, AUDIT_MODE_NAMES_COUNT, val);
 	if (i < 0)
 		return -EINVAL;
 
@@ -2101,8 +2204,7 @@ static int param_get_mode(char *buffer, const struct kernel_param *kp)
 		return -EINVAL;
 	if (apparmor_initialized && !aa_current_policy_view_capable(NULL))
 		return -EPERM;
-
-	return sprintf(buffer, "%s", aa_profile_mode_names[aa_g_profile_mode]);
+	return sysfs_emit(buffer, "%s\n", aa_profile_mode_names[aa_g_profile_mode]);
 }
 
 static int param_set_mode(const char *val, const struct kernel_param *kp)
@@ -2116,7 +2218,7 @@ static int param_set_mode(const char *val, const struct kernel_param *kp)
 	if (apparmor_initialized && !aa_current_policy_admin_capable(NULL))
 		return -EPERM;
 
-	i = match_string(aa_profile_mode_names, APPARMOR_MODE_NAMES_MAX_INDEX,
+	i = match_string(aa_profile_mode_names, PROFILE_MODE_NAMES_COUNT,
 			 val);
 	if (i < 0)
 		return -EINVAL;
@@ -2138,7 +2240,7 @@ static int param_set_mode(const char *val, const struct kernel_param *kp)
  */
 static void cache_hold_inc(unsigned int *hold)
 {
-	if (*hold > MAX_HOLD_COUNT)
+	if (*hold < MAX_HOLD_COUNT)
 		(*hold)++;
 }
 
@@ -2364,51 +2466,8 @@ static inline int apparmor_init_sysctl(void)
 }
 #endif /* CONFIG_SYSCTL */
 
+
 #if defined(CONFIG_NETFILTER) && defined(CONFIG_NETWORK_SECMARK)
-static unsigned int apparmor_ip_postroute(void *priv,
-					  struct sk_buff *skb,
-					  const struct nf_hook_state *state)
-{
-	struct aa_sk_ctx *ctx;
-	struct sock *sk;
-	int error;
-
-	if (!skb->secmark)
-		return NF_ACCEPT;
-
-	sk = skb_to_full_sk(skb);
-	if (sk == NULL)
-		return NF_ACCEPT;
-
-	ctx = aa_sock(sk);
-	rcu_read_lock();
-	error = apparmor_secmark_check(rcu_dereference(ctx->label), OP_SENDMSG,
-				       AA_MAY_SEND, skb->secmark, sk);
-	rcu_read_unlock();
-	if (!error)
-		return NF_ACCEPT;
-
-	return NF_DROP_ERR(-ECONNREFUSED);
-
-}
-
-static const struct nf_hook_ops apparmor_nf_ops[] = {
-	{
-		.hook =         apparmor_ip_postroute,
-		.pf =           NFPROTO_IPV4,
-		.hooknum =      NF_INET_POST_ROUTING,
-		.priority =     NF_IP_PRI_SELINUX_FIRST,
-	},
-#if IS_ENABLED(CONFIG_IPV6)
-	{
-		.hook =         apparmor_ip_postroute,
-		.pf =           NFPROTO_IPV6,
-		.hooknum =      NF_INET_POST_ROUTING,
-		.priority =     NF_IP6_PRI_SELINUX_FIRST,
-	},
-#endif
-};
-
 static int __net_init apparmor_nf_register(struct net *net)
 {
 	return nf_register_net_hooks(net, apparmor_nf_ops,
@@ -2441,16 +2500,16 @@ static int __init apparmor_nf_ip_init(void)
 }
 #endif
 
-static char nulldfa_src[] __aligned(8) = {
+static const char nulldfa_src[] __aligned(8) = {
 	#include "nulldfa.in"
 };
-static struct aa_dfa *nulldfa;
+static struct aa_dfa *nulldfa __ro_after_init;
 
 static char stacksplitdfa_src[] __aligned(8) = {
 	#include "stacksplitdfa.in"
 };
-struct aa_dfa *stacksplitdfa;
-struct aa_policydb *nullpdb;
+struct aa_dfa *stacksplitdfa __ro_after_init;
+struct aa_policydb *nullpdb __ro_after_init;
 
 static int __init aa_setup_dfa_engine(void)
 {
@@ -2465,6 +2524,7 @@ static int __init aa_setup_dfa_engine(void)
 			    TO_ACCEPT2_FLAG(YYTD_DATA32));
 	if (IS_ERR(nulldfa)) {
 		error = PTR_ERR(nulldfa);
+		nulldfa = NULL;
 		goto fail;
 	}
 	nullpdb->dfa = aa_get_dfa(nulldfa);

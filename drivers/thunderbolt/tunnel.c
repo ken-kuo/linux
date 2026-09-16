@@ -48,6 +48,9 @@
 #define TB_DP_AUX_PRIORITY		2
 #define TB_DP_AUX_WEIGHT		1
 
+/* struct tb_regs_hop::initial_credits is 7 bits wide */
+#define TB_MAX_CREDITS			127
+
 /* Minimum number of credits needed for PCIe path */
 #define TB_MIN_PCIE_CREDITS		6U
 /*
@@ -180,19 +183,14 @@ static struct tb_tunnel *tb_tunnel_alloc(struct tb *tb, size_t npaths,
 {
 	struct tb_tunnel *tunnel;
 
-	tunnel = kzalloc_obj(*tunnel);
+	tunnel = kzalloc_flex(*tunnel, paths, npaths);
 	if (!tunnel)
 		return NULL;
 
-	tunnel->paths = kzalloc_objs(tunnel->paths[0], npaths);
-	if (!tunnel->paths) {
-		kfree(tunnel);
-		return NULL;
-	}
+	tunnel->npaths = npaths;
 
 	INIT_LIST_HEAD(&tunnel->list);
 	tunnel->tb = tb;
-	tunnel->npaths = npaths;
 	tunnel->type = type;
 	kref_init(&tunnel->kref);
 
@@ -219,7 +217,6 @@ static void tb_tunnel_destroy(struct kref *kref)
 			tb_path_free(tunnel->paths[i]);
 	}
 
-	kfree(tunnel->paths);
 	kfree(tunnel);
 }
 
@@ -294,6 +291,40 @@ static inline void tb_tunnel_changed(struct tb_tunnel *tunnel)
 {
 	tb_tunnel_event(tunnel->tb, TB_TUNNEL_CHANGED, tunnel->type,
 			tunnel->src_port, tunnel->dst_port);
+}
+
+static int tb_pci_port_ltssm_state_detect(struct tb_port *port)
+{
+	ktime_t timeout = ktime_add_ms(ktime_get(), 500);
+
+	do {
+		int ret;
+
+		ret = usb4_pci_port_ltssm_state(port);
+		if (ret < 0)
+			return ret;
+		if (ret == USB4_PCIE_LTSSM_DETECT)
+			return 0;
+
+		fsleep(50);
+	} while (ktime_before(ktime_get(), timeout));
+
+	return -ETIMEDOUT;
+}
+
+static int tb_pci_pre_activate(struct tb_tunnel *tunnel)
+{
+	struct tb_port *down = tunnel->src_port;
+	struct tb_port *up = tunnel->dst_port;
+	int ret;
+
+	ret = tb_switch_is_usb4(down->sw) ?
+		tb_pci_port_ltssm_state_detect(down) : 0;
+	if (ret)
+		return ret;
+
+	return tb_switch_is_usb4(up->sw) ?
+		tb_pci_port_ltssm_state_detect(up) : 0;
 }
 
 static int tb_pci_set_ext_encapsulation(struct tb_tunnel *tunnel, bool enable)
@@ -511,6 +542,7 @@ struct tb_tunnel *tb_tunnel_alloc_pci(struct tb *tb, struct tb_port *up,
 	if (!tunnel)
 		return NULL;
 
+	tunnel->pre_activate = tb_pci_pre_activate;
 	tunnel->activate = tb_pci_activate;
 	tunnel->src_port = down;
 	tunnel->dst_port = up;
@@ -1749,8 +1781,7 @@ static int tb_dma_reserve_credits(struct tb_path_hop *hop, unsigned int credits)
 		if (available < TB_MIN_DMA_CREDITS)
 			return -ENOSPC;
 
-		while (credits > available)
-			credits--;
+		credits = min(credits, available);
 
 		tb_port_dbg(port, "reserving %u credits for DMA path\n",
 			    credits);
@@ -1879,7 +1910,7 @@ struct tb_tunnel *tb_tunnel_alloc_dma(struct tb *tb, struct tb_port *nhi,
 	struct tb_tunnel *tunnel;
 	size_t npaths = 0, i = 0;
 	struct tb_path *path;
-	int credits;
+	unsigned int credits;
 
 	/* Ring 0 is reserved for control channel */
 	if (WARN_ON(!receive_ring || !transmit_ring))
@@ -1902,6 +1933,11 @@ struct tb_tunnel *tb_tunnel_alloc_dma(struct tb *tb, struct tb_port *nhi,
 	tunnel->destroy = tb_dma_destroy;
 
 	credits = min_not_zero(dma_credits, nhi->sw->max_dma_credits);
+	if (credits > TB_MAX_CREDITS) {
+		tb_tunnel_dbg(tunnel, "%u credits do not fit a hop, using %u\n",
+			      credits, TB_MAX_CREDITS);
+		credits = TB_MAX_CREDITS;
+	}
 
 	if (receive_ring > 0) {
 		path = tb_path_alloc(tb, dst, receive_path, nhi, receive_ring, 0,

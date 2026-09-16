@@ -18,6 +18,8 @@ enum {
 	TASK_REQ_UPIU_SIZE_DWORDS	= 8,
 	TASK_RSP_UPIU_SIZE_DWORDS	= 8,
 	ALIGNED_UPIU_SIZE		= 512,
+	/* Larger response area, only for the devman UCD */
+	ALIGNED_DEVMAN_RSP_SIZE		= 4096,
 };
 
 /* UFSHCI Registers */
@@ -115,6 +117,7 @@ enum {
 enum {
 	REG_CQIS		= 0x0,
 	REG_CQIE		= 0x4,
+	REG_MCQIACR		= 0x8,
 };
 
 enum {
@@ -188,6 +191,7 @@ static inline u32 ufshci_version(u32 major, u32 minor)
 #define SYSTEM_BUS_FATAL_ERROR			0x20000
 #define CRYPTO_ENGINE_FATAL_ERROR		0x40000
 #define MCQ_CQ_EVENT_STATUS			0x100000
+#define MCQ_IAG_EVENT_STATUS			0x200000
 
 #define UFSHCD_UIC_HIBERN8_MASK	(UIC_HIBERNATE_ENTER |\
 				UIC_HIBERNATE_EXIT)
@@ -271,6 +275,7 @@ enum {
 /* UECDME - Host UIC Error Code DME 48h */
 #define UIC_DME_ERROR			0x80000000
 #define UIC_DME_ERROR_CODE_MASK		0x1
+#define UIC_DME_QOS_MASK		0xE
 
 /* UTRIACR - Interrupt Aggregation control register - 0x4Ch */
 #define INT_AGGR_TIMEOUT_VAL_MASK		0xFF
@@ -497,6 +502,16 @@ struct utp_transfer_cmd_desc {
 	u8 response_upiu[ALIGNED_UPIU_SIZE];
 	u8 prd_table[];
 };
+
+/* Dedicated UCD for the devman/reserved slot */
+struct utp_devman_cmd_desc {
+	u8 command_upiu[ALIGNED_UPIU_SIZE];
+	u8 response_upiu[ALIGNED_DEVMAN_RSP_SIZE];
+	u8 prd_table[];
+};
+
+static_assert(sizeof(struct utp_upiu_req) + QUERY_AGGREGATED_MAX_SIZE <=
+	      ALIGNED_DEVMAN_RSP_SIZE);
 
 /**
  * struct request_desc_header - Descriptor Header common to both UTRD and UTMRD

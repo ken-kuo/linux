@@ -118,6 +118,7 @@ struct netns_ipv4 {
 	struct fib_rules_ops	*rules_ops;
 	struct fib_table __rcu	*fib_main;
 	struct fib_table __rcu	*fib_default;
+	spinlock_t		fib_table_hash_lock;
 	unsigned int		fib_rules_require_fldissect;
 	bool			fib_has_custom_rules;
 #endif
@@ -275,7 +276,7 @@ struct netns_ipv4 {
 
 #ifdef CONFIG_IP_MROUTE
 #ifndef CONFIG_IP_MROUTE_MULTIPLE_TABLES
-	struct mr_table		*mrt;
+	struct mr_table __rcu	*mrt;
 #else
 	struct list_head	mr_tables;
 	struct fib_rules_ops	*mr_rules_ops;

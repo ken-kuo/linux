@@ -70,6 +70,16 @@
 #define PS_64K				0x00000010
 #define PS_DEFAULT_SIZE			PS_16K
 
+#define LOONGARCH_CPUCFG2		0x2
+#define  CPUCFG2_FP			BIT(0)
+#define  CPUCFG2_FPSP			BIT(1)
+#define  CPUCFG2_FPDP			BIT(2)
+#define  CPUCFG2_FPVERS			GENMASK(5, 3)
+#define  CPUCFG2_LSX			BIT(6)
+#define  CPUCFG2_LASX			BIT(7)
+#define  CPUCFG2_LLFTP			BIT(14)
+#define  CPUCFG2_LLFTPREV		GENMASK(17, 15)
+
 /* LoongArch Basic CSR registers */
 #define LOONGARCH_CSR_CRMD		0x0 /* Current mode info */
 #define  CSR_CRMD_PG_SHIFT		4
@@ -82,7 +92,17 @@
 #define  PLV_MASK			0x3
 #define LOONGARCH_CSR_PRMD		0x1
 #define LOONGARCH_CSR_EUEN		0x2
+#define  CSR_EUEN_LBTEN_SHIFT		3
+#define  CSR_EUEN_LBTEN			BIT_ULL(CSR_EUEN_LBTEN_SHIFT)
+#define  CSR_EUEN_LASXEN_SHIFT		2
+#define  CSR_EUEN_LASXEN		BIT_ULL(CSR_EUEN_LASXEN_SHIFT)
+#define  CSR_EUEN_LSXEN_SHIFT		1
+#define  CSR_EUEN_LSXEN			BIT_ULL(CSR_EUEN_LSXEN_SHIFT)
+#define  CSR_EUEN_FPEN_SHIFT		0
+#define  CSR_EUEN_FPEN			BIT_ULL(CSR_EUEN_FPEN_SHIFT)
 #define LOONGARCH_CSR_ECFG		0x4
+#define  ECFGB_PMU			10
+#define  ECFGF_PMU			(BIT_ULL(ECFGB_PMU))
 #define  ECFGB_TIMER			11
 #define  ECFGF_TIMER			(BIT_ULL(ECFGB_TIMER))
 #define LOONGARCH_CSR_ESTAT		0x5  /* Exception status */
@@ -90,6 +110,7 @@
 #define  CSR_ESTAT_EXC_WIDTH		6
 #define  CSR_ESTAT_EXC			(0x3f << CSR_ESTAT_EXC_SHIFT)
 #define    EXCCODE_INT			0    /* Interrupt */
+#define	     INT_PMI			10   /* PMU interrupt */
 #define      INT_TI			11   /* Timer interrupt*/
 #define LOONGARCH_CSR_ERA		0x6  /* ERA */
 #define LOONGARCH_CSR_BADV		0x7  /* Bad virtual address */
@@ -127,6 +148,17 @@
 #define LOONGARCH_CSR_TLBREHI		0x8e
 #define  CSR_TLBREHI_PS_SHIFT		0
 #define  CSR_TLBREHI_PS			(0x3fUL << CSR_TLBREHI_PS_SHIFT)
+
+#define read_cpucfg(reg)			\
+({						\
+	register unsigned long __v;		\
+	__asm__ __volatile__(			\
+		"cpucfg %0, %1\n\t"		\
+		: "=r" (__v)			\
+		: "r" (reg)			\
+		: "memory");			\
+	 __v;					\
+})
 
 #define csr_read(csr)				\
 ({						\
@@ -178,6 +210,7 @@ struct handlers {
 	handler_fn exception_handlers[VECTOR_NUM];
 };
 
+void loongarch_vcpu_setup(struct kvm_vcpu *vcpu);
 void vm_init_descriptor_tables(struct kvm_vm *vm);
 void vm_install_exception_handler(struct kvm_vm *vm, int vector, handler_fn handler);
 

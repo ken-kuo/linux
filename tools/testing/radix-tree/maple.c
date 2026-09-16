@@ -2,7 +2,7 @@
 /*
  * maple_tree.c: Userspace testing for maple tree test-suite
  * Copyright (c) 2018-2022 Oracle Corporation
- * Author: Liam R. Howlett <Liam.Howlett@Oracle.com>
+ * Author: Liam R. Howlett <liam@infradead.org>
  *
  * Any tests that require internal knowledge of the tree or threads and other
  * difficult to handle in kernel tests.
@@ -35234,7 +35234,7 @@ static noinline void __init check_prealloc(struct maple_tree *mt)
 	mt_set_non_kernel(1);
 	/* Spanning store */
 	mas_set_range(&mas, 1, 100);
-	MT_BUG_ON(mt, mas_preallocate(&mas, ptr, GFP_KERNEL & GFP_NOWAIT) == 0);
+	MT_BUG_ON(mt, mas_preallocate(&mas, ptr, GFP_NOWAIT) == 0);
 	allocated = mas_allocated(&mas);
 	height = mas_mt_height(&mas);
 	MT_BUG_ON(mt, allocated != 0);
@@ -35257,7 +35257,7 @@ static noinline void __init check_prealloc(struct maple_tree *mt)
 	MT_BUG_ON(mt, mas_allocated(&mas) != 0);
 	mas_set_range(&mas, 0, 200);
 	mt_set_non_kernel(1);
-	MT_BUG_ON(mt, mas_preallocate(&mas, ptr, GFP_KERNEL & GFP_NOWAIT) == 0);
+	MT_BUG_ON(mt, mas_preallocate(&mas, ptr, GFP_NOWAIT) == 0);
 	allocated = mas_allocated(&mas);
 	height = mas_mt_height(&mas);
 	MT_BUG_ON(mt, allocated != 0);

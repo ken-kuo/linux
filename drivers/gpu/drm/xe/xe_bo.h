@@ -6,6 +6,7 @@
 #ifndef _XE_BO_H_
 #define _XE_BO_H_
 
+#include <drm/drm_prime.h>
 #include <drm/ttm/ttm_tt.h>
 
 #include "xe_bo_types.h"
@@ -52,6 +53,7 @@
 #define XE_BO_FLAG_CPU_ADDR_MIRROR	BIT(24)
 #define XE_BO_FLAG_FORCE_USER_VRAM	BIT(25)
 #define XE_BO_FLAG_NO_COMPRESSION	BIT(26)
+#define XE_BO_FLAG_NEEDS_1G		BIT(27)
 
 /* this one is trigger internally only */
 #define XE_BO_FLAG_INTERNAL_TEST	BIT(30)
@@ -118,7 +120,8 @@ struct xe_bo *xe_bo_init_locked(struct xe_device *xe, struct xe_bo *bo,
 				struct xe_tile *tile, struct dma_resv *resv,
 				struct ttm_lru_bulk_move *bulk, size_t size,
 				u16 cpu_caching, enum ttm_bo_type type,
-				u32 flags, struct drm_exec *exec);
+				u32 flags, struct dma_buf *dma_buf,
+				struct drm_exec *exec);
 struct xe_bo *xe_bo_create_locked(struct xe_device *xe, struct xe_tile *tile,
 				  struct xe_vm *vm, size_t size,
 				  enum ttm_bo_type type, u32 flags,
@@ -251,7 +254,7 @@ static inline bool xe_bo_is_protected(const struct xe_bo *bo)
 static inline bool xe_bo_is_purged(struct xe_bo *bo)
 {
 	xe_bo_assert_held(bo);
-	return bo->madv_purgeable == XE_MADV_PURGEABLE_PURGED;
+	return bo->purgeable.state == XE_MADV_PURGEABLE_PURGED;
 }
 
 /**
@@ -268,10 +271,94 @@ static inline bool xe_bo_is_purged(struct xe_bo *bo)
 static inline bool xe_bo_madv_is_dontneed(struct xe_bo *bo)
 {
 	xe_bo_assert_held(bo);
-	return bo->madv_purgeable == XE_MADV_PURGEABLE_DONTNEED;
+	return bo->purgeable.state == XE_MADV_PURGEABLE_DONTNEED;
 }
 
 void xe_bo_set_purgeable_state(struct xe_bo *bo, enum xe_madv_purgeable_state new_state);
+
+/**
+ * xe_bo_willneed_get_locked() - Acquire a WILLNEED holder on a BO
+ * @bo: Buffer object
+ *
+ * Increments willneed_count and, on a 0->1 transition, promotes the BO
+ * from DONTNEED to WILLNEED. PURGED is terminal and is never modified.
+ *
+ * Caller must hold the BO's dma-resv lock.
+ */
+static inline void xe_bo_willneed_get_locked(struct xe_bo *bo)
+{
+	xe_bo_assert_held(bo);
+
+	/* Imported BOs are owned externally; do not track purgeability. */
+	if (drm_gem_is_imported(&bo->ttm.base))
+		return;
+
+	if (bo->purgeable.willneed_count++ == 0 && xe_bo_madv_is_dontneed(bo))
+		xe_bo_set_purgeable_state(bo, XE_MADV_PURGEABLE_WILLNEED);
+}
+
+/**
+ * xe_bo_willneed_put_locked() - Release a WILLNEED holder on a BO
+ * @bo: Buffer object
+ *
+ * Decrements willneed_count and, on a 1->0 transition, marks the BO
+ * DONTNEED only if it still has VMAs (implying all active VMAs are
+ * DONTNEED). If the last VMA is being removed, preserve the current BO
+ * state to match the previous VMA-walk semantics.
+ *
+ * PURGED is terminal and the BO state is never modified.
+ *
+ * Caller must hold the BO's dma-resv lock.
+ */
+static inline void xe_bo_willneed_put_locked(struct xe_bo *bo)
+{
+	xe_bo_assert_held(bo);
+
+	if (drm_gem_is_imported(&bo->ttm.base))
+		return;
+
+	xe_assert(xe_bo_device(bo), bo->purgeable.willneed_count > 0);
+	if (--bo->purgeable.willneed_count == 0 && bo->purgeable.vma_count > 0 &&
+	    !xe_bo_is_purged(bo))
+		xe_bo_set_purgeable_state(bo, XE_MADV_PURGEABLE_DONTNEED);
+}
+
+/**
+ * xe_bo_vma_count_inc_locked() - Account a new VMA on a BO
+ * @bo: Buffer object
+ *
+ * Increments vma_count.
+ *
+ * Caller must hold the BO's dma-resv lock.
+ */
+static inline void xe_bo_vma_count_inc_locked(struct xe_bo *bo)
+{
+	xe_bo_assert_held(bo);
+
+	if (drm_gem_is_imported(&bo->ttm.base))
+		return;
+
+	bo->purgeable.vma_count++;
+}
+
+/**
+ * xe_bo_vma_count_dec_locked() - Account a VMA removal on a BO
+ * @bo: Buffer object
+ *
+ * Decrements vma_count.
+ *
+ * Caller must hold the BO's dma-resv lock.
+ */
+static inline void xe_bo_vma_count_dec_locked(struct xe_bo *bo)
+{
+	xe_bo_assert_held(bo);
+
+	if (drm_gem_is_imported(&bo->ttm.base))
+		return;
+
+	xe_assert(xe_bo_device(bo), bo->purgeable.vma_count > 0);
+	bo->purgeable.vma_count--;
+}
 
 static inline void xe_bo_unpin_map_no_vm(struct xe_bo *bo)
 {
@@ -462,6 +549,19 @@ void xe_bo_dev_init(struct xe_bo_dev *bo_device);
 void xe_bo_dev_fini(struct xe_bo_dev *bo_device);
 
 struct sg_table *xe_bo_sg(struct xe_bo *bo);
+
+/**
+ * xe_bo_sg_is_contiguous() - Check if a BO's DMA address space is contiguous.
+ * @bo: the BO to check (must have a valid sg table, i.e. !xe_bo_is_vram())
+ * @len: required contiguous length in bytes
+ *
+ * Returns true if the first @len bytes of the BO are mapped to a contiguous
+ * DMA address range.
+ */
+static inline bool xe_bo_sg_is_contiguous(struct xe_bo *bo, size_t len)
+{
+	return drm_prime_get_contiguous_size(xe_bo_sg(bo)) >= len;
+}
 
 /*
  * xe_sg_segment_size() - Provides upper limit for sg segment size.

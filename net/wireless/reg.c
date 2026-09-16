@@ -2412,6 +2412,9 @@ static bool reg_wdev_chan_valid(struct wiphy *wiphy, struct wireless_dev *wdev)
 		case NL80211_IFTYPE_NAN_DATA:
 			/* NAN channels are checked in NL80211_IFTYPE_NAN interface */
 			break;
+		case NL80211_IFTYPE_PD:
+			/* we have no info, but PD is also pretty universal */
+			continue;
 		default:
 			/* others not implemented for now */
 			WARN_ON_ONCE(1);
@@ -3789,7 +3792,8 @@ static void print_regdomain(const struct ieee80211_regdomain *rd)
 		}
 	}
 
-	pr_debug(" DFS Master region: %s", reg_dfs_region_str(rd->dfs_region));
+	pr_debug(" DFS Master region: %s\n",
+		 reg_dfs_region_str(rd->dfs_region));
 	print_rd_rules(rd);
 }
 

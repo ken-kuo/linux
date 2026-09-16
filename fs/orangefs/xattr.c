@@ -72,11 +72,6 @@ static struct orangefs_cached_xattr *find_cached_xattr(struct inode *inode,
 	if (hlist_empty(h))
 		return NULL;
 	hlist_for_each_entry_safe(cx, tmp, h, node) {
-/*		if (!time_before(jiffies, cx->timeout)) {
-			hlist_del(&cx->node);
-			kfree(cx);
-			continue;
-		}*/
 		if (!strcmp(cx->key, key))
 			return cx;
 	}
@@ -188,6 +183,10 @@ ssize_t orangefs_inode_getxattr(struct inode *inode, const char *name,
 	 * Length returned includes null terminator.
 	 */
 	length = new_op->downcall.resp.getxattr.val_sz;
+	if (length < 0 || length > ORANGEFS_MAX_XATTR_VALUELEN) {
+		ret = -EIO;
+		goto out_release_op;
+	}
 
 	/*
 	 * Just return the length of the queried attribute.

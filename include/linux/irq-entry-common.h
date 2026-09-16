@@ -49,9 +49,9 @@
  * Defaults to an empty implementation. Can be replaced by architecture
  * specific code.
  *
- * Invoked from syscall_enter_from_user_mode() in the non-instrumentable
- * section. Use __always_inline so the compiler cannot push it out of line
- * and make it instrumentable.
+ * Invoked from enter_from_user_mode() in the non-instrumentable section. Use
+ * __always_inline so the compiler cannot push it out of line and make it
+ * instrumentable.
  */
 static __always_inline void arch_enter_from_user_mode(struct pt_regs *regs);
 
@@ -216,14 +216,6 @@ static __always_inline void __exit_to_user_mode_validate(void)
 	kmap_assert_nomap();
 	lockdep_assert_irqs_disabled();
 	lockdep_sys_exit();
-}
-
-/* Temporary workaround to keep ARM64 alive */
-static __always_inline void exit_to_user_mode_prepare_legacy(struct pt_regs *regs)
-{
-	__exit_to_user_mode_prepare(regs, EXIT_TO_USER_MODE_WORK);
-	rseq_exit_to_user_mode_legacy();
-	__exit_to_user_mode_validate();
 }
 
 /**

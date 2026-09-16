@@ -19,6 +19,7 @@
 #include <linux/random.h>
 #include <asm/processor.h>
 #include <asm/hypervisor.h>
+#include <asm/cpuid/api.h>
 #include <hyperv/hvhdk.h>
 #include <asm/mshyperv.h>
 #include <asm/desc.h>
@@ -154,7 +155,7 @@ DEFINE_IDTENTRY_SYSVEC(sysvec_hyperv_callback)
 {
 	struct pt_regs *old_regs = set_irq_regs(regs);
 
-	inc_irq_stat(irq_hv_callback_count);
+	inc_irq_stat(HYPERVISOR_CALLBACK);
 	if (mshv_handler)
 		mshv_handler();
 
@@ -193,7 +194,7 @@ DEFINE_IDTENTRY_SYSVEC(sysvec_hyperv_stimer0)
 {
 	struct pt_regs *old_regs = set_irq_regs(regs);
 
-	inc_irq_stat(hyperv_stimer0_count);
+	inc_irq_stat(HYPERV_STIMER0);
 	if (hv_stimer0_handler)
 		hv_stimer0_handler();
 	add_interrupt_randomness(HYPERV_STIMER0_VECTOR);
@@ -237,8 +238,12 @@ void hv_remove_crash_handler(void)
 #ifdef CONFIG_KEXEC_CORE
 static void hv_machine_shutdown(void)
 {
-	if (kexec_in_progress && hv_kexec_handler)
-		hv_kexec_handler();
+	if (kexec_in_progress) {
+		hv_stimer_global_cleanup();
+
+		if (hv_kexec_handler)
+			hv_kexec_handler();
+	}
 
 	/*
 	 * Call hv_cpu_die() on all the CPUs, otherwise later the hypervisor
@@ -427,12 +432,19 @@ static void __init hv_smp_prepare_cpus(unsigned int max_cpus)
 	}
 
 #ifdef CONFIG_X86_64
+	/* If AP LPs exist, we are in a kexec'd kernel and VPs already exist */
+	if (num_present_cpus() == 1 || hv_lp_exists(1))
+		return;
+
 	for_each_present_cpu(i) {
 		if (i == 0)
 			continue;
 		ret = hv_call_add_logical_proc(numa_cpu_node(i), i, cpu_physical_id(i));
 		BUG_ON(ret);
 	}
+
+	ret = hv_call_notify_all_processors_started();
+	WARN_ON(ret);
 
 	for_each_present_cpu(i) {
 		if (i == 0)
@@ -490,17 +502,32 @@ static void hv_reserve_irq_vectors(void)
 	#define HYPERV_DBG_ASSERT_VECTOR	0x2C
 	#define HYPERV_DBG_SERVICE_VECTOR	0x2D
 
+	/*
+	 * The hypervisor delivers these three to the NT HAL and refuses to
+	 * map a device interrupt to any of them.
+	 *
+	 * The hypervisor will provide a hint in the future when these
+	 * vectors become available to use.
+	 */
+	#define HAL_NT_APC_VECTOR		0x1F
+	#define HAL_NT_DPC_VECTOR		0x2F
+	#define HAL_NT_CLOCK_IPI_VECTOR		0xD2
+
 	if (cpu_feature_enabled(X86_FEATURE_FRED))
 		return;
 
 	if (test_and_set_bit(HYPERV_DBG_ASSERT_VECTOR, system_vectors) ||
 	    test_and_set_bit(HYPERV_DBG_SERVICE_VECTOR, system_vectors) ||
-	    test_and_set_bit(HYPERV_DBG_FASTFAIL_VECTOR, system_vectors))
+	    test_and_set_bit(HYPERV_DBG_FASTFAIL_VECTOR, system_vectors) ||
+	    test_and_set_bit(HAL_NT_APC_VECTOR, system_vectors) ||
+	    test_and_set_bit(HAL_NT_DPC_VECTOR, system_vectors) ||
+	    test_and_set_bit(HAL_NT_CLOCK_IPI_VECTOR, system_vectors))
 		BUG();
 
-	pr_info("Hyper-V: reserve vectors: 0x%x 0x%x 0x%x\n",
+	pr_info("Hyper-V: reserve vectors: 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x\n",
 		HYPERV_DBG_ASSERT_VECTOR, HYPERV_DBG_SERVICE_VECTOR,
-		HYPERV_DBG_FASTFAIL_VECTOR);
+		HYPERV_DBG_FASTFAIL_VECTOR, HAL_NT_APC_VECTOR,
+		HAL_NT_DPC_VECTOR, HAL_NT_CLOCK_IPI_VECTOR);
 }
 
 static void __init ms_hyperv_init_platform(void)
@@ -704,9 +731,7 @@ static void __init ms_hyperv_init_platform(void)
 	}
 
 	/* Install system interrupt handler for stimer0 */
-	if (ms_hyperv.misc_features & HV_STIMER_DIRECT_MODE_AVAILABLE) {
-		sysvec_install(HYPERV_STIMER0_VECTOR, sysvec_hyperv_stimer0);
-	}
+	sysvec_install(HYPERV_STIMER0_VECTOR, sysvec_hyperv_stimer0);
 
 # ifdef CONFIG_SMP
 	smp_ops.smp_prepare_boot_cpu = hv_smp_prepare_boot_cpu;

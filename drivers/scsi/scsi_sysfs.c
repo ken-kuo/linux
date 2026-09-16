@@ -214,8 +214,9 @@ store_shost_state(struct device *dev, struct device_attribute *attr,
 	if (!state)
 		return -EINVAL;
 
-	if (scsi_host_set_state(shost, state))
-		return -EINVAL;
+	scoped_guard(spinlock_irq, shost->host_lock)
+		if (scsi_host_set_state(shost, state))
+			return -EINVAL;
 	return count;
 }
 
@@ -223,7 +224,7 @@ static ssize_t
 show_shost_state(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct Scsi_Host *shost = class_to_shost(dev);
-	const char *name = scsi_host_state_name(shost->shost_state);
+	const char *name = scsi_host_state_name(scsi_get_host_state(shost));
 
 	if (!name)
 		return -EINVAL;
@@ -1051,6 +1052,21 @@ sdev_show_wwid(struct device *dev, struct device_attribute *attr,
 }
 static DEVICE_ATTR(wwid, S_IRUGO, sdev_show_wwid, NULL);
 
+static ssize_t
+sdev_show_serial(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	ssize_t ret;
+
+	ret = scsi_vpd_lun_serial(sdev, buf, PAGE_SIZE - 1);
+	if (ret < 0)
+		return ret;
+
+	buf[ret] = '\n';
+	return ret + 1;
+}
+static DEVICE_ATTR(serial, S_IRUGO, sdev_show_serial, NULL);
+
 #define BLIST_FLAG_NAME(name)					\
 	[const_ilog2((__force __u64)BLIST_##name)] = #name
 static const char *const sdev_bflags_name[] = {
@@ -1295,6 +1311,7 @@ static struct attribute *scsi_sdev_attrs[] = {
 	&dev_attr_device_busy.attr,
 	&dev_attr_vendor.attr,
 	&dev_attr_model.attr,
+	&dev_attr_serial.attr,
 	&dev_attr_rev.attr,
 	&dev_attr_rescan.attr,
 	&dev_attr_delete.attr,

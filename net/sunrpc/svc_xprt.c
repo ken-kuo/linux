@@ -234,7 +234,19 @@ void svc_xprt_received(struct svc_xprt *xprt)
 	svc_xprt_get(xprt);
 	smp_mb__before_atomic();
 	clear_bit(XPT_BUSY, &xprt->xpt_flags);
-	svc_xprt_enqueue(xprt);
+
+	/*
+	 * Skip the enqueue when no actionable flags are set.
+	 * Each producer both sets its flag (XPT_DATA, XPT_CLOSE,
+	 * etc.) and calls svc_xprt_enqueue(); if a set_bit races
+	 * with this check, the producer's own enqueue observes
+	 * !XPT_BUSY and dispatches the transport.
+	 */
+	if (READ_ONCE(xprt->xpt_flags) &
+	    (BIT(XPT_CONN) | BIT(XPT_CLOSE) | BIT(XPT_HANDSHAKE) |
+	     BIT(XPT_DATA) | BIT(XPT_DEFERRED)))
+		svc_xprt_enqueue(xprt);
+
 	svc_xprt_put(xprt);
 }
 EXPORT_SYMBOL_GPL(svc_xprt_received);
@@ -425,13 +437,35 @@ static bool svc_xprt_reserve_slot(struct svc_rqst *rqstp, struct svc_xprt *xprt)
 	return true;
 }
 
+/*
+ * After a caller releases write-space or a request slot,
+ * re-enqueue the transport only when there is pending
+ * work that a thread could act on.  The smp_mb() pairs
+ * with the smp_rmb() in svc_xprt_ready() and orders the
+ * preceding counter update before the flags read so a
+ * concurrent set_bit(XPT_DATA) is visible here.
+ *
+ * When the transport is BUSY, the thread holding it will
+ * call svc_xprt_received() upon completion, which checks
+ * for pending work and re-enqueues as needed.
+ */
+static void svc_xprt_resource_released(struct svc_xprt *xprt)
+{
+	unsigned long xpt_flags;
+
+	smp_mb();
+	xpt_flags = READ_ONCE(xprt->xpt_flags);
+	if (xpt_flags & (BIT(XPT_DATA) | BIT(XPT_DEFERRED)) &&
+	    !(xpt_flags & BIT(XPT_BUSY)))
+		svc_xprt_enqueue(xprt);
+}
+
 static void svc_xprt_release_slot(struct svc_rqst *rqstp)
 {
 	struct svc_xprt	*xprt = rqstp->rq_xprt;
 	if (test_and_clear_bit(RQ_DATA, &rqstp->rq_flags)) {
 		atomic_dec(&xprt->xpt_nr_rqsts);
-		smp_wmb(); /* See smp_rmb() in svc_xprt_ready() */
-		svc_xprt_enqueue(xprt);
+		svc_xprt_resource_released(xprt);
 	}
 }
 
@@ -525,10 +559,10 @@ void svc_reserve(struct svc_rqst *rqstp, int space)
 	space += rqstp->rq_res.head[0].iov_len;
 
 	if (xprt && space < rqstp->rq_reserved) {
-		atomic_sub((rqstp->rq_reserved - space), &xprt->xpt_reserved);
+		atomic_sub((rqstp->rq_reserved - space),
+			   &xprt->xpt_reserved);
 		rqstp->rq_reserved = space;
-		smp_wmb(); /* See smp_rmb() in svc_xprt_ready() */
-		svc_xprt_enqueue(xprt);
+		svc_xprt_resource_released(xprt);
 	}
 }
 EXPORT_SYMBOL_GPL(svc_reserve);
@@ -650,14 +684,13 @@ static void svc_check_conn_limits(struct svc_serv *serv)
 	}
 }
 
-static bool svc_alloc_arg(struct svc_rqst *rqstp)
+static bool svc_fill_pages(struct svc_rqst *rqstp, struct page **pages,
+			   unsigned long npages)
 {
-	struct xdr_buf *arg = &rqstp->rq_arg;
-	unsigned long pages, filled, ret;
+	unsigned long filled, ret;
 
-	pages = rqstp->rq_maxpages;
-	for (filled = 0; filled < pages; filled = ret) {
-		ret = alloc_pages_bulk(GFP_KERNEL, pages, rqstp->rq_pages);
+	for (filled = 0; filled < npages; filled = ret) {
+		ret = alloc_pages_bulk(GFP_KERNEL, npages, pages);
 		if (ret > filled)
 			/* Made progress, don't sleep yet */
 			continue;
@@ -667,11 +700,40 @@ static bool svc_alloc_arg(struct svc_rqst *rqstp)
 			set_current_state(TASK_RUNNING);
 			return false;
 		}
-		trace_svc_alloc_arg_err(pages, ret);
+		trace_svc_alloc_arg_err(npages, ret);
 		memalloc_retry_wait(GFP_KERNEL);
 	}
-	rqstp->rq_page_end = &rqstp->rq_pages[pages];
-	rqstp->rq_pages[pages] = NULL; /* this might be seen in nfsd_splice_actor() */
+	return true;
+}
+
+static bool svc_alloc_arg(struct svc_rqst *rqstp)
+{
+	struct xdr_buf *arg = &rqstp->rq_arg;
+	unsigned long pages, nfree;
+
+	pages = rqstp->rq_maxpages;
+
+	nfree = rqstp->rq_pages_nfree;
+	if (nfree) {
+		if (!svc_fill_pages(rqstp, rqstp->rq_pages, nfree))
+			return false;
+		rqstp->rq_pages_nfree = 0;
+	}
+
+	if (WARN_ON_ONCE(rqstp->rq_next_page < rqstp->rq_respages))
+		return false;
+	nfree = rqstp->rq_next_page - rqstp->rq_respages;
+	if (nfree) {
+		if (!svc_fill_pages(rqstp, rqstp->rq_respages, nfree))
+			return false;
+	}
+
+	rqstp->rq_next_page = rqstp->rq_respages;
+	rqstp->rq_page_end = &rqstp->rq_respages[pages];
+	/* svc_rqst_replace_page() dereferences *rq_next_page even
+	 * at rq_page_end; NULL prevents releasing a garbage page.
+	 */
+	rqstp->rq_page_end[0] = NULL;
 
 	/* Make arg->head point to first page and arg->pages point to rest */
 	arg->head[0].iov_base = page_address(rqstp->rq_pages[0]);
@@ -1126,7 +1188,7 @@ static void svc_clean_up_xprts(struct svc_serv *serv, struct net *net)
 	struct svc_xprt *xprt;
 	int i;
 
-	for (i = 0; i < serv->sv_nrpools; i++) {
+	for (i = 0; i < svc_serv_nrpools(serv); i++) {
 		struct svc_pool *pool = &serv->sv_pools[i];
 		struct llist_node *q, **t1, *t2;
 
@@ -1277,7 +1339,6 @@ static noinline int svc_deferred_recv(struct svc_rqst *rqstp)
 	rqstp->rq_addrlen     = dr->addrlen;
 	/* Save off transport header len in case we get deferred again */
 	rqstp->rq_daddr       = dr->daddr;
-	rqstp->rq_respages    = rqstp->rq_pages;
 	rqstp->rq_xprt_ctxt   = dr->xprt_ctxt;
 
 	dr->xprt_ctxt = NULL;
@@ -1456,7 +1517,7 @@ static void *svc_pool_stats_start(struct seq_file *m, loff_t *pos)
 		return SEQ_START_TOKEN;
 	if (!si->serv)
 		return NULL;
-	return pidx > si->serv->sv_nrpools ? NULL
+	return pidx > svc_serv_nrpools(si->serv) ? NULL
 		: &si->serv->sv_pools[pidx - 1];
 }
 
@@ -1474,7 +1535,7 @@ static void *svc_pool_stats_next(struct seq_file *m, void *p, loff_t *pos)
 		pool = &serv->sv_pools[0];
 	} else {
 		unsigned int pidx = (pool - &serv->sv_pools[0]);
-		if (pidx < serv->sv_nrpools-1)
+		if (pidx < svc_serv_nrpools(serv) - 1)
 			pool = &serv->sv_pools[pidx+1];
 		else
 			pool = NULL;

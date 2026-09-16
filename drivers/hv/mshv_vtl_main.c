@@ -129,6 +129,7 @@ mshv_ioctl_create_vtl(void __user *user_arg, struct device *module_dev)
 	file = anon_inode_getfile("mshv_vtl", &mshv_vtl_fops,
 				  vtl, O_RDWR);
 	if (IS_ERR(file)) {
+		put_unused_fd(fd);
 		kfree(vtl);
 		return PTR_ERR(file);
 	}
@@ -386,7 +387,6 @@ static int mshv_vtl_ioctl_add_vtl0_mem(struct mshv_vtl *vtl, void __user *arg)
 
 	if (copy_from_user(&vtl0_mem, arg, sizeof(vtl0_mem)))
 		return -EFAULT;
-	/* vtl0_mem.last_pfn is excluded in the pagemap range for VTL0 as per design */
 	if (vtl0_mem.last_pfn <= vtl0_mem.start_pfn) {
 		dev_err(vtl->module_dev, "range start pfn (%llx) > end pfn (%llx)\n",
 			vtl0_mem.start_pfn, vtl0_mem.last_pfn);
@@ -397,6 +397,10 @@ static int mshv_vtl_ioctl_add_vtl0_mem(struct mshv_vtl *vtl, void __user *arg)
 	if (!pgmap)
 		return -ENOMEM;
 
+	/*
+	 * vtl0_mem.last_pfn is excluded in the pagemap range for VTL0 as per design.
+	 * last_pfn is not reserved or wasted, and reflects 'start_pfn + size' of pagemap range.
+	 */
 	pgmap->ranges[0].start = PFN_PHYS(vtl0_mem.start_pfn);
 	pgmap->ranges[0].end = PFN_PHYS(vtl0_mem.last_pfn) - 1;
 	pgmap->nr_range = 1;
@@ -405,8 +409,11 @@ static int mshv_vtl_ioctl_add_vtl0_mem(struct mshv_vtl *vtl, void __user *arg)
 	/*
 	 * Determine the highest page order that can be used for the given memory range.
 	 * This works best when the range is aligned; i.e. both the start and the length.
+	 * Clamp to MAX_FOLIO_ORDER to avoid a WARN in memremap_pages() when the range
+	 * alignment exceeds the maximum supported folio order for this kernel config.
 	 */
-	pgmap->vmemmap_shift = count_trailing_zeros(vtl0_mem.start_pfn | vtl0_mem.last_pfn);
+	pgmap->vmemmap_shift = min(count_trailing_zeros(vtl0_mem.start_pfn | vtl0_mem.last_pfn),
+				   MAX_FOLIO_ORDER);
 	dev_dbg(vtl->module_dev,
 		"Add VTL0 memory: start: 0x%llx, end_pfn: 0x%llx, page order: %lu\n",
 		vtl0_mem.start_pfn, vtl0_mem.last_pfn, pgmap->vmemmap_shift);
@@ -415,7 +422,7 @@ static int mshv_vtl_ioctl_add_vtl0_mem(struct mshv_vtl *vtl, void __user *arg)
 	if (IS_ERR(addr)) {
 		dev_err(vtl->module_dev, "devm_memremap_pages error: %ld\n", PTR_ERR(addr));
 		kfree(pgmap);
-		return -EFAULT;
+		return PTR_ERR(addr);
 	}
 
 	/* Don't free pgmap, since it has to stick around until the memory
@@ -590,9 +597,9 @@ static int mshv_vtl_get_set_reg(struct hv_register_assoc *regs, bool set)
 		} else {
 			/* Handle MSRs */
 			if (set)
-				wrmsrl(reg_table[i].msr_addr, *reg64);
+				wrmsrq(reg_table[i].msr_addr, *reg64);
 			else
-				rdmsrl(reg_table[i].msr_addr, *reg64);
+				rdmsrq(reg_table[i].msr_addr, *reg64);
 		}
 		return 0;
 	}
@@ -795,7 +802,7 @@ static vm_fault_t mshv_vtl_fault(struct vm_fault *vmf)
 	int cpu = vmf->pgoff & MSHV_PG_OFF_CPU_MASK;
 	int real_off = vmf->pgoff >> MSHV_REAL_OFF_SHIFT;
 
-	if (!cpu_online(cpu))
+	if (cpu >= nr_cpu_ids || !cpu_online(cpu))
 		return VM_FAULT_SIGBUS;
 	/*
 	 * CPU Hotplug is not supported in VTL2 in OpenHCL, where this kernel driver exists.
@@ -1142,11 +1149,21 @@ static int mshv_vtl_hvcall_call(struct mshv_vtl_hvcall_fd *fd,
 	 */
 	in = (void *)__get_free_page(GFP_KERNEL);
 	out = (void *)__get_free_page(GFP_KERNEL);
+	if (!in || !out) {
+		ret = -ENOMEM;
+		goto free_pages;
+	}
 
 	if (copy_from_user(in, (void __user *)hvcall.input_ptr, hvcall.input_size)) {
 		ret = -EFAULT;
 		goto free_pages;
 	}
+
+	/*
+	 * The caller supplies output_size, so clear the range copied back to
+	 * userspace in case the hypercall writes fewer bytes than requested.
+	 */
+	memset(out, 0, hvcall.output_size);
 
 	hvcall.status = hv_do_hypercall(hvcall.control, in, out);
 

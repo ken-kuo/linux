@@ -418,7 +418,8 @@ hung_task_detect_count
 ======================
 
 Indicates the total number of tasks that have been detected as hung since
-the system boot.
+the system boot or since the counter was reset. The counter is zeroed when
+a value of 0 is written.
 
 This file shows up if ``CONFIG_DETECT_HUNG_TASK`` is enabled.
 
@@ -1399,6 +1400,23 @@ need this.
 
 Note that if you change this from 0 to 1, already created segments
 without users and with a dead originative process will be destroyed.
+
+
+syscall_user_dispatch
+=====================
+
+Controls whether userspace may arm Syscall User Dispatch via
+``prctl(PR_SET_SYSCALL_USER_DISPATCH, ...)`` or the
+``PTRACE_SET_SYSCALL_USER_DISPATCH_CONFIG`` ptrace request:
+
+  ==  ===================================================================
+  0   Arming syscall user dispatch is denied with ``-EPERM``.  Tasks that
+      already armed it keep it, and disabling it is always permitted.
+  1   (default) Arming syscall user dispatch is permitted.
+  ==  ===================================================================
+
+Only present when the kernel is built with ``CONFIG_SYSCALL_USER_DISPATCH``
+and ``CONFIG_SYSCTL``.
 
 
 sysctl_writes_strict

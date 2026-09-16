@@ -319,6 +319,10 @@ static int parse_cache_opts(struct dm_pcache *pcache, struct dm_arg_set *as,
 		argc--;
 
 		if (!strcmp(arg, "cache_mode")) {
+			if (!argc) {
+				*error = "Missing value for cache_mode";
+				return -EINVAL;
+			}
 			arg = dm_shift_arg(as);
 			if (!strcmp(arg, "writeback")) {
 				opts->cache_mode = PCACHE_CACHE_MODE_WRITEBACK;
@@ -328,6 +332,10 @@ static int parse_cache_opts(struct dm_pcache *pcache, struct dm_arg_set *as,
 			}
 			argc--;
 		} else if (!strcmp(arg, "data_crc")) {
+			if (!argc) {
+				*error = "Missing value for data_crc";
+				return -EINVAL;
+			}
 			arg = dm_shift_arg(as);
 			if (!strcmp(arg, "true")) {
 				opts->data_crc = true;
@@ -695,9 +703,14 @@ static int dm_pcache_message(struct dm_target *ti, unsigned int argc,
 		goto err;
 
 	if (argc == 2 && !strcasecmp(argv[0], "gc_percent")) {
-		if (kstrtoul(argv[1], 10, &val))
+		u8 gc_val;
+
+		/* kstrtou8, not kstrtoul: an unsigned long is silently
+		 * truncated on the way to a u8 (upstream fb9e17287a4e).
+		 */
+		if (kstrtou8(argv[1], 10, &gc_val))
 			goto err;
-		return pcache_cache_set_gc_percent(&pcache->cache, val);
+		return pcache_cache_set_gc_percent(&pcache->cache, gc_val);
 	}
 
 	/* Lazy-writeback watermark (% segs used; 0 = eager). See cache.h. */

@@ -200,6 +200,13 @@ static int qcom_cpufreq_kryo_name_version(struct device *cpu_dev,
 	case QCOM_ID_IPQ9574:
 		drv->versions = 1 << (unsigned int)(*speedbin);
 		break;
+	case QCOM_ID_IPQ5200:
+	case QCOM_ID_IPQ5210:
+	case QCOM_ID_QCF2200:
+	case QCOM_ID_QCF3200:
+	case QCOM_ID_QCF3210:
+		drv->versions = (*speedbin == 0xcd) ? BIT(1) : BIT(0);
+		break;
 	case QCOM_ID_IPQ5424:
 	case QCOM_ID_IPQ5404:
 		drv->versions = (*speedbin == 0x3b) ? BIT(1) : BIT(0);
@@ -291,17 +298,9 @@ static int qcom_cpufreq_ipq8064_name_version(struct device *cpu_dev,
 	ret = qcom_smem_get_soc_id(&msm_id);
 	if (ret == -ENODEV) {
 		const struct of_device_id *match;
-		struct device_node *root;
-
-		root = of_find_node_by_path("/");
-		if (!root) {
-			ret = -ENODEV;
-			goto exit;
-		}
 
 		/* Fallback to compatible match with no SMEM initialized */
-		match = of_match_node(qcom_cpufreq_ipq806x_match_list, root);
-		of_node_put(root);
+		match = of_machine_get_match(qcom_cpufreq_ipq806x_match_list);
 		if (!match) {
 			ret = -ENODEV;
 			goto exit;
@@ -626,6 +625,7 @@ static const struct of_device_id qcom_cpufreq_match_list[] __initconst __maybe_u
 	{ .compatible = "qcom,msm8909", .data = &match_data_msm8909 },
 	{ .compatible = "qcom,msm8996", .data = &match_data_kryo },
 	{ .compatible = "qcom,qcs404", .data = &match_data_qcs404 },
+	{ .compatible = "qcom,ipq5210", .data = &match_data_kryo },
 	{ .compatible = "qcom,ipq5332", .data = &match_data_kryo },
 	{ .compatible = "qcom,ipq5424", .data = &match_data_kryo },
 	{ .compatible = "qcom,ipq6018", .data = &match_data_ipq6018 },
@@ -647,14 +647,10 @@ MODULE_DEVICE_TABLE(of, qcom_cpufreq_match_list);
  */
 static int __init qcom_cpufreq_init(void)
 {
-	struct device_node *np __free(device_node) = of_find_node_by_path("/");
 	const struct of_device_id *match;
 	int ret;
 
-	if (!np)
-		return -ENODEV;
-
-	match = of_match_node(qcom_cpufreq_match_list, np);
+	match = of_machine_get_match(qcom_cpufreq_match_list);
 	if (!match)
 		return -ENODEV;
 

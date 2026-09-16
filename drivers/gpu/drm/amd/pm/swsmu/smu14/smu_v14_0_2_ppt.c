@@ -59,6 +59,9 @@
 static void smu_v14_0_2_get_od_setting_limits(struct smu_context *smu,
 					      int od_feature_bit,
 					      int32_t *min, int32_t *max);
+static int smu_v14_0_2_init_ppt_limits(struct smu_context *smu);
+static int smu_v14_0_2_get_overdrive_table(struct smu_context *smu,
+					   OverDriveTableExternal_t *od_table);
 
 static const struct smu_feature_bits smu_v14_0_2_dpm_features = {
 	.bits = { SMU_FEATURE_BIT_INIT(FEATURE_DPM_GFXCLK_BIT),
@@ -370,7 +373,7 @@ static int smu_v14_0_2_setup_pptable(struct smu_context *smu)
 	if (ret)
 		return ret;
 
-	return ret;
+	return smu_v14_0_2_init_ppt_limits(smu);
 }
 
 static int smu_v14_0_2_tables_init(struct smu_context *smu)
@@ -661,13 +664,13 @@ static int smu_v14_0_2_get_smu_metrics_data(struct smu_context *smu,
 			*value = metrics->AverageGfxclkFrequencyPreDs;
 		break;
 	case METRICS_AVERAGE_FCLK:
-		if (metrics->AverageUclkActivity <= SMU_14_0_2_BUSY_THRESHOLD)
+		if (smu_safe_u16_nn(metrics->AverageUclkActivity) <= SMU_14_0_2_BUSY_THRESHOLD)
 			*value = metrics->AverageFclkFrequencyPostDs;
 		else
 			*value = metrics->AverageFclkFrequencyPreDs;
 		break;
 	case METRICS_AVERAGE_UCLK:
-		if (metrics->AverageUclkActivity <= SMU_14_0_2_BUSY_THRESHOLD)
+		if (smu_safe_u16_nn(metrics->AverageUclkActivity) <= SMU_14_0_2_BUSY_THRESHOLD)
 			*value = metrics->AverageMemclkFrequencyPostDs;
 		else
 			*value = metrics->AverageMemclkFrequencyPreDs;
@@ -688,14 +691,14 @@ static int smu_v14_0_2_get_smu_metrics_data(struct smu_context *smu,
 		*value = metrics->AverageGfxActivity;
 		break;
 	case METRICS_AVERAGE_MEMACTIVITY:
-		*value = metrics->AverageUclkActivity;
+		*value = smu_safe_u16_nn(metrics->AverageUclkActivity);
 		break;
 	case METRICS_AVERAGE_VCNACTIVITY:
 		*value = max(metrics->AverageVcn0ActivityPercentage,
 			     metrics->Vcn1ActivityPercentage);
 		break;
 	case METRICS_AVERAGE_SOCKETPOWER:
-		*value = metrics->AverageSocketPower << 8;
+		*value = metrics->AverageSocketPower * MILLIWATT_PER_WATT;
 		break;
 	case METRICS_TEMPERATURE_EDGE:
 		*value = metrics->AvgTemperature[TEMP_EDGE] *
@@ -1610,11 +1613,32 @@ static int smu_v14_0_2_get_fan_speed_rpm(struct smu_context *smu,
 						speed);
 }
 
-static int smu_v14_0_2_get_power_limit(struct smu_context *smu,
-				       uint32_t *current_power_limit,
-				       uint32_t *default_power_limit,
-				       uint32_t *max_power_limit,
-				       uint32_t *min_power_limit)
+static int smu_v14_0_2_get_ppt_limit(struct smu_context *smu,
+				     enum smu_ppt_limit_type limit_type,
+				     uint32_t *ppt_limit)
+{
+	OverDriveTableExternal_t od_table;
+	int ret;
+
+	if (limit_type != SMU_PPT_LIMIT_PPT0)
+		return -EOPNOTSUPP;
+
+	ret = smu_v14_0_get_ppt_limit(smu, limit_type, ppt_limit);
+	if (ret)
+		return ret;
+
+	ret = smu_v14_0_2_get_overdrive_table(smu, &od_table);
+	if (ret)
+		return ret;
+
+	if (od_table.OverDriveTable.Ppt > 0)
+		*ppt_limit = *ppt_limit *
+			(100 + od_table.OverDriveTable.Ppt) / 100;
+
+	return 0;
+}
+
+static int smu_v14_0_2_init_ppt_limits(struct smu_context *smu)
 {
 	struct smu_table_context *table_context = &smu->smu_table;
 	struct smu_14_0_2_powerplay_table *powerplay_table =
@@ -1622,42 +1646,36 @@ static int smu_v14_0_2_get_power_limit(struct smu_context *smu,
 	PPTable_t *pptable = table_context->driver_pptable;
 	CustomSkuTable_t *skutable = &pptable->CustomSkuTable;
 	int16_t od_percent_upper = 0, od_percent_lower = 0;
-	uint32_t msg_limit = pptable->SkuTable.MsgLimits.Power[PPT_THROTTLER_PPT0][POWER_SOURCE_AC];
-	uint32_t power_limit;
+        uint32_t pp_limit, msg_limit, min_limit, max_limit;
+        int i;
 
-	if (smu_v14_0_get_current_power_limit(smu, &power_limit))
-		power_limit = smu->adev->pm.ac_power ?
-			      skutable->SocketPowerLimitAc[PPT_THROTTLER_PPT0] :
-			      skutable->SocketPowerLimitDc[PPT_THROTTLER_PPT0];
+        if (powerplay_table && 
+            smu_v14_0_2_is_od_feature_supported(smu, PP_OD_FEATURE_PPT_BIT)) {
+                od_percent_upper = pptable->SkuTable.OverDriveLimitsBasicMax.Ppt;
+                od_percent_lower = pptable->SkuTable.OverDriveLimitsBasicMin.Ppt;
+        }
 
-	if (current_power_limit)
-		*current_power_limit = power_limit;
-	if (default_power_limit)
-		*default_power_limit = power_limit;
+        for (i = SMU_POWER_SOURCE_AC; i < SMU_POWER_SOURCE_COUNT; i++) {
+                pp_limit = i == SMU_POWER_SOURCE_AC ?
+                        skutable->SocketPowerLimitAc[PPT_THROTTLER_PPT0] :
+                        skutable->SocketPowerLimitDc[PPT_THROTTLER_PPT0];
+                msg_limit = pptable->SkuTable.MsgLimits.Power
+                        [PPT_THROTTLER_PPT0][i];
+                min_limit = min(pp_limit, msg_limit);
+                max_limit = max(pp_limit, msg_limit);
 
-	if (powerplay_table) {
-		if (smu->od_enabled &&
-		    smu_v14_0_2_is_od_feature_supported(smu, PP_OD_FEATURE_PPT_BIT)) {
-			od_percent_upper = pptable->SkuTable.OverDriveLimitsBasicMax.Ppt;
-			od_percent_lower = pptable->SkuTable.OverDriveLimitsBasicMin.Ppt;
-		} else if (smu_v14_0_2_is_od_feature_supported(smu, PP_OD_FEATURE_PPT_BIT)) {
-			od_percent_upper = 0;
-			od_percent_lower = pptable->SkuTable.OverDriveLimitsBasicMin.Ppt;
-		}
-	}
+                smu->ppt_limits.range[i][SMU_PPT_LIMIT_PPT0].default_value =
+                        pp_limit;
+                smu->ppt_limits.range[i][SMU_PPT_LIMIT_PPT0].max = max_limit;
+                smu->ppt_limits.range[i][SMU_PPT_LIMIT_PPT0].min =
+                        min_limit * (100 + od_percent_lower) / 100;
+                smu->ppt_limits.range[i][SMU_PPT_LIMIT_PPT0].od_max =
+                        max_limit * (100 + od_percent_upper) / 100;
+                smu->ppt_limits.range[i][SMU_PPT_LIMIT_PPT0].od_min =
+                        smu->ppt_limits.range[i][SMU_PPT_LIMIT_PPT0].min;
+        }
 
-	dev_dbg(smu->adev->dev, "od percent upper:%d, od percent lower:%d (default power: %d)\n",
-					od_percent_upper, od_percent_lower, power_limit);
-
-	if (max_power_limit) {
-		*max_power_limit = msg_limit * (100 + od_percent_upper);
-		*max_power_limit /= 100;
-	}
-
-	if (min_power_limit) {
-		*min_power_limit = power_limit * (100 + od_percent_lower);
-		*min_power_limit /= 100;
-	}
+        smu->ppt_limits.supported_mask |= BIT(SMU_PPT_LIMIT_PPT0);
 
 	return 0;
 }
@@ -1828,9 +1846,10 @@ static int smu_v14_0_2_set_power_profile_mode(struct smu_context *smu,
 				return -ENOMEM;
 		}
 		if (custom_params && custom_params_max_idx) {
-			if (custom_params_max_idx != SMU_14_0_2_CUSTOM_PARAMS_COUNT)
-				return -EINVAL;
-			if (custom_params[0] >= SMU_14_0_2_CUSTOM_PARAMS_CLOCK_COUNT)
+			if (!smu_cmn_custom_params_count_valid(custom_params_max_idx,
+							       SMU_14_0_2_CUSTOM_PARAMS_COUNT) ||
+			    !smu_cmn_custom_params_clock_valid(custom_params[0],
+							       SMU_14_0_2_CUSTOM_PARAMS_CLOCK_COUNT))
 				return -EINVAL;
 			idx = custom_params[0] * SMU_14_0_2_CUSTOM_PARAMS_COUNT;
 			smu->custom_profile_params[idx] = 1;
@@ -2147,19 +2166,18 @@ static ssize_t smu_v14_0_2_get_gpu_metrics(struct smu_context *smu,
 					     metrics->AvgTemperature[TEMP_VR_MEM1]);
 
 	gpu_metrics->average_gfx_activity = metrics->AverageGfxActivity;
-	gpu_metrics->average_umc_activity = metrics->AverageUclkActivity;
+	gpu_metrics->average_umc_activity = smu_safe_u16_nn(metrics->AverageUclkActivity);
 	gpu_metrics->average_mm_activity = max(metrics->AverageVcn0ActivityPercentage,
 					       metrics->Vcn1ActivityPercentage);
 
 	gpu_metrics->average_socket_power = metrics->AverageSocketPower;
-	gpu_metrics->energy_accumulator = metrics->EnergyAccumulator;
 
 	if (metrics->AverageGfxActivity <= SMU_14_0_2_BUSY_THRESHOLD)
 		gpu_metrics->average_gfxclk_frequency = metrics->AverageGfxclkFrequencyPostDs;
 	else
 		gpu_metrics->average_gfxclk_frequency = metrics->AverageGfxclkFrequencyPreDs;
 
-	if (metrics->AverageUclkActivity <= SMU_14_0_2_BUSY_THRESHOLD)
+	if (smu_safe_u16_nn(metrics->AverageUclkActivity) <= SMU_14_0_2_BUSY_THRESHOLD)
 		gpu_metrics->average_uclk_frequency = metrics->AverageMemclkFrequencyPostDs;
 	else
 		gpu_metrics->average_uclk_frequency = metrics->AverageMemclkFrequencyPreDs;
@@ -2214,17 +2232,61 @@ static void smu_v14_0_2_dump_od_table(struct smu_context *smu,
 						   od_table->OverDriveTable.UclkFmax);
 }
 
+#define OD_ERROR_MSG_MAP(msg) \
+	[msg] = #msg
+
+static const char *od_error_message[] = {
+	OD_ERROR_MSG_MAP(OD_REQUEST_ADVANCED_NOT_SUPPORTED),
+	OD_ERROR_MSG_MAP(OD_UNSUPPORTED_FEATURE),
+	OD_ERROR_MSG_MAP(OD_INVALID_FEATURE_COMBO_ERROR),
+	OD_ERROR_MSG_MAP(OD_GFXCLK_VF_CURVE_OFFSET_ERROR),
+	OD_ERROR_MSG_MAP(OD_VDD_GFX_VMAX_ERROR),
+	OD_ERROR_MSG_MAP(OD_VDD_SOC_VMAX_ERROR),
+	OD_ERROR_MSG_MAP(OD_PPT_ERROR),
+	OD_ERROR_MSG_MAP(OD_FAN_MIN_PWM_ERROR),
+	OD_ERROR_MSG_MAP(OD_FAN_ACOUSTIC_TARGET_ERROR),
+	OD_ERROR_MSG_MAP(OD_FAN_ACOUSTIC_LIMIT_ERROR),
+	OD_ERROR_MSG_MAP(OD_FAN_TARGET_TEMP_ERROR),
+	OD_ERROR_MSG_MAP(OD_FAN_ZERO_RPM_STOP_TEMP_ERROR),
+	OD_ERROR_MSG_MAP(OD_FAN_CURVE_PWM_ERROR),
+	OD_ERROR_MSG_MAP(OD_FAN_CURVE_TEMP_ERROR),
+	OD_ERROR_MSG_MAP(OD_FULL_CTRL_GFXCLK_ERROR),
+	OD_ERROR_MSG_MAP(OD_FULL_CTRL_UCLK_ERROR),
+	OD_ERROR_MSG_MAP(OD_FULL_CTRL_FCLK_ERROR),
+	OD_ERROR_MSG_MAP(OD_FULL_CTRL_VDD_GFX_ERROR),
+	OD_ERROR_MSG_MAP(OD_FULL_CTRL_VDD_SOC_ERROR),
+	OD_ERROR_MSG_MAP(OD_TDC_ERROR),
+	OD_ERROR_MSG_MAP(OD_GFXCLK_ERROR),
+	OD_ERROR_MSG_MAP(OD_UCLK_ERROR),
+	OD_ERROR_MSG_MAP(OD_FCLK_ERROR),
+	OD_ERROR_MSG_MAP(OD_OP_TEMP_ERROR),
+	OD_ERROR_MSG_MAP(OD_OP_GFX_EDC_ERROR),
+	OD_ERROR_MSG_MAP(OD_OP_GFX_PCC_ERROR),
+	OD_ERROR_MSG_MAP(OD_POWER_FEATURE_CTRL_ERROR),
+};
+
 static int smu_v14_0_2_upload_overdrive_table(struct smu_context *smu,
 					      OverDriveTableExternal_t *od_table)
 {
-	int ret;
-	ret = smu_cmn_update_table(smu,
-				   SMU_TABLE_OVERDRIVE,
-				   0,
-				   (void *)od_table,
-				   true);
-	if (ret)
-		dev_err(smu->adev->dev, "Failed to upload overdrive table!\n");
+	uint32_t read_arg = 0;
+	int ret, od_error_type;
+
+	ret = smu_cmn_update_table_read_arg(smu,
+					    SMU_TABLE_OVERDRIVE,
+					    0,
+					    (void *)od_table,
+					    &read_arg,
+					    true);
+	if (ret) {
+		dev_err(smu->adev->dev, "Failed to upload overdrive table, ret:%d\n", ret);
+		if ((read_arg & 0xff) == TABLE_TRANSFER_FAILED) {
+			od_error_type = read_arg >> 16;
+			dev_err(smu->adev->dev, "Invalid overdrive table content: %s (%d)\n",
+				od_error_type < ARRAY_SIZE(od_error_message) ?
+				od_error_message[od_error_type] : "unknown",
+				od_error_type);
+		}
+	}
 
 	return ret;
 }
@@ -2374,6 +2436,7 @@ static int smu_v14_0_2_od_restore_table_single(struct smu_context *smu, long inp
 		}
 		od_table->OverDriveTable.FanMode = FAN_MODE_AUTO;
 		od_table->OverDriveTable.FeatureCtrlMask |= BIT(PP_OD_FEATURE_FAN_CURVE_BIT);
+		od_table->OverDriveTable.FeatureCtrlMask &= ~BIT(PP_OD_FEATURE_FAN_LEGACY_BIT);
 		break;
 	case PP_OD_EDIT_FAN_ZERO_RPM_ENABLE:
 		od_table->OverDriveTable.FanZeroRpmEnable =
@@ -2402,7 +2465,8 @@ static int smu_v14_0_2_od_restore_table_single(struct smu_context *smu, long inp
 		od_table->OverDriveTable.FanMinimumPwm =
 					boot_overdrive_table->OverDriveTable.FanMinimumPwm;
 		od_table->OverDriveTable.FanMode = FAN_MODE_AUTO;
-		od_table->OverDriveTable.FeatureCtrlMask |= BIT(PP_OD_FEATURE_FAN_CURVE_BIT);
+		od_table->OverDriveTable.FeatureCtrlMask |= BIT(PP_OD_FEATURE_FAN_LEGACY_BIT);
+		od_table->OverDriveTable.FeatureCtrlMask &= ~BIT(PP_OD_FEATURE_FAN_CURVE_BIT);
 		break;
 	default:
 		dev_info(adev->dev, "Invalid table index: %ld\n", input);
@@ -2572,6 +2636,7 @@ static int smu_v14_0_2_od_edit_dpm_table(struct smu_context *smu,
 		od_table->OverDriveTable.FanLinearPwmPoints[input[0]] = input[2];
 		od_table->OverDriveTable.FanMode = FAN_MODE_MANUAL_LINEAR;
 		od_table->OverDriveTable.FeatureCtrlMask |= BIT(PP_OD_FEATURE_FAN_CURVE_BIT);
+		od_table->OverDriveTable.FeatureCtrlMask &= ~BIT(PP_OD_FEATURE_FAN_LEGACY_BIT);
 		break;
 
 	case PP_OD_EDIT_ACOUSTIC_LIMIT:
@@ -2641,7 +2706,7 @@ static int smu_v14_0_2_od_edit_dpm_table(struct smu_context *smu,
 		break;
 
 	case PP_OD_EDIT_FAN_MINIMUM_PWM:
-		if (!smu_v14_0_2_is_od_feature_supported(smu, PP_OD_FEATURE_FAN_CURVE_BIT)) {
+		if (!smu_v14_0_2_is_od_feature_supported(smu, PP_OD_FEATURE_FAN_LEGACY_BIT)) {
 			dev_warn(adev->dev, "Fan curve setting not supported!\n");
 			return -ENOTSUPP;
 		}
@@ -2659,7 +2724,8 @@ static int smu_v14_0_2_od_edit_dpm_table(struct smu_context *smu,
 
 		od_table->OverDriveTable.FanMinimumPwm = input[0];
 		od_table->OverDriveTable.FanMode = FAN_MODE_AUTO;
-		od_table->OverDriveTable.FeatureCtrlMask |= BIT(PP_OD_FEATURE_FAN_CURVE_BIT);
+		od_table->OverDriveTable.FeatureCtrlMask |= BIT(PP_OD_FEATURE_FAN_LEGACY_BIT);
+		od_table->OverDriveTable.FeatureCtrlMask &= ~BIT(PP_OD_FEATURE_FAN_CURVE_BIT);
 		break;
 
 	case PP_OD_EDIT_FAN_ZERO_RPM_ENABLE:
@@ -2737,22 +2803,28 @@ static int smu_v14_0_2_od_edit_dpm_table(struct smu_context *smu,
 	return ret;
 }
 
-static int smu_v14_0_2_set_power_limit(struct smu_context *smu,
-				       enum smu_ppt_limit_type limit_type,
-				       uint32_t limit)
+static int smu_v14_0_2_set_ppt_limit(struct smu_context *smu,
+				     enum smu_ppt_limit_type limit_type,
+				     uint32_t limit)
 {
 	PPTable_t *pptable = smu->smu_table.driver_pptable;
-	uint32_t msg_limit = pptable->SkuTable.MsgLimits.Power[PPT_THROTTLER_PPT0][POWER_SOURCE_AC];
+	uint32_t msg_limit = pptable->SkuTable.MsgLimits.Power
+		[PPT_THROTTLER_PPT0][POWER_SOURCE_AC];
 	struct smu_table_context *table_context = &smu->smu_table;
 	OverDriveTableExternal_t *od_table =
 		(OverDriveTableExternal_t *)table_context->overdrive_table;
+	OverDriveTableExternal_t current_od_table;
 	int ret = 0;
 
-	if (limit_type != SMU_DEFAULT_PPT_LIMIT)
+	if (limit_type != SMU_PPT_LIMIT_PPT0)
 		return -EINVAL;
 
 	if (limit <= msg_limit) {
-		if (smu->current_power_limit > msg_limit) {
+		ret = smu_v14_0_2_get_overdrive_table(smu, &current_od_table);
+		if (ret)
+			return ret;
+
+		if (current_od_table.OverDriveTable.Ppt) {
 			od_table->OverDriveTable.Ppt = 0;
 			od_table->OverDriveTable.FeatureCtrlMask |= 1U << PP_OD_FEATURE_PPT_BIT;
 
@@ -2762,9 +2834,9 @@ static int smu_v14_0_2_set_power_limit(struct smu_context *smu,
 				return ret;
 			}
 		}
-		return smu_v14_0_set_power_limit(smu, limit_type, limit);
+		return smu_v14_0_set_ppt_limit(smu, limit_type, limit);
 	} else if (smu->od_enabled) {
-		ret = smu_v14_0_set_power_limit(smu, limit_type, msg_limit);
+		ret = smu_v14_0_set_ppt_limit(smu, limit_type, msg_limit);
 		if (ret)
 			return ret;
 
@@ -2777,7 +2849,6 @@ static int smu_v14_0_2_set_power_limit(struct smu_context *smu,
 		  return ret;
 		}
 
-		smu->current_power_limit = limit;
 	} else {
 		return -EINVAL;
 	}
@@ -2831,8 +2902,8 @@ static const struct pptable_funcs smu_v14_0_2_ppt_funcs = {
 	.get_unique_id = smu_v14_0_2_get_unique_id,
 	.get_fan_speed_pwm = smu_v14_0_2_get_fan_speed_pwm,
 	.get_fan_speed_rpm = smu_v14_0_2_get_fan_speed_rpm,
-	.get_power_limit = smu_v14_0_2_get_power_limit,
-	.set_power_limit = smu_v14_0_2_set_power_limit,
+	.get_ppt_limit = smu_v14_0_2_get_ppt_limit,
+	.set_ppt_limit = smu_v14_0_2_set_ppt_limit,
 	.get_power_profile_mode = smu_v14_0_2_get_power_profile_mode,
 	.set_power_profile_mode = smu_v14_0_2_set_power_profile_mode,
 	.run_btc = smu_v14_0_run_btc,
@@ -2842,8 +2913,6 @@ static const struct pptable_funcs smu_v14_0_2_ppt_funcs = {
 	.deep_sleep_control = smu_v14_0_deep_sleep_control,
 	.gfx_ulv_control = smu_v14_0_gfx_ulv_control,
 	.get_bamaco_support = smu_v14_0_get_bamaco_support,
-	.baco_get_state = smu_v14_0_baco_get_state,
-	.baco_set_state = smu_v14_0_baco_set_state,
 	.baco_enter = smu_v14_0_2_baco_enter,
 	.baco_exit = smu_v14_0_2_baco_exit,
 	.mode1_reset_is_support = smu_v14_0_2_is_mode1_reset_supported,

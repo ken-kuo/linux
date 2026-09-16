@@ -3,6 +3,7 @@
  * Copyright (C) 2024 Loongson Technology Corporation Limited
  */
 
+#include <asm/kvm_dmsintc.h>
 #include <asm/kvm_eiointc.h>
 #include <asm/kvm_pch_pic.h>
 #include <asm/kvm_vcpu.h>
@@ -67,9 +68,22 @@ void pch_pic_set_irq(struct loongarch_pch_pic *s, int irq, int level)
 }
 
 /* msi irq handler */
-void pch_msi_set_irq(struct kvm *kvm, int irq, int level)
+int pch_msi_set_irq(struct kvm *kvm, struct kvm_kernel_irq_routing_entry *e, int level)
 {
-	eiointc_set_irq(kvm->arch.eiointc, irq, level);
+	u64 msg_addr = (((u64)e->msi.address_hi) << 32) | e->msi.address_lo;
+
+	if (cpu_has_msgint && kvm->arch.dmsintc &&
+		msg_addr >= kvm->arch.dmsintc->msg_addr_base &&
+		msg_addr < (kvm->arch.dmsintc->msg_addr_base + kvm->arch.dmsintc->msg_addr_size)) {
+		return dmsintc_set_irq(kvm, msg_addr, e->msi.data, level);
+	}
+
+	if (e->msi.data >= EIOINTC_IRQS)
+		return -EINVAL;
+
+	eiointc_set_irq(kvm->arch.eiointc, e->msi.data, level);
+
+	return 0;
 }
 
 static int loongarch_pch_pic_read(struct loongarch_pch_pic *s, gpa_t addr, int len, void *val)
@@ -140,12 +154,12 @@ static int kvm_pch_pic_read(struct kvm_vcpu *vcpu,
 	struct loongarch_pch_pic *s = vcpu->kvm->arch.pch_pic;
 
 	if (!s) {
-		kvm_err("%s: pch pic irqchip not valid!\n", __func__);
+		kvm_pr_unimpl("%s: pch pic irqchip not valid!\n", __func__);
 		return ret;
 	}
 
 	if (addr & (len - 1)) {
-		kvm_err("%s: pch pic not aligned addr %llx len %d\n", __func__, addr, len);
+		kvm_pr_unimpl("%s: pch pic not aligned addr %llx len %d\n", __func__, addr, len);
 		return ret;
 	}
 
@@ -239,12 +253,12 @@ static int kvm_pch_pic_write(struct kvm_vcpu *vcpu,
 	struct loongarch_pch_pic *s = vcpu->kvm->arch.pch_pic;
 
 	if (!s) {
-		kvm_err("%s: pch pic irqchip not valid!\n", __func__);
+		kvm_pr_unimpl("%s: pch pic irqchip not valid!\n", __func__);
 		return ret;
 	}
 
 	if (addr & (len - 1)) {
-		kvm_err("%s: pch pic not aligned addr %llx len %d\n", __func__, addr, len);
+		kvm_pr_unimpl("%s: pch pic not aligned addr %llx len %d\n", __func__, addr, len);
 		return ret;
 	}
 
@@ -379,13 +393,13 @@ static int kvm_pch_pic_set_attr(struct kvm_device *dev,
 				return -EFAULT;
 
 			if (!dev->kvm->arch.pch_pic) {
-				kvm_err("%s: please create pch_pic irqchip first!\n", __func__);
+				kvm_pr_unimpl("%s: pch_pic irqchip not created\n", __func__);
 				return -ENODEV;
 			}
 
 			return kvm_pch_pic_init(dev, addr);
 		default:
-			kvm_err("%s: unknown group (%d) attr (%lld)\n", __func__, attr->group,
+			kvm_pr_unimpl("%s: unknown group (%d) attr (%lld)\n", __func__, attr->group,
 					attr->attr);
 			return -EINVAL;
 		}
@@ -470,7 +484,9 @@ static void kvm_pch_pic_destroy(struct kvm_device *dev)
 	kvm = dev->kvm;
 	s = kvm->arch.pch_pic;
 	/* unregister pch pic device and free it's memory */
+	mutex_lock(&kvm->slots_lock);
 	kvm_io_bus_unregister_dev(kvm, KVM_MMIO_BUS, &s->device);
+	mutex_unlock(&kvm->slots_lock);
 	kfree(s);
 	kfree(dev);
 }
@@ -486,4 +502,9 @@ static struct kvm_device_ops kvm_pch_pic_dev_ops = {
 int kvm_loongarch_register_pch_pic_device(void)
 {
 	return kvm_register_device_ops(&kvm_pch_pic_dev_ops, KVM_DEV_TYPE_LOONGARCH_PCHPIC);
+}
+
+void kvm_loongarch_unregister_pch_pic_device(void)
+{
+	kvm_unregister_device_ops(KVM_DEV_TYPE_LOONGARCH_PCHPIC);
 }

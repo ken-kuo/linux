@@ -1918,13 +1918,13 @@ static int sdhci_msm_ice_init(struct sdhci_msm_host *msm_host,
 		return 0;
 
 	ice = devm_of_qcom_ice_get(dev);
-	if (ice == ERR_PTR(-EOPNOTSUPP)) {
-		dev_warn(dev, "Disabling inline encryption support\n");
-		ice = NULL;
-	}
+	if (IS_ERR(ice)) {
+		if (ice != ERR_PTR(-EOPNOTSUPP))
+			return PTR_ERR(ice);
 
-	if (IS_ERR_OR_NULL(ice))
-		return PTR_ERR_OR_ZERO(ice);
+		dev_warn(dev, "Disabling inline encryption support\n");
+		return 0;
+	}
 
 	msm_host->ice = ice;
 
@@ -2165,7 +2165,7 @@ static u32 sdhci_msm_cqe_irq(struct sdhci_host *host, u32 intmask)
 	if (!sdhci_cqe_irq(host, intmask, &cmd_error, &data_error))
 		return intmask;
 
-	cqhci_irq(host->mmc, intmask, cmd_error, data_error);
+	cqhci_irq(host->mmc, cmd_error, data_error);
 	return 0;
 }
 
@@ -2864,10 +2864,8 @@ static int sdhci_msm_probe(struct platform_device *pdev)
 	ret = devm_request_threaded_irq(&pdev->dev, msm_host->pwr_irq, NULL,
 					sdhci_msm_pwr_irq, IRQF_ONESHOT,
 					dev_name(&pdev->dev), host);
-	if (ret) {
-		dev_err(&pdev->dev, "Request IRQ failed (%d)\n", ret);
+	if (ret)
 		goto clk_disable;
-	}
 
 	msm_host->mmc->caps |= MMC_CAP_WAIT_WHILE_BUSY | MMC_CAP_NEED_RSP_BUSY;
 

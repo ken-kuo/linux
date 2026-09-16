@@ -526,8 +526,10 @@ class TypeString(Type):
 
     def _attr_get(self, ri, var):
         len_mem = var + '->_len.' + self.c_name
-        return [f"{len_mem} = len;",
-                f"{var}->{self.c_name} = malloc(len + 1);",
+        return [f"{var}->{self.c_name} = malloc(len + 1);",
+                f"if (!{var}->{self.c_name})",
+                "return YNL_PARSE_CB_ERROR;",
+                f"{len_mem} = len;",
                 f"memcpy({var}->{self.c_name}, ynl_attr_get_str(attr), len);",
                 f"{var}->{self.c_name}[len] = 0;"], \
                ['len = strnlen(ynl_attr_get_str(attr), ynl_attr_data_len(attr));'], \
@@ -582,8 +584,10 @@ class TypeBinary(Type):
 
     def _attr_get(self, ri, var):
         len_mem = var + '->_len.' + self.c_name
-        return [f"{len_mem} = len;",
-                f"{var}->{self.c_name} = malloc(len);",
+        return [f"{var}->{self.c_name} = malloc(len);",
+                f"if (!{var}->{self.c_name})",
+                "return YNL_PARSE_CB_ERROR;",
+                f"{len_mem} = len;",
                 f"memcpy({var}->{self.c_name}, ynl_attr_data(attr), len);"], \
                ['len = ynl_attr_data_len(attr);'], \
                ['unsigned int len;']
@@ -601,11 +605,13 @@ class TypeBinaryStruct(TypeBinary):
     def _attr_get(self, ri, var):
         struct_sz = 'sizeof(struct ' + c_lower(self.get("struct")) + ')'
         len_mem = var + '->_' + self.presence_type() + '.' + self.c_name
-        return [f"{len_mem} = len;",
-                f"if (len < {struct_sz})",
+        return [f"if (len < {struct_sz})",
                 f"{var}->{self.c_name} = calloc(1, {struct_sz});",
                 "else",
                 f"{var}->{self.c_name} = malloc(len);",
+                f"if (!{var}->{self.c_name})",
+                "return YNL_PARSE_CB_ERROR;",
+                f"{len_mem} = len;",
                 f"memcpy({var}->{self.c_name}, ynl_attr_data(attr), len);"], \
                ['len = ynl_attr_data_len(attr);'], \
                ['unsigned int len;']
@@ -631,9 +637,11 @@ class TypeBinaryScalarArray(TypeBinary):
 
     def _attr_get(self, ri, var):
         len_mem = var + '->_count.' + self.c_name
-        return [f"{len_mem} = len / sizeof(__{self.get('sub-type')});",
-                f"len = {len_mem} * sizeof(__{self.get('sub-type')});",
+        return [f"len = (len / sizeof(__{self.get('sub-type')})) * sizeof(__{self.get('sub-type')});",
                 f"{var}->{self.c_name} = malloc(len);",
+                f"if (!{var}->{self.c_name})",
+                "return YNL_PARSE_CB_ERROR;",
+                f"{len_mem} = len / sizeof(__{self.get('sub-type')});",
                 f"memcpy({var}->{self.c_name}, ynl_attr_data(attr), len);"], \
                ['len = ynl_attr_data_len(attr);'], \
                ['unsigned int len;']
@@ -2227,6 +2235,8 @@ def _multi_parse(ri, struct, init_lines, local_vars):
 
         ri.cw.block_start(line=f"if (n_{aspec.c_name})")
         ri.cw.p(f"dst->{aspec.c_name} = calloc(n_{aspec.c_name}, sizeof(*dst->{aspec.c_name}));")
+        ri.cw.p(f"if (!dst->{aspec.c_name})")
+        ri.cw.p("return YNL_PARSE_CB_ERROR;")
         ri.cw.p(f"dst->_count.{aspec.c_name} = n_{aspec.c_name};")
         ri.cw.p('i = 0;')
         if 'nested-attributes' in aspec:
@@ -2252,6 +2262,8 @@ def _multi_parse(ri, struct, init_lines, local_vars):
         aspec = struct[arg]
         ri.cw.block_start(line=f"if (n_{aspec.c_name})")
         ri.cw.p(f"dst->{aspec.c_name} = calloc(n_{aspec.c_name}, sizeof(*dst->{aspec.c_name}));")
+        ri.cw.p(f"if (!dst->{aspec.c_name})")
+        ri.cw.p("return YNL_PARSE_CB_ERROR;")
         ri.cw.p(f"dst->_count.{aspec.c_name} = n_{aspec.c_name};")
         ri.cw.p('i = 0;')
         if 'nested-attributes' in aspec:
@@ -2275,6 +2287,8 @@ def _multi_parse(ri, struct, init_lines, local_vars):
             ri.cw.nl()
             ri.cw.p('len = strnlen(ynl_attr_get_str(attr), ynl_attr_data_len(attr));')
             ri.cw.p(f'dst->{aspec.c_name}[i] = malloc(sizeof(struct ynl_string) + len + 1);')
+            ri.cw.p(f"if (!dst->{aspec.c_name}[i])")
+            ri.cw.p("return YNL_PARSE_CB_ERROR;")
             ri.cw.p(f"dst->{aspec.c_name}[i]->len = len;")
             ri.cw.p(f"memcpy(dst->{aspec.c_name}[i]->str, ynl_attr_get_str(attr), len);")
             ri.cw.p(f"dst->{aspec.c_name}[i]->str[len] = 0;")
@@ -2434,6 +2448,8 @@ def print_req(ri):
 
     if 'reply' in ri.op[ri.op_mode]:
         ri.cw.p('rsp = calloc(1, sizeof(*rsp));')
+        ri.cw.p('if (!rsp)')
+        ri.cw.p(f'return {ret_err};')
         ri.cw.p('yrs.yarg.data = rsp;')
         ri.cw.p(f"yrs.cb = {op_prefix(ri, 'reply')}_parse;")
         if ri.op.value is not None:
@@ -2746,6 +2762,9 @@ def print_dump_type_free(ri):
     print_free_prototype(ri, 'reply', suffix='')
     ri.cw.block_start()
     ri.cw.p(f"{sub_type} *next = rsp;")
+    ri.cw.nl()
+    ri.cw.p('if (!next)')
+    ri.cw.p('return;')
     ri.cw.nl()
     ri.cw.block_start(line='while ((void *)next != YNL_LIST_END)')
     _free_type_members_iter(ri, ri.struct['reply'])
@@ -3212,6 +3231,8 @@ def render_uapi(family, cw):
     for const in family['definitions']:
         if const.get('header'):
             continue
+        if const.get('scope', 'uapi') != 'uapi':
+            continue
 
         if const['type'] != 'const':
             cw.writes_defines(defines)
@@ -3337,6 +3358,25 @@ def render_uapi(family, cw):
         cw.nl()
 
     cw.p(f'#endif /* {hdr_prot} */')
+
+
+def render_scoped_consts(family, cw, scope):
+    defines = []
+    for const in family['definitions']:
+        if const['type'] != 'const':
+            continue
+        if const.get('header'):
+            continue
+        if const.get('scope') != scope:
+            continue
+        name_pfx = const.get('name-prefix', f"{family.ident_name}-")
+        defines.append([
+            c_upper(family.get('c-define-name',
+                               f"{name_pfx}{const['name']}")),
+            const['value']])
+    if defines:
+        cw.writes_defines(defines)
+        cw.nl()
 
 
 def _render_user_ntf_entry(ri, op):
@@ -3504,8 +3544,12 @@ def main():
             cw.p('#include "ynl.h"')
         headers = []
     for definition in parsed['definitions'] + parsed['attribute-sets']:
-        if 'header' in definition:
-            headers.append(definition['header'])
+        if 'header' not in definition:
+            continue
+        scope = definition.get('scope', 'uapi')
+        if scope != 'uapi' and scope != args.mode:
+            continue
+        headers.append(definition['header'])
     if args.mode == 'user':
         headers.append(parsed.uapi_header)
     seen_header = []
@@ -3522,6 +3566,7 @@ def main():
             for one in args.user_header:
                 cw.p(f'#include "{one}"')
         else:
+            render_scoped_consts(parsed, cw, 'user')
             cw.p('struct ynl_sock;')
             cw.nl()
             render_user_family(parsed, cw, True)
@@ -3529,6 +3574,7 @@ def main():
 
     if args.mode == "kernel":
         if args.header:
+            render_scoped_consts(parsed, cw, 'kernel')
             for _, struct in sorted(parsed.pure_nested_structs.items()):
                 if struct.request:
                     cw.p('/* Common nested types */')

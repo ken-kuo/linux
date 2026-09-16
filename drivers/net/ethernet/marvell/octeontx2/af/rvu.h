@@ -553,17 +553,19 @@ struct npc_kpu_profile_adapter {
 	const char			*name;
 	u64				version;
 	const struct npc_lt_def_cfg	*lt_def;
-	const struct npc_kpu_profile_action	*ikpu; /* array[pkinds] */
-	const struct npc_kpu_profile	*kpu; /* array[kpus] */
+	struct npc_kpu_profile_action	*ikpu; /* array[pkinds] */
+	struct npc_kpu_profile_action	*ikpu2; /* array[pkinds] */
+	struct npc_kpu_profile	*kpu; /* array[kpus] */
 	union npc_mcam_key_prfl {
-		struct npc_mcam_kex		*mkex;
+		const struct npc_mcam_kex		*mkex;
 					/* used for cn9k and cn10k */
-		struct npc_mcam_kex_extr	*mkex_extr; /* used for cn20k */
+		const struct npc_mcam_kex_extr	*mkex_extr; /* used for cn20k */
 	} mcam_kex_prfl;
 	struct npc_mcam_kex_hash	*mkex_hash;
 	bool				custom;
 	size_t				pkinds;
 	size_t				kpus;
+	bool				from_fs;
 };
 
 #define RVU_SWITCH_LBK_CHAN	63
@@ -634,7 +636,7 @@ struct rvu {
 
 	/* Firmware data */
 	struct rvu_fwdata	*fwdata;
-	void			*kpu_fwdata;
+	const void		*kpu_fwdata;
 	size_t			kpu_fwdata_sz;
 	void __iomem		*kpu_prfl_addr;
 
@@ -917,6 +919,7 @@ u16 rvu_get_rsrc_mapcount(struct rvu_pfvf *pfvf, int blkaddr);
 struct rvu_pfvf *rvu_get_pfvf(struct rvu *rvu, int pcifunc);
 void rvu_get_pf_numvfs(struct rvu *rvu, int pf, int *numvfs, int *hwvf);
 bool is_block_implemented(struct rvu_hwinfo *hw, int blkaddr);
+bool is_pf_func_valid(struct rvu *rvu, u16 pcifunc);
 bool is_pffunc_map_valid(struct rvu *rvu, u16 pcifunc, int blktype);
 int rvu_get_lf(struct rvu *rvu, struct rvu_block *block, u16 pcifunc, u16 slot);
 int rvu_lf_reset(struct rvu *rvu, struct rvu_block *block, int lf);
@@ -1112,6 +1115,8 @@ void npc_read_mcam_entry(struct rvu *rvu, struct npc_mcam *mcam,
 			 u8 *intf, u8 *ena);
 int npc_config_cntr_default_entries(struct rvu *rvu, bool enable);
 bool is_cgx_config_permitted(struct rvu *rvu, u16 pcifunc);
+bool rvu_cgx_check_permission_and_set_pkind(struct rvu *rvu, u16 pcifunc, int pkind);
+bool rvu_cgx_is_pkind_config_permitted(struct rvu *rvu, u16 pcifunc);
 bool is_mac_feature_supported(struct rvu *rvu, int pf, int feature);
 u32  rvu_cgx_get_fifolen(struct rvu *rvu);
 void *rvu_first_cgx_pdata(struct rvu *rvu);
@@ -1144,6 +1149,7 @@ int rvu_cpt_lf_teardown(struct rvu *rvu, u16 pcifunc, int blkaddr, int lf,
 			int slot);
 int rvu_cpt_ctx_flush(struct rvu *rvu, u16 pcifunc);
 int rvu_cpt_init(struct rvu *rvu);
+u32 rvu_get_cpt_chan_mask(struct rvu *rvu);
 
 #define NDC_AF_BANK_MASK       GENMASK_ULL(7, 0)
 #define NDC_AF_BANK_LINE_MASK  GENMASK_ULL(31, 16)
@@ -1177,7 +1183,7 @@ void rvu_switch_enable_lbk_link(struct rvu *rvu, u16 pcifunc, bool ena);
 
 int rvu_npc_set_parse_mode(struct rvu *rvu, u16 pcifunc, u64 mode, u8 dir,
 			   u64 pkind, u8 var_len_off, u8 var_len_off_mask,
-			   u8 shift_dir);
+			   u8 shift_dir, u8 skip_size);
 int rvu_get_hwvf(struct rvu *rvu, int pcifunc);
 
 /* CN10K MCS */

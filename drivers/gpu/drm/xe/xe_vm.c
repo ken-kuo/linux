@@ -206,7 +206,23 @@ static void resume_and_reinstall_preempt_fences(struct xe_vm *vm,
 	xe_vm_assert_held(vm);
 
 	list_for_each_entry(q, &vm->preempt.exec_queues, lr.link) {
-		q->ops->resume(q);
+		/*
+		 * Only resume queues whose suspend() actually succeeded. A
+		 * failed suspend() (e.g. killed/banned/wedged) leaves the queue
+		 * un-suspended, so it must not be resumed.
+		 *
+		 * Also skip queues that have since been reset/killed/banned/
+		 * wedged: their suspend may not have completed (suspend_pending
+		 * can still be set, e.g. a preempt fence signalled with -ENOENT
+		 * without waiting), so resuming would trip the !suspend_pending
+		 * assert in the backend. Such queues are being torn down anyway,
+		 * so leave them marked suspended and let teardown resolve their
+		 * state.
+		 */
+		if (READ_ONCE(q->lr.suspended) && !q->ops->reset_status(q)) {
+			WRITE_ONCE(q->lr.suspended, false);
+			q->ops->resume(q);
+		}
 
 		drm_gpuvm_resv_add_fence(&vm->gpuvm, exec, q->lr.pfence,
 					 DMA_RESV_USAGE_BOOKKEEP, DMA_RESV_USAGE_BOOKKEEP);
@@ -256,7 +272,7 @@ int xe_vm_add_compute_exec_queue(struct xe_vm *vm, struct xe_exec_queue *q)
 	 */
 	wait = __xe_vm_userptr_needs_repin(vm) || preempt_fences_waiting(vm);
 	if (wait)
-		dma_fence_enable_sw_signaling(pfence);
+		dma_fence_enable_signaling(pfence);
 
 	xe_svm_notifier_unlock(vm);
 
@@ -287,7 +303,7 @@ void xe_vm_remove_compute_exec_queue(struct xe_vm *vm, struct xe_exec_queue *q)
 		--vm->preempt.num_exec_queues;
 	}
 	if (q->lr.pfence) {
-		dma_fence_enable_sw_signaling(q->lr.pfence);
+		dma_fence_enable_signaling(q->lr.pfence);
 		dma_fence_put(q->lr.pfence);
 		q->lr.pfence = NULL;
 	}
@@ -373,7 +389,6 @@ int xe_vm_validate_rebind(struct xe_vm *vm, struct drm_exec *exec,
 			  unsigned int num_fences)
 {
 	struct drm_gem_object *obj;
-	unsigned long index;
 	int ret;
 
 	do {
@@ -386,7 +401,7 @@ int xe_vm_validate_rebind(struct xe_vm *vm, struct drm_exec *exec,
 			return ret;
 	} while (!list_empty(&vm->gpuvm.evict.list));
 
-	drm_exec_for_each_locked_object(exec, index, obj) {
+	drm_exec_for_each_locked_object(exec, obj) {
 		ret = dma_resv_reserve_fences(obj->resv, num_fences);
 		if (ret)
 			return ret;
@@ -634,9 +649,9 @@ void xe_vm_add_fault_entry_pf(struct xe_vm *vm, struct xe_pagefault *pf)
 	e->address_precision = SZ_4K;
 	e->access_type = pf->consumer.access_type;
 	e->fault_type = FIELD_GET(XE_PAGEFAULT_TYPE_MASK,
-				  pf->consumer.fault_type_level),
+				  pf->consumer.fault_type_level);
 	e->fault_level = FIELD_GET(XE_PAGEFAULT_LEVEL_MASK,
-				   pf->consumer.fault_type_level),
+				   pf->consumer.fault_type_level);
 
 	list_add_tail(&e->list, &vm->faults.list);
 	vm->faults.len++;
@@ -1120,6 +1135,25 @@ static struct xe_vma *xe_vma_create(struct xe_vm *vm,
 
 		xe_bo_assert_held(bo);
 
+		/*
+		 * Reject only WILLNEED mappings on DONTNEED/PURGED BOs. This
+		 * gates new vm_bind ioctls (user supplies WILLNEED) while
+		 * still allowing partial-unbind / remap splits whose new VMAs
+		 * inherit the parent's DONTNEED attr. It must also run before
+		 * xe_bo_willneed_get_locked() below so a 0->1 holder bump
+		 * cannot silently promote DONTNEED back to WILLNEED.
+		 */
+		if (vma->attr.purgeable_state == XE_MADV_PURGEABLE_WILLNEED) {
+			if (xe_bo_madv_is_dontneed(bo)) {
+				xe_vma_free(vma);
+				return ERR_PTR(-EBUSY);
+			}
+			if (xe_bo_is_purged(bo)) {
+				xe_vma_free(vma);
+				return ERR_PTR(-EINVAL);
+			}
+		}
+
 		vm_bo = drm_gpuvm_bo_obtain_locked(vma->gpuva.vm, &bo->ttm.base);
 		if (IS_ERR(vm_bo)) {
 			xe_vma_free(vma);
@@ -1131,6 +1165,10 @@ static struct xe_vma *xe_vma_create(struct xe_vm *vm,
 		vma->gpuva.gem.offset = bo_offset_or_userptr;
 		drm_gpuva_link(&vma->gpuva, vm_bo);
 		drm_gpuvm_bo_put(vm_bo);
+
+		xe_bo_vma_count_inc_locked(bo);
+		if (vma->attr.purgeable_state == XE_MADV_PURGEABLE_WILLNEED)
+			xe_bo_willneed_get_locked(bo);
 	} else /* userptr or null */ {
 		if (!is_null && !is_cpu_addr_mirror) {
 			struct xe_userptr_vma *uvma = to_userptr_vma(vma);
@@ -1208,7 +1246,10 @@ static void xe_vma_destroy(struct xe_vma *vma, struct dma_fence *fence)
 		xe_bo_assert_held(bo);
 
 		drm_gpuva_unlink(&vma->gpuva);
-		xe_bo_recompute_purgeable_state(bo);
+
+		xe_bo_vma_count_dec_locked(bo);
+		if (vma->attr.purgeable_state == XE_MADV_PURGEABLE_WILLNEED)
+			xe_bo_willneed_put_locked(bo);
 	}
 
 	xe_vm_assert_held(vm);
@@ -1399,9 +1440,9 @@ static u16 pde_pat_index(struct xe_bo *bo)
 	 * something which is always safe).
 	 */
 	if (!xe_bo_is_vram(bo) && bo->ttm.ttm->caching == ttm_cached)
-		pat_index = xe->pat.idx[XE_CACHE_WB];
+		pat_index = xe_cache_pat_idx(xe, XE_CACHE_WB);
 	else
-		pat_index = xe->pat.idx[XE_CACHE_NONE];
+		pat_index = xe_cache_pat_idx(xe, XE_CACHE_NONE);
 
 	xe_assert(xe, pat_index <= 3);
 
@@ -1604,7 +1645,7 @@ struct xe_vm *xe_vm_create(struct xe_device *xe, u32 flags, struct xe_file *xef)
 
 	if (xef)
 		vm->xef = xe_file_get(xef);
-	/**
+	/*
 	 * GSC VMs are kernel-owned, only used for PXP ops and can sometimes be
 	 * manipulated under the PXP mutex. However, the PXP mutex can be taken
 	 * under a user-VM lock when the PXP session is started at exec_queue
@@ -1724,10 +1765,8 @@ struct xe_vm *xe_vm_create(struct xe_device *xe, u32 flags, struct xe_file *xef)
 			vm->batch_invalidate_tlb = true;
 		}
 
-		if (vm->flags & XE_VM_FLAG_LR_MODE) {
-			INIT_WORK(&vm->preempt.rebind_work, preempt_rebind_work_func);
+		if (vm->flags & XE_VM_FLAG_LR_MODE)
 			vm->batch_invalidate_tlb = false;
-		}
 
 		/* Fill pt_root after allocating scratch tables */
 		for_each_tile(tile, xe, id) {
@@ -1784,10 +1823,10 @@ err_close:
 	return ERR_PTR(err);
 
 err_svm_fini:
-	if (flags & XE_VM_FLAG_FAULT_MODE) {
-		vm->size = 0; /* close the vm */
-		xe_svm_fini(vm);
-	}
+	vm->size = 0; /* close the vm */
+	if (flags & XE_VM_FLAG_FAULT_MODE)
+		xe_svm_close(vm);
+	xe_svm_fini(vm);
 err_no_resv:
 	mutex_destroy(&vm->snap_mutex);
 	for_each_tile(tile, xe, id)
@@ -3016,7 +3055,7 @@ static void vm_bind_ioctl_ops_unwind(struct xe_vm *vm,
  * @res_evict: Allow evicting resources during validation
  * @validate: Perform BO validation
  * @request_decompress: Request BO decompression
- * @check_purged: Reject operation if BO is purged
+ * @check_purged: Reject operation if BO is DONTNEED or PURGED
  */
 struct xe_vma_lock_and_validate_flags {
 	u32 res_evict : 1;
@@ -3030,6 +3069,7 @@ static int vma_lock_and_validate(struct drm_exec *exec, struct xe_vma *vma,
 {
 	struct xe_bo *bo = xe_vma_bo(vma);
 	struct xe_vm *vm = xe_vma_vm(vma);
+	bool validate_bo = flags.validate;
 	int err = 0;
 
 	if (bo) {
@@ -3044,7 +3084,11 @@ static int vma_lock_and_validate(struct drm_exec *exec, struct xe_vma *vma,
 				err = -EINVAL; /* BO already purged */
 		}
 
-		if (!err && flags.validate)
+		/* Don't validate the BO for DONTNEED/PURGED remap remnants. */
+		if (vma->attr.purgeable_state != XE_MADV_PURGEABLE_WILLNEED)
+			validate_bo = false;
+
+		if (!err && validate_bo)
 			err = xe_bo_validate(bo, vm,
 					     xe_vm_allow_vm_eviction(vm) &&
 					     flags.res_evict, exec);
@@ -3152,7 +3196,7 @@ static int op_lock_and_prep(struct drm_exec *exec, struct xe_vm *vm,
 								    op->map.immediate,
 							.request_decompress =
 							op->map.request_decompress,
-							.check_purged = true,
+							.check_purged = false,
 						    });
 		break;
 	case DRM_GPUVA_OP_REMAP:
@@ -3174,7 +3218,7 @@ static int op_lock_and_prep(struct drm_exec *exec, struct xe_vm *vm,
 							    .res_evict = res_evict,
 							    .validate = true,
 							    .request_decompress = false,
-							    .check_purged = true,
+							    .check_purged = false,
 						    });
 		if (!err && op->remap.next)
 			err = vma_lock_and_validate(exec, op->remap.next,
@@ -3182,7 +3226,7 @@ static int op_lock_and_prep(struct drm_exec *exec, struct xe_vm *vm,
 							    .res_evict = res_evict,
 							    .validate = true,
 							    .request_decompress = false,
-							    .check_purged = true,
+							    .check_purged = false,
 						    });
 		break;
 	case DRM_GPUVA_OP_UNMAP:
@@ -3211,9 +3255,11 @@ static int op_lock_and_prep(struct drm_exec *exec, struct xe_vm *vm,
 		}
 
 		/*
-		 * Prefetch attempts to migrate BO's backing store without
-		 * repopulating it first. Purged BOs have no backing store
-		 * to migrate, so reject the operation.
+		 * PREFETCH is the only op that still gates on BO purge state.
+		 * MAP/REMAP handle this inside xe_vma_create() so partial
+		 * unbind on a DONTNEED BO still works. PREFETCH skips
+		 * xe_vma_create() and would migrate a BO with no backing
+		 * store, so reject DONTNEED/PURGED here.
 		 */
 		err = vma_lock_and_validate(exec,
 					    gpuva_to_vma(op->base.prefetch.va),
@@ -3223,11 +3269,26 @@ static int op_lock_and_prep(struct drm_exec *exec, struct xe_vm *vm,
 						    .request_decompress = false,
 						    .check_purged = true,
 					    });
-		if (!err && !xe_vma_has_no_bo(vma))
-			err = xe_bo_migrate(xe_vma_bo(vma),
-					    region_to_mem_type[region],
-					    NULL,
-					    exec);
+		if (!err && !xe_vma_has_no_bo(vma)) {
+			struct xe_bo *bo = xe_vma_bo(vma);
+			u32 mem_type;
+
+			if (region == DRM_XE_CONSULT_MEM_ADVISE_PREF_LOC) {
+				unsigned int i;
+
+				mem_type = XE_PL_TT;
+				for (i = 0; i < bo->placement.num_placement; i++) {
+					if (mem_type_is_vram(bo->placements[i].mem_type)) {
+						mem_type = bo->placements[i].mem_type;
+						break;
+					}
+				}
+			} else {
+				mem_type = region_to_mem_type[region];
+			}
+
+			err = xe_bo_migrate(bo, mem_type, NULL, exec);
+		}
 		break;
 	}
 	default:
@@ -3414,7 +3475,7 @@ collect_fences:
 
 	xe_assert(vm->xe, current_fence == n_fence);
 	dma_fence_array_init(cf, n_fence, fences, dma_fence_context_alloc(1),
-			     1, false);
+			     1);
 	fence = &cf->base;
 
 	for_each_tile(tile, vm->xe, id) {
@@ -3658,6 +3719,8 @@ static int vm_bind_ioctl_check_args(struct xe_device *xe, struct xe_vm *vm,
 				 op == DRM_XE_VM_BIND_OP_MAP_USERPTR) ||
 		    XE_IOCTL_DBG(xe, coh_mode == XE_COH_NONE &&
 				 op == DRM_XE_VM_BIND_OP_MAP_USERPTR) ||
+		    XE_IOCTL_DBG(xe, !IS_DGFX(xe) && coh_mode == XE_COH_NONE &&
+				 is_cpu_addr_mirror) ||
 		    XE_IOCTL_DBG(xe, xe_device_is_l2_flush_optimized(xe) &&
 				 (op == DRM_XE_VM_BIND_OP_MAP_USERPTR ||
 				  is_cpu_addr_mirror) &&
@@ -4085,7 +4148,7 @@ static int fill_faults(struct xe_vm *vm,
 	entry_size = sizeof(struct xe_vm_fault);
 	count = args->size / entry_size;
 
-	fault_list = kcalloc(count, sizeof(struct xe_vm_fault), GFP_KERNEL);
+	fault_list = kzalloc_objs(struct xe_vm_fault, count);
 	if (!fault_list)
 		return -ENOMEM;
 
@@ -4156,7 +4219,8 @@ int xe_vm_get_property_ioctl(struct drm_device *drm, void *data,
 	int ret = 0;
 
 	if (XE_IOCTL_DBG(xe, (args->reserved[0] || args->reserved[1] ||
-			      args->reserved[2])))
+			      args->reserved[2] || args->extensions ||
+			      args->pad)))
 		return -EINVAL;
 
 	vm = xe_vm_lookup(xef, args->vm_id);
@@ -4203,7 +4267,7 @@ struct dma_fence *xe_vm_bind_kernel_bo(struct xe_vm *vm, struct xe_bo *bo,
 
 	ops = vm_bind_ioctl_ops_create(vm, &vops, bo, 0, addr, xe_bo_size(bo),
 				       DRM_XE_VM_BIND_OP_MAP, 0, 0,
-				       vm->xe->pat.idx[cache_lvl]);
+				       xe_cache_pat_idx(vm->xe, cache_lvl));
 	if (IS_ERR(ops)) {
 		err = PTR_ERR(ops);
 		goto release_vm_lock;
@@ -4406,7 +4470,7 @@ struct xe_vm_snapshot {
 #define XE_VM_SNAP_FLAG_IS_NULL		BIT(2)
 		unsigned long flags;
 		int uapi_mem_region;
-		int pat_index;
+		u16 pat_index;
 		int cpu_caching;
 		struct xe_bo *bo;
 		void *data;

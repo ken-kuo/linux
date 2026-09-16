@@ -11,7 +11,6 @@
 #include <sys/time.h>
 #include <sys/resource.h>
 #include <linux/err.h>
-#include <linux/zalloc.h>
 #include <linux/perf_event.h>
 #include <api/fs/fs.h>
 #include <bpf/bpf.h>
@@ -98,12 +97,17 @@ static int bperf_load_program(struct evlist *evlist)
 	struct bpf_link *link;
 	struct evsel *evsel;
 	struct cgroup *cgrp, *leader_cgrp;
-	int i, j;
+	unsigned int i;
 	struct perf_cpu cpu;
 	int total_cpus = cpu__max_cpu().cpu;
 	int map_fd, prog_fd, err;
 
 	set_max_rlimit();
+
+	if (nr_cgroups == 0 || evlist__nr_entries(evlist) % nr_cgroups != 0) {
+		pr_err("Invalid cgroup or event count\n");
+		return -EINVAL;
+	}
 
 	test_max_events_program_load();
 
@@ -112,7 +116,7 @@ static int bperf_load_program(struct evlist *evlist)
 		pr_err("Failed to open cgroup skeleton\n");
 		return -1;
 	}
-	setup_rodata(skel, evlist->core.nr_entries);
+	setup_rodata(skel, evlist__nr_entries(evlist));
 
 	err = bperf_cgroup_bpf__load(skel);
 	if (err) {
@@ -123,12 +127,12 @@ static int bperf_load_program(struct evlist *evlist)
 	err = -1;
 
 	cgrp_switch = evsel__new(&cgrp_switch_attr);
-	if (evsel__open_per_cpu(cgrp_switch, evlist->core.all_cpus, -1) < 0) {
+	if (evsel__open_per_cpu(cgrp_switch, evlist__core(evlist)->all_cpus, -1) < 0) {
 		pr_err("Failed to open cgroup switches event\n");
 		goto out;
 	}
 
-	perf_cpu_map__for_each_cpu(cpu, i, evlist->core.all_cpus) {
+	perf_cpu_map__for_each_cpu(cpu, i, evlist__core(evlist)->all_cpus) {
 		link = bpf_program__attach_perf_event(skel->progs.on_cgrp_switch,
 						      FD(cgrp_switch, i));
 		if (IS_ERR(link)) {
@@ -146,6 +150,8 @@ static int bperf_load_program(struct evlist *evlist)
 
 	evlist__for_each_entry(evlist, evsel) {
 		if (cgrp == NULL || evsel->cgrp == leader_cgrp) {
+			unsigned int j;
+
 			leader_cgrp = evsel->cgrp;
 			evsel->cgrp = NULL;
 
@@ -183,6 +189,21 @@ static int bperf_load_program(struct evlist *evlist)
 		}
 
 		i++;
+	}
+
+	/*
+	 * Propagate supported flag from leaders to followers. Follower events
+	 * are not opened, so their supported flag remains false.
+	 */
+	{
+		struct evsel *leader;
+		int num_events = evlist__nr_entries(evlist) / nr_cgroups;
+
+		evlist__for_each_entry(evlist, evsel) {
+			leader = evlist__find_evsel(evlist, evsel->core.idx % num_events);
+			if (leader)
+				evsel->supported = leader->supported;
+		}
 	}
 
 	/*
@@ -234,10 +255,10 @@ static int bperf_cgrp__install_pe(struct evsel *evsel __maybe_unused,
 static int bperf_cgrp__sync_counters(struct evlist *evlist)
 {
 	struct perf_cpu cpu;
-	int idx;
+	unsigned int idx;
 	int prog_fd = bpf_program__fd(skel->progs.trigger_read);
 
-	perf_cpu_map__for_each_cpu(cpu, idx, evlist->core.all_cpus)
+	perf_cpu_map__for_each_cpu(cpu, idx, evlist__core(evlist)->all_cpus)
 		bperf_trigger_reading(prog_fd, cpu.cpu);
 
 	return 0;
@@ -286,7 +307,7 @@ static int bperf_cgrp__read(struct evsel *evsel)
 
 	evlist__for_each_entry(evlist, evsel) {
 		__u32 idx = evsel->core.idx;
-		int i;
+		unsigned int i;
 		struct perf_cpu cpu;
 
 		err = bpf_map_lookup_elem(reading_map_fd, &idx, values);
@@ -315,7 +336,7 @@ static int bperf_cgrp__destroy(struct evsel *evsel)
 		return 0;
 
 	bperf_cgroup_bpf__destroy(skel);
-	evsel__delete(cgrp_switch);  // it'll destroy on_switch progs too
+	evsel__put(cgrp_switch);  // it'll destroy on_switch progs too
 
 	return 0;
 }

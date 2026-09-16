@@ -954,7 +954,6 @@ struct acpi_device *acpi_add_power_resource(acpi_handle handle)
 	INIT_LIST_HEAD(&resource->list_node);
 	INIT_LIST_HEAD(&resource->dependents);
 	device->power.state = ACPI_STATE_UNKNOWN;
-	device->flags.match_driver = true;
 
 	/* Evaluate the object to get the system level and resource order. */
 	status = acpi_evaluate_object(handle, NULL, NULL, &buffer);
@@ -987,7 +986,7 @@ struct acpi_device *acpi_add_power_resource(acpi_handle handle)
 	return device;
 
  err:
-	acpi_release_power_resource(&device->dev);
+	acpi_dev_put(device);
 	return NULL;
 }
 

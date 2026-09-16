@@ -1032,33 +1032,6 @@ out:
 	return ret;
 }
 
-#ifdef CONFIG_PRINT_QUOTA_WARNING
-/**
- * tty_write_message - write a message to a certain tty, not just the console.
- * @tty: the destination tty_struct
- * @msg: the message to write
- *
- * This is used for messages that need to be redirected to a specific tty. We
- * don't put it into the syslog queue right now maybe in the future if really
- * needed.
- *
- * We must still hold the BTM and test the CLOSING flag for the moment.
- *
- * This function is DEPRECATED, do not use in new code.
- */
-void tty_write_message(struct tty_struct *tty, char *msg)
-{
-	if (tty) {
-		mutex_lock(&tty->atomic_write_lock);
-		tty_lock(tty);
-		if (tty->ops->write && tty->count > 0)
-			tty->ops->write(tty, msg, strlen(msg));
-		tty_unlock(tty);
-		tty_write_unlock(tty);
-	}
-}
-#endif
-
 static ssize_t file_tty_write(struct file *file, struct kiocb *iocb, struct iov_iter *from)
 {
 	struct tty_struct *tty = file_tty(file);
@@ -3167,8 +3140,10 @@ static int tty_cdev_add(struct tty_driver *driver, dev_t dev,
 	driver->cdevs[index]->ops = &tty_fops;
 	driver->cdevs[index]->owner = driver->owner;
 	err = cdev_add(driver->cdevs[index], dev, count);
-	if (err)
+	if (err) {
 		kobject_put(&driver->cdevs[index]->kobj);
+		driver->cdevs[index] = NULL;
+	}
 	return err;
 }
 
@@ -3305,7 +3280,7 @@ EXPORT_SYMBOL_GPL(tty_register_device_attr);
 void tty_unregister_device(struct tty_driver *driver, unsigned index)
 {
 	device_destroy(&tty_class, MKDEV(driver->major, driver->minor_start) + index);
-	if (!(driver->flags & TTY_DRIVER_DYNAMIC_ALLOC)) {
+	if (!(driver->flags & TTY_DRIVER_DYNAMIC_ALLOC) && driver->cdevs[index]) {
 		cdev_del(driver->cdevs[index]);
 		driver->cdevs[index] = NULL;
 	}
@@ -3443,10 +3418,27 @@ int tty_register_driver(struct tty_driver *driver)
 	if (error < 0)
 		goto err;
 
+	/*
+	 * Drivers that do not define driver_name are potentially in-memory devices
+	 * like vty, which generally do not require special workqueue settings.
+	 */
+	if (!(driver->flags & TTY_DRIVER_NO_WORKQUEUE) && driver->driver_name) {
+		driver->flip_wq = alloc_workqueue("%s-%s", WQ_UNBOUND | WQ_SYSFS,
+						  0, driver->name, driver->driver_name);
+		if (!driver->flip_wq) {
+			error = -ENOMEM;
+			goto err_unreg_char;
+		}
+		for (i = 0; i < driver->num; i++) {
+			if (driver->ports[i])
+				tty_port_link_driver_wq(driver->ports[i], driver);
+		}
+	}
+
 	if (driver->flags & TTY_DRIVER_DYNAMIC_ALLOC) {
 		error = tty_cdev_add(driver, dev, 0, driver->num);
 		if (error)
-			goto err_unreg_char;
+			goto err_destroy_wq;
 	}
 
 	scoped_guard(mutex, &tty_mutex)
@@ -3472,6 +3464,10 @@ err_unreg_devs:
 	scoped_guard(mutex, &tty_mutex)
 		list_del(&driver->tty_drivers);
 
+err_destroy_wq:
+	if (driver->flip_wq)
+		destroy_workqueue(driver->flip_wq);
+
 err_unreg_char:
 	unregister_chrdev_region(dev, driver->num);
 err:
@@ -3491,6 +3487,8 @@ void tty_unregister_driver(struct tty_driver *driver)
 				driver->num);
 	scoped_guard(mutex, &tty_mutex)
 		list_del(&driver->tty_drivers);
+	if (driver->flip_wq)
+		destroy_workqueue(driver->flip_wq);
 }
 EXPORT_SYMBOL(tty_unregister_driver);
 

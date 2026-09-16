@@ -425,8 +425,7 @@ static void dwc3_ref_clk_period(struct dwc3 *dwc)
 	}
 
 	reg = dwc3_readl(dwc, DWC3_GUCTL);
-	reg &= ~DWC3_GUCTL_REFCLKPER_MASK;
-	reg |=  FIELD_PREP(DWC3_GUCTL_REFCLKPER_MASK, period);
+	FIELD_MODIFY(DWC3_GUCTL_REFCLKPER_MASK, &reg, period);
 	dwc3_writel(dwc, DWC3_GUCTL, reg);
 
 	if (DWC3_VER_IS_PRIOR(DWC3, 250A))
@@ -456,12 +455,9 @@ static void dwc3_ref_clk_period(struct dwc3 *dwc)
 	decr = 480000000 / rate;
 
 	reg = dwc3_readl(dwc, DWC3_GFLADJ);
-	reg &= ~DWC3_GFLADJ_REFCLK_FLADJ_MASK
-	    &  ~DWC3_GFLADJ_240MHZDECR
-	    &  ~DWC3_GFLADJ_240MHZDECR_PLS1;
-	reg |= FIELD_PREP(DWC3_GFLADJ_REFCLK_FLADJ_MASK, fladj)
-	    |  FIELD_PREP(DWC3_GFLADJ_240MHZDECR, decr >> 1)
-	    |  FIELD_PREP(DWC3_GFLADJ_240MHZDECR_PLS1, decr & 1);
+	FIELD_MODIFY(DWC3_GFLADJ_REFCLK_FLADJ_MASK, &reg, fladj);
+	FIELD_MODIFY(DWC3_GFLADJ_240MHZDECR, &reg, decr >> 1);
+	FIELD_MODIFY(DWC3_GFLADJ_240MHZDECR_PLS1, &reg, decr & 1);
 
 	if (dwc->gfladj_refclk_lpm_sel)
 		reg |=  DWC3_GFLADJ_REFCLK_LPM_SEL;
@@ -525,7 +521,7 @@ static void dwc3_free_event_buffers(struct dwc3 *dwc)
 }
 
 /**
- * dwc3_alloc_event_buffers - Allocates @num event buffers of size @length
+ * dwc3_alloc_event_buffers - Allocate one event buffer of size @length
  * @dwc: pointer to our controller context structure
  * @length: size of event buffer
  *
@@ -780,6 +776,24 @@ static int dwc3_hs_phy_setup(struct dwc3 *dwc, int index)
 	dwc3_writel(dwc, DWC3_GUSB2PHYCFG(index), reg);
 
 	return 0;
+}
+
+static void dwc3_ulpi_setup(struct dwc3 *dwc)
+{
+	int index;
+	u32 reg;
+
+	/* Don't do anything if there is no ULPI PHY */
+	if (!dwc->ulpi)
+		return;
+
+	if (dwc->enable_usb2_transceiver_delay) {
+		for (index = 0; index < dwc->num_usb2_ports; index++) {
+			reg = dwc3_readl(dwc, DWC3_GUSB2PHYCFG(index));
+			reg |= DWC3_GUSB2PHYCFG_XCVRDLY;
+			dwc3_writel(dwc, DWC3_GUSB2PHYCFG(index), reg);
+		}
+	}
 }
 
 /**
@@ -1341,12 +1355,6 @@ int dwc3_core_init(struct dwc3 *dwc)
 
 	hw_mode = DWC3_GHWPARAMS0_MODE(dwc->hwparams.hwparams0);
 
-	/*
-	 * Write Linux Version Code to our GUID register so it's easy to figure
-	 * out which kernel version a bug was found.
-	 */
-	dwc3_writel(dwc, DWC3_GUID, LINUX_VERSION_CODE);
-
 	ret = dwc3_phy_setup(dwc);
 	if (ret)
 		return ret;
@@ -1363,6 +1371,8 @@ int dwc3_core_init(struct dwc3 *dwc)
 		dwc->ulpi_ready = true;
 	}
 
+	dwc3_ulpi_setup(dwc);
+
 	if (!dwc->phys_ready) {
 		ret = dwc3_core_get_phy(dwc);
 		if (ret)
@@ -1377,6 +1387,12 @@ int dwc3_core_init(struct dwc3 *dwc)
 	ret = dwc3_core_soft_reset(dwc);
 	if (ret)
 		goto err_exit_phy;
+
+	/*
+	 * Write Linux Version Code to our GUID register so it's easy to figure
+	 * out which kernel version a bug was found.
+	 */
+	dwc3_writel(dwc, DWC3_GUID, LINUX_VERSION_CODE);
 
 	dwc3_core_setup_global_control(dwc);
 	dwc3_core_num_eps(dwc);
@@ -1674,6 +1690,9 @@ static void dwc3_get_software_properties(struct dwc3 *dwc,
 	struct device *tmpdev;
 	u16 gsbuscfg0_reqinfo;
 	int ret;
+
+	if (properties->needs_full_reinit)
+		dwc->needs_full_reinit = true;
 
 	dwc->gsbuscfg0_reqinfo = DWC3_GSBUSCFG0_REQINFO_UNSPECIFIED;
 
@@ -2169,22 +2188,89 @@ static void dwc3_vbus_draw_work(struct work_struct *work)
 			ret, dwc->current_limit);
 }
 
-static struct power_supply *dwc3_get_usb_power_supply(struct dwc3 *dwc)
+static int dwc3_psy_notifier(struct notifier_block *nb,
+			     unsigned long event, void *data)
 {
-	struct power_supply *usb_psy;
-	const char *usb_psy_name;
+	struct dwc3 *dwc = container_of(nb, struct dwc3, psy_nb);
+	struct power_supply *psy = data;
+	unsigned long flags;
+
+	if (dwc->usb_psy)
+		return NOTIFY_DONE;
+
+	if (strcmp(psy->desc->name, dwc->usb_psy_name) != 0)
+		return NOTIFY_DONE;
+
+	/* Explicitly get the reference for this psy */
+	psy = power_supply_get_by_name(dwc->usb_psy_name);
+	if (!psy)
+		return NOTIFY_DONE;
+
+	spin_lock_irqsave(&dwc->lock, flags);
+	/*
+	 * The USB power_supply may already be set. This can happen if notifier
+	 * callbacks for the USB power_supply race, or if a previous notifier
+	 * callback has already successfully fetched and associated the instance.
+	 * In such cases, release the newly acquired reference and ignore
+	 * subsequent notifications until the notifier is unregistered.
+	 */
+	if (dwc->usb_psy) {
+		spin_unlock_irqrestore(&dwc->lock, flags);
+		power_supply_put(psy);
+		return NOTIFY_DONE;
+	}
+
+	dwc->usb_psy = psy;
+	if (dwc->current_limit != DWC3_CURRENT_UNSPECIFIED)
+		schedule_work(&dwc->vbus_draw_work);
+	spin_unlock_irqrestore(&dwc->lock, flags);
+
+	return NOTIFY_OK;
+}
+
+static void dwc3_get_usb_power_supply(struct dwc3 *dwc)
+{
+	struct power_supply *psy;
+	unsigned long flags;
 	int ret;
 
-	ret = device_property_read_string(dwc->dev, "usb-psy-name", &usb_psy_name);
+	ret = device_property_read_string(dwc->dev, "usb-psy-name", &dwc->usb_psy_name);
 	if (ret < 0)
-		return NULL;
-
-	usb_psy = power_supply_get_by_name(usb_psy_name);
-	if (!usb_psy)
-		return ERR_PTR(-EPROBE_DEFER);
+		return;
 
 	INIT_WORK(&dwc->vbus_draw_work, dwc3_vbus_draw_work);
-	return usb_psy;
+
+	dwc->current_limit = DWC3_CURRENT_UNSPECIFIED;
+	dwc->psy_nb.notifier_call = dwc3_psy_notifier;
+	ret = power_supply_reg_notifier(&dwc->psy_nb);
+	if (ret) {
+		dev_err(dwc->dev, "Failed to register power supply notifier: %d\n", ret);
+		dwc->psy_nb.notifier_call = NULL;
+		return;
+	}
+
+	psy = power_supply_get_by_name(dwc->usb_psy_name);
+	if (!psy)
+		return;
+
+	/* Unregister the notifier now that we have the power supply */
+	power_supply_unreg_notifier(&dwc->psy_nb);
+	dwc->psy_nb.notifier_call = NULL;
+
+	spin_lock_irqsave(&dwc->lock, flags);
+	/*
+	 * It is possible that the notifier callback ran before we reached here
+	 * and successfully fetched the power supply. In that case we need to
+	 * release the above reference.
+	 */
+	if (dwc->usb_psy) {
+		spin_unlock_irqrestore(&dwc->lock, flags);
+		power_supply_put(psy);
+		return;
+	}
+
+	dwc->usb_psy = psy;
+	spin_unlock_irqrestore(&dwc->lock, flags);
 }
 
 int dwc3_core_probe(const struct dwc3_probe_data *data)
@@ -2232,9 +2318,9 @@ int dwc3_core_probe(const struct dwc3_probe_data *data)
 
 	dwc3_get_software_properties(dwc, &data->properties);
 
-	dwc->usb_psy = dwc3_get_usb_power_supply(dwc);
-	if (IS_ERR(dwc->usb_psy))
-		return dev_err_probe(dev, PTR_ERR(dwc->usb_psy), "couldn't get usb power supply\n");
+	spin_lock_init(&dwc->lock);
+
+	dwc3_get_usb_power_supply(dwc);
 
 	if (!data->ignore_clocks_and_resets) {
 		dwc->reset = devm_reset_control_array_get_optional_shared(dev);
@@ -2286,7 +2372,6 @@ int dwc3_core_probe(const struct dwc3_probe_data *data)
 		dwc->num_usb3_ports = 1;
 	}
 
-	spin_lock_init(&dwc->lock);
 	mutex_init(&dwc->mutex);
 
 	pm_runtime_get_noresume(dev);
@@ -2354,6 +2439,8 @@ err_disable_clks:
 err_assert_reset:
 	reset_control_assert(dwc->reset);
 err_put_psy:
+	if (dwc->psy_nb.notifier_call)
+		power_supply_unreg_notifier(&dwc->psy_nb);
 	if (dwc->usb_psy)
 		power_supply_put(dwc->usb_psy);
 
@@ -2409,6 +2496,9 @@ void dwc3_core_remove(struct dwc3 *dwc)
 	pm_runtime_set_suspended(dwc->dev);
 
 	dwc3_free_event_buffers(dwc);
+
+	if (dwc->psy_nb.notifier_call)
+		power_supply_unreg_notifier(&dwc->psy_nb);
 
 	if (dwc->usb_psy) {
 		cancel_work_sync(&dwc->vbus_draw_work);
@@ -2479,7 +2569,8 @@ static int dwc3_suspend_common(struct dwc3 *dwc, pm_message_t msg)
 		dwc3_core_exit(dwc);
 		break;
 	case DWC3_GCTL_PRTCAP_HOST:
-		if (!PMSG_IS_AUTO(msg) && !device_may_wakeup(dwc->dev)) {
+		if (!PMSG_IS_AUTO(msg) &&
+		    (!device_may_wakeup(dwc->dev) || dwc->needs_full_reinit)) {
 			dwc3_core_exit(dwc);
 			break;
 		}
@@ -2542,7 +2633,8 @@ static int dwc3_resume_common(struct dwc3 *dwc, pm_message_t msg)
 		dwc3_gadget_resume(dwc);
 		break;
 	case DWC3_GCTL_PRTCAP_HOST:
-		if (!PMSG_IS_AUTO(msg) && !device_may_wakeup(dwc->dev)) {
+		if (!PMSG_IS_AUTO(msg) &&
+		    (!device_may_wakeup(dwc->dev) || dwc->needs_full_reinit)) {
 			ret = dwc3_core_init_for_resume(dwc);
 			if (ret)
 				return ret;

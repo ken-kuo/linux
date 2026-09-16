@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 /*
- * Copyright (C) 2012-2014, 2018-2025 Intel Corporation
+ * Copyright (C) 2012-2014, 2018-2026 Intel Corporation
  * Copyright (C) 2013-2015 Intel Mobile Communications GmbH
  * Copyright (C) 2016-2017 Intel Deutschland GmbH
  */
@@ -459,9 +459,14 @@ static void iwl_mvm_phy_filter_init(struct iwl_mvm *mvm,
 
 static void iwl_mvm_uats_init(struct iwl_mvm *mvm)
 {
+	struct iwl_mcc_allowed_ap_type_cmd_v1 *cmd __free(kfree) = NULL;
 	int cmd_id = WIDE_ID(REGULATORY_AND_NVM_GROUP,
 			     MCC_ALLOWED_AP_TYPE_CMD);
-	struct iwl_mcc_allowed_ap_type_cmd_v1 cmd = {};
+	struct iwl_host_cmd hcmd = {
+		.id = cmd_id,
+		.len[0] = sizeof(*cmd),
+		.dataflags[0] = IWL_HCMD_DFL_NOCOPY,
+	};
 	u8 cmd_ver;
 	int ret;
 
@@ -485,14 +490,25 @@ static void iwl_mvm_uats_init(struct iwl_mvm *mvm)
 	if (!mvm->fwrt.ap_type_cmd_valid)
 		return;
 
-	BUILD_BUG_ON(sizeof(mvm->fwrt.ap_type_cmd.mcc_to_ap_type_map) !=
-		     sizeof(cmd.mcc_to_ap_type_map));
+	/* Since we free the command immediately after iwl_mvm_send_cmd, we
+	 * must send this command in SYNC mode.
+	 */
+	lockdep_assert_held(&mvm->mutex);
 
-	memcpy(cmd.mcc_to_ap_type_map,
+	cmd = kzalloc_obj(*cmd);
+	if (!cmd)
+		return;
+
+	BUILD_BUG_ON(sizeof(mvm->fwrt.ap_type_cmd.mcc_to_ap_type_map) !=
+		     sizeof(cmd->mcc_to_ap_type_map));
+
+	memcpy(cmd->mcc_to_ap_type_map,
 	       mvm->fwrt.ap_type_cmd.mcc_to_ap_type_map,
 	       sizeof(mvm->fwrt.ap_type_cmd.mcc_to_ap_type_map));
 
-	ret = iwl_mvm_send_cmd_pdu(mvm, cmd_id, 0, sizeof(cmd), &cmd);
+	hcmd.data[0] = cmd;
+
+	ret = iwl_mvm_send_cmd(mvm, &hcmd);
 	if (ret < 0)
 		IWL_ERR(mvm, "failed to send MCC_ALLOWED_AP_TYPE_CMD (%d)\n",
 			ret);
@@ -948,12 +964,22 @@ int iwl_mvm_get_sar_geo_profile(struct iwl_mvm *mvm)
 		return ret;
 	}
 
+	if (IWL_FW_CHECK(mvm,
+			 iwl_rx_packet_payload_len(cmd.resp_pkt) !=
+			 sizeof(*resp),
+			 "Wrong size for iwl_geo_tx_power_profiles_resp: %d\n",
+			 iwl_rx_packet_payload_len(cmd.resp_pkt))) {
+		ret = -EIO;
+		goto out;
+	}
+
 	resp = (void *)cmd.resp_pkt->data;
 	ret = le32_to_cpu(resp->profile_idx);
 
 	if (WARN_ON(ret > BIOS_GEO_MAX_PROFILE_NUM))
 		ret = -EIO;
 
+out:
 	iwl_free_resp(&cmd);
 	return ret;
 }
@@ -1491,12 +1517,48 @@ static int iwl_mvm_fill_lari_config(struct iwl_fw_runtime *fwrt,
 	return 0;
 }
 
+static void iwl_mvm_send_lari_cfg_extension(struct iwl_mvm *mvm)
+{
+	struct iwl_fw_runtime *fwrt = &mvm->fwrt;
+	struct iwl_lari_config_extension_cmd cmd = {};
+	u32 cmd_id = WIDE_ID(REGULATORY_AND_NVM_GROUP,
+			     LARI_CONFIG_EXTENSION);
+	u32 value;
+	int ret;
+
+	if (iwl_fw_lookup_cmd_ver(mvm->fw, cmd_id, 0) < 1)
+		return;
+
+	ret = iwl_bios_get_dsm(fwrt, DSM_FUNC_REGULATORY_CONFIG, &value);
+	if (ret)
+		return;
+
+	cmd.dsm_table_hdr.table_source = fwrt->dsm_source;
+	cmd.dsm_table_hdr.table_revision = fwrt->dsm_revision;
+	cmd.oem_uhb_allow_extension_bitmap = cpu_to_le32(value);
+
+	IWL_DEBUG_RADIO(mvm,
+			"sending LARI_CONFIG_EXTENSION, oem_uhb_allow_extension_bitmap=0x%x\n",
+			le32_to_cpu(cmd.oem_uhb_allow_extension_bitmap));
+	ret = iwl_mvm_send_cmd_pdu(mvm, cmd_id, 0, sizeof(cmd), &cmd);
+	if (ret < 0)
+		IWL_DEBUG_RADIO(mvm,
+				"Failed to send LARI_CONFIG_EXTENSION (%d)\n",
+				ret);
+}
+
 static void iwl_mvm_lari_cfg(struct iwl_mvm *mvm)
 {
 	struct iwl_lari_config_change_cmd cmd;
 	size_t cmd_size;
 	int ret;
 
+	/*
+	 * LARI_CONFIG_CHANGE triggers a profile update, so send
+	 * LARI_CONFIG_EXTENSION first to make sure its data is applied
+	 * in the same update.
+	 */
+	iwl_mvm_send_lari_cfg_extension(mvm);
 	ret = iwl_mvm_fill_lari_config(&mvm->fwrt, &cmd, &cmd_size);
 	if (!ret) {
 		ret = iwl_mvm_send_cmd_pdu(mvm,

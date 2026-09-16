@@ -2,7 +2,6 @@
 #ifndef _ASM_X86_ENTRY_COMMON_H
 #define _ASM_X86_ENTRY_COMMON_H
 
-#include <linux/randomize_kstack.h>
 #include <linux/user-return-notifier.h>
 
 #include <asm/nospec-branch.h>
@@ -96,5 +95,7 @@ static __always_inline void arch_exit_to_user_mode(void)
 	amd_clear_divider();
 }
 #define arch_exit_to_user_mode arch_exit_to_user_mode
+
+extern void x86_entry_from_kvm(unsigned int entry_type, unsigned int vector);
 
 #endif

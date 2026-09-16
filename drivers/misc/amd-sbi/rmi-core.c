@@ -48,7 +48,7 @@
 /* CPUID MCAMSR mask & index */
 #define CPUID_MCA_THRD_INDEX	32
 #define CPUID_MCA_FUNC_MASK	GENMASK(31, 0)
-#define CPUID_EXT_FUNC_INDEX	56
+#define CPUID_EXT_FUNC_INDEX	48
 
 /* input for bulk write to CPUID protocol */
 struct cpu_msr_indata {
@@ -214,6 +214,7 @@ static int rmi_cpuid_read(struct sbrmi_data *data,
 			goto exit_unlock;
 		break;
 	case 0x21:
+	case 0x31:
 		ret = rmi_cpuid_input_ext(data, msg, thread);
 		if (ret)
 			goto exit_unlock;
@@ -327,6 +328,7 @@ static int rmi_mca_msr_read(struct sbrmi_data *data,
 			goto exit_unlock;
 		break;
 	case 0x21:
+	case 0x31:
 		ret = rmi_mcamsr_input_ext(data, msg, thread);
 		if (ret)
 			goto exit_unlock;
@@ -579,6 +581,8 @@ int create_misc_rmi_device(struct sbrmi_data *data,
 							 GFP_KERNEL,
 							 "sbrmi-%x",
 							 data->dev_static_addr);
+	if (!data->sbrmi_misc_dev.name)
+		return -ENOMEM;
 	data->sbrmi_misc_dev.minor	= MISC_DYNAMIC_MINOR;
 	data->sbrmi_misc_dev.fops	= &sbrmi_fops;
 	data->sbrmi_misc_dev.parent	= dev;
@@ -586,6 +590,8 @@ int create_misc_rmi_device(struct sbrmi_data *data,
 							 GFP_KERNEL,
 							 "sbrmi-%x",
 							 data->dev_static_addr);
+	if (!data->sbrmi_misc_dev.nodename)
+		return -ENOMEM;
 	data->sbrmi_misc_dev.mode	= 0600;
 
 	return misc_register(&data->sbrmi_misc_dev);

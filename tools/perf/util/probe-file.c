@@ -197,6 +197,8 @@ struct strlist *probe_file__get_rawlist(int fd)
 		idx = strlen(p) - 1;
 		if (p[idx] == '\n')
 			p[idx] = '\0';
+		if (buf[0] == '#')
+			continue;
 		ret = strlist__add(sl, buf);
 		if (ret < 0) {
 			pr_debug("strlist__add failed (%d)\n", ret);
@@ -414,7 +416,7 @@ int probe_cache_entry__get_event(struct probe_cache_entry *entry,
 	if (ret > probe_conf.max_probes)
 		return -E2BIG;
 
-	*tevs = zalloc(ret * sizeof(*tev));
+	*tevs = calloc(ret, sizeof(*tev));
 	if (!*tevs)
 		return -ENOMEM;
 

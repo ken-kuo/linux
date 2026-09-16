@@ -21,7 +21,7 @@
 #include <linux/timer.h>
 #include <linux/completion.h>
 #include <linux/device.h>
-#include <linux/mod_devicetable.h>
+#include <linux/device-id/hv_vmbus.h>
 #include <linux/interrupt.h>
 #include <linux/reciprocal_div.h>
 #include <hyperv/hvhdk.h>
@@ -70,7 +70,8 @@
  */
 enum hv_gpadl_type {
 	HV_GPADL_BUFFER,
-	HV_GPADL_RING
+	HV_GPADL_RING,
+	HV_GPADL_BUFFER_DECRYPTED
 };
 
 /* Single-page buffer */
@@ -260,9 +261,8 @@ static inline u32 hv_get_avail_to_write_percent(
  * 5 . 2  (Windows Server 2019, RS5)
  * 5 . 3  (Windows Server 2022)
  *
- * The WS2008 and WIN7 versions are listed here for
- * completeness but are no longer supported in the
- * Linux kernel.
+ * The WS2008, WIN7, WIN8, and WIN8_1 versions are listed here for
+ * completeness but are no longer supported in the Linux kernel.
  */
 
 #define VMBUS_MAKE_VERSION(MAJ, MIN)	((((u32)MAJ) << 16) | (MIN))
@@ -1205,8 +1205,20 @@ extern int vmbus_establish_gpadl(struct vmbus_channel *channel,
 				      u32 size,
 				      struct vmbus_gpadl *gpadl);
 
+extern int vmbus_establish_gpadl_caller_decrypted(struct vmbus_channel *channel,
+						  void *kbuffer,
+						  u32 size,
+						  struct vmbus_gpadl *gpadl);
+
 extern int vmbus_teardown_gpadl(struct vmbus_channel *channel,
 				     struct vmbus_gpadl *gpadl);
+
+extern void *vmbus_alloc_buffer(struct vmbus_channel *channel,
+				u32 size,
+				struct page ***chunks_out,
+				u32 *chunk_cnt_out);
+
+extern void vmbus_free_buffer(void *addr, struct page **chunks, u32 chunk_cnt);
 
 void vmbus_reset_channel_cb(struct vmbus_channel *channel);
 
@@ -1272,11 +1284,6 @@ struct hv_device {
 	u16 device_id;
 
 	struct device device;
-	/*
-	 * Driver name to force a match.  Do not set directly, because core
-	 * frees it.  Use driver_set_override() to set or clear it.
-	 */
-	const char *driver_override;
 
 	struct vmbus_channel *channel;
 	struct kset	     *channels_kset;
@@ -1303,6 +1310,12 @@ static inline void *hv_get_drvdata(struct hv_device *dev)
 }
 
 struct device *hv_get_vmbus_root_device(void);
+
+#if IS_ENABLED(CONFIG_HYPERV_VMBUS)
+bool hv_vmbus_exists(void);
+#else
+static inline bool hv_vmbus_exists(void) { return false; }
+#endif
 
 struct hv_ring_buffer_debug_info {
 	u32 current_interrupt_mask;
@@ -1333,6 +1346,9 @@ int vmbus_allocate_mmio(struct resource **new, struct hv_device *device_obj,
 			resource_size_t size, resource_size_t align,
 			bool fb_overlap_ok);
 void vmbus_free_mmio(resource_size_t start, resource_size_t size);
+
+void vmbus_initiate_unload(bool crash);
+void vmbus_set_skip_unload(bool skip);
 
 /*
  * GUID definitions of various offer types - services offered to the guest.

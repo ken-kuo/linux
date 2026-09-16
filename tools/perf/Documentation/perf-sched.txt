@@ -40,6 +40,12 @@ There are several variants of 'perf sched':
   Tasks with the same command name are merged and the merge count is
   given within (), However if -p option is used, pid is mentioned.
 
+  If -H or --histogram option is passed, a CPU wait latency distribution
+  histogram is displayed illustrating how long tasks waited for CPU
+  runtime across latency buckets between snapshots. The --time
+  option (start,stop) limits analysis to a specific snapshot time interval.
+  The --hist-mode option (log or linear) configures the latency bucketing scheme.
+
   'perf sched script' to see a detailed trace of the workload that
    was recorded (aliased to 'perf script' for now).
 
@@ -437,8 +443,11 @@ OPTIONS for 'perf sched timehist'
     Show all scheduling events followed by a summary by thread with min,
     max, and average run times (in sec) and relative stddev.
 
---symfs=<directory>::
-    Look for files with symbols relative to this directory.
+--symfs=<directory[,layout]>::
+        Look for files with symbols relative to this directory. The optional
+        layout can be 'hierarchy' (default, matches full path) or 'flat'
+        (only matches base name). This is useful when debug files are stored
+        in a flat directory structure.
 
 -V::
 --cpu-visual::

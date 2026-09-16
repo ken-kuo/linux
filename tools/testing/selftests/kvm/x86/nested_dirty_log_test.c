@@ -40,17 +40,15 @@
 
 #define TEST_HVA(vm, idx)		addr_gpa2hva(vm, TEST_GPA(idx))
 
-#define L2_GUEST_STACK_SIZE 64
-
 /* Use the page offset bits to communicate the access+fault type. */
 #define TEST_SYNC_READ_FAULT		BIT(0)
 #define TEST_SYNC_WRITE_FAULT		BIT(1)
 #define TEST_SYNC_NO_FAULT		BIT(2)
 
-static void l2_guest_code(vm_vaddr_t base)
+static void l2_guest_code(gva_t base)
 {
-	vm_vaddr_t page0 = TEST_GUEST_ADDR(base, 0);
-	vm_vaddr_t page1 = TEST_GUEST_ADDR(base, 1);
+	gva_t page0 = TEST_GUEST_ADDR(base, 0);
+	gva_t page1 = TEST_GUEST_ADDR(base, 1);
 
 	READ_ONCE(*(u64 *)page0);
 	GUEST_SYNC(page0 | TEST_SYNC_READ_FAULT);
@@ -92,7 +90,6 @@ static void l2_guest_code_tdp_disabled(void)
 
 void l1_vmx_code(struct vmx_pages *vmx)
 {
-	unsigned long l2_guest_stack[L2_GUEST_STACK_SIZE];
 	void *l2_rip;
 
 	GUEST_ASSERT(vmx->vmcs_gpa);
@@ -104,7 +101,7 @@ void l1_vmx_code(struct vmx_pages *vmx)
 	else
 		l2_rip = l2_guest_code_tdp_disabled;
 
-	prepare_vmcs(vmx, l2_rip, &l2_guest_stack[L2_GUEST_STACK_SIZE]);
+	prepare_vmcs(vmx, l2_rip);
 
 	GUEST_SYNC(TEST_SYNC_NO_FAULT);
 	GUEST_ASSERT(!vmlaunch());
@@ -115,7 +112,6 @@ void l1_vmx_code(struct vmx_pages *vmx)
 
 static void l1_svm_code(struct svm_test_data *svm)
 {
-	unsigned long l2_guest_stack[L2_GUEST_STACK_SIZE];
 	void *l2_rip;
 
 	if (svm->ncr3_gpa)
@@ -123,7 +119,7 @@ static void l1_svm_code(struct svm_test_data *svm)
 	else
 		l2_rip = l2_guest_code_tdp_disabled;
 
-	generic_svm_setup(svm, l2_rip, &l2_guest_stack[L2_GUEST_STACK_SIZE]);
+	generic_svm_setup(svm, l2_rip);
 
 	GUEST_SYNC(TEST_SYNC_NO_FAULT);
 	run_guest(svm->vmcb, svm->vmcb_gpa);
@@ -143,7 +139,7 @@ static void l1_guest_code(void *data)
 static void test_handle_ucall_sync(struct kvm_vm *vm, u64 arg,
 				   unsigned long *bmap)
 {
-	vm_vaddr_t gva = arg & ~(PAGE_SIZE - 1);
+	gva_t gva = arg & ~(PAGE_SIZE - 1);
 	int page_nr, i;
 
 	/*
@@ -198,7 +194,7 @@ static void test_handle_ucall_sync(struct kvm_vm *vm, u64 arg,
 
 static void test_dirty_log(bool nested_tdp)
 {
-	vm_vaddr_t nested_gva = 0;
+	gva_t nested_gva = 0;
 	unsigned long *bmap;
 	struct kvm_vcpu *vcpu;
 	struct kvm_vm *vm;

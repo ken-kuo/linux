@@ -19,6 +19,7 @@
 #include <linux/amd-iommu.h>
 #include <linux/kvm_host.h>
 #include <linux/kvm_irqfd.h>
+#include <linux/sysfs.h>
 
 #include <asm/irq_remapping.h>
 #include <asm/msr.h>
@@ -76,23 +77,33 @@ static int avic_param_set(const char *val, const struct kernel_param *kp)
 	return param_set_bint(val, kp);
 }
 
+static int avic_param_get(char *buffer, const struct kernel_param *kp)
+{
+	int val = *(int *)kp->arg;
+
+	if (val == AVIC_AUTO_MODE)
+		return sysfs_emit(buffer, "N\n");
+
+	return param_get_bool(buffer, kp);
+}
+
 static const struct kernel_param_ops avic_ops = {
 	.flags = KERNEL_PARAM_OPS_FL_NOARG,
 	.set = avic_param_set,
-	.get = param_get_bool,
+	.get = avic_param_get,
 };
 
 /*
  * Enable / disable AVIC.  In "auto" mode (default behavior), AVIC is enabled
  * for Zen4+ CPUs with x2AVIC (and all other criteria for enablement are met).
  */
-static int avic = AVIC_AUTO_MODE;
+static int __ro_after_init avic = AVIC_AUTO_MODE;
 module_param_cb(avic, &avic_ops, &avic, 0444);
 __MODULE_PARM_TYPE(avic, "bool");
 
 module_param(enable_ipiv, bool, 0444);
 
-static bool force_avic;
+static bool __ro_after_init force_avic;
 module_param_unsafe(force_avic, bool, 0444);
 
 /* Note:
@@ -111,38 +122,8 @@ static u32 x2avic_max_physical_id;
 static void avic_set_x2apic_msr_interception(struct vcpu_svm *svm,
 					     bool intercept)
 {
-	static const u32 x2avic_passthrough_msrs[] = {
-		X2APIC_MSR(APIC_ID),
-		X2APIC_MSR(APIC_LVR),
-		X2APIC_MSR(APIC_TASKPRI),
-		X2APIC_MSR(APIC_ARBPRI),
-		X2APIC_MSR(APIC_PROCPRI),
-		X2APIC_MSR(APIC_EOI),
-		X2APIC_MSR(APIC_RRR),
-		X2APIC_MSR(APIC_LDR),
-		X2APIC_MSR(APIC_DFR),
-		X2APIC_MSR(APIC_SPIV),
-		X2APIC_MSR(APIC_ISR),
-		X2APIC_MSR(APIC_TMR),
-		X2APIC_MSR(APIC_IRR),
-		X2APIC_MSR(APIC_ESR),
-		X2APIC_MSR(APIC_ICR),
-		X2APIC_MSR(APIC_ICR2),
-
-		/*
-		 * Note!  Always intercept LVTT, as TSC-deadline timer mode
-		 * isn't virtualized by hardware, and the CPU will generate a
-		 * #GP instead of a #VMEXIT.
-		 */
-		X2APIC_MSR(APIC_LVTTHMR),
-		X2APIC_MSR(APIC_LVTPC),
-		X2APIC_MSR(APIC_LVT0),
-		X2APIC_MSR(APIC_LVT1),
-		X2APIC_MSR(APIC_LVTERR),
-		X2APIC_MSR(APIC_TMICT),
-		X2APIC_MSR(APIC_TMCCT),
-		X2APIC_MSR(APIC_TDCR),
-	};
+	struct kvm_vcpu *vcpu = &svm->vcpu;
+	u64 rd_regs;
 	int i;
 
 	if (intercept == svm->x2avic_msrs_intercepted)
@@ -151,9 +132,16 @@ static void avic_set_x2apic_msr_interception(struct vcpu_svm *svm,
 	if (!x2avic_enabled)
 		return;
 
-	for (i = 0; i < ARRAY_SIZE(x2avic_passthrough_msrs); i++)
-		svm_set_intercept_for_msr(&svm->vcpu, x2avic_passthrough_msrs[i],
-					  MSR_TYPE_RW, intercept);
+	rd_regs = kvm_x2apic_disable_read_intercept_reg_mask(vcpu);
+
+	for_each_set_bit(i, (unsigned long *)&rd_regs, BITS_PER_TYPE(rd_regs))
+		svm_set_intercept_for_msr(vcpu, APIC_BASE_MSR + i,
+					  MSR_TYPE_R, intercept);
+
+	svm_set_intercept_for_msr(vcpu, X2APIC_MSR(APIC_TASKPRI), MSR_TYPE_W, intercept);
+	svm_set_intercept_for_msr(vcpu, X2APIC_MSR(APIC_EOI), MSR_TYPE_W, intercept);
+	svm_set_intercept_for_msr(vcpu, X2APIC_MSR(APIC_SELF_IPI), MSR_TYPE_W, intercept);
+	svm_set_intercept_for_msr(vcpu, X2APIC_MSR(APIC_ICR), MSR_TYPE_W, intercept);
 
 	svm->x2avic_msrs_intercepted = intercept;
 }
@@ -196,6 +184,35 @@ static void avic_activate_vmcb(struct vcpu_svm *svm)
 	svm_clr_intercept(svm, INTERCEPT_CR8_WRITE);
 
 	/*
+	 * Flush the TLB when enabling (x2)AVIC and when transitioning between
+	 * xAVIC and x2AVIC, as the CPU may have inserted a TLB entry for the
+	 * "wrong" mapping.
+	 *
+	 * KVM uses a per-VM "scratch" page to back the APIC memslot, because
+	 * KVM also uses per-VM page tables *and* maintains the page table (NPT
+	 * or shadow page) mappings for said memslot even if one or more vCPUs
+	 * have their local APIC hardware-disabled or are in x2APIC mode, i.e.
+	 * even if one or more vCPUs' APIC MMIO BAR is effectively disabled.
+	 *
+	 * If xAVIC is fully enabled, hardware ignores the physical address in
+	 * KVM's page tables, i.e. in the leaf SPTE for the APIC memslot, and
+	 * instead redirects the access to the AVIC backing page, i.e. to the
+	 * vCPU's virtual APIC page.  If xAVIC is not enabled (APIC is either
+	 * hardware-disabled or in x2APIC mode), then guest accesses will use
+	 * the page table mapping verbatim, i.e. will access the per-VM scratch
+	 * page, as normal memory.
+	 *
+	 * In both cases, the CPU is allowed to cache TLB entries for the APIC
+	 * base GPA.  So, KVM needs to flush the TLB when enabling xAVIC, as
+	 * accesses need to be redirected to the virtual APIC page, but the TLB
+	 * may contain entries pointing at the scratch page.  KVM also needs to
+	 * flush the TLB when enabling x2AVIC, as accesses need to go to the
+	 * scratch page, but the TLB may contain entries tagged as xAVIC, i.e.
+	 * entries pointing to the vCPU's virtual APIC page.
+	 */
+	kvm_make_request(KVM_REQ_TLB_FLUSH_CURRENT, &svm->vcpu);
+
+	/*
 	 * Note: KVM supports hybrid-AVIC mode, where KVM emulates x2APIC MSR
 	 * accesses, while interrupt injection to a running vCPU can be
 	 * achieved using AVIC doorbell.  KVM disables the APIC access page
@@ -208,12 +225,6 @@ static void avic_activate_vmcb(struct vcpu_svm *svm)
 		/* Disabling MSR intercept for x2APIC registers */
 		avic_set_x2apic_msr_interception(svm, false);
 	} else {
-		/*
-		 * Flush the TLB, the guest may have inserted a non-APIC
-		 * mapping into the TLB while AVIC was disabled.
-		 */
-		kvm_make_request(KVM_REQ_TLB_FLUSH_CURRENT, &svm->vcpu);
-
 		/* Enabling MSR intercept for x2APIC registers */
 		avic_set_x2apic_msr_interception(svm, true);
 	}
@@ -226,16 +237,8 @@ static void avic_deactivate_vmcb(struct vcpu_svm *svm)
 	vmcb->control.int_ctl &= ~(AVIC_ENABLE_MASK | X2APIC_MODE_MASK);
 	vmcb->control.avic_physical_id &= ~AVIC_PHYSICAL_MAX_INDEX_MASK;
 
-	if (!sev_es_guest(svm->vcpu.kvm))
+	if (!is_sev_es_guest(&svm->vcpu))
 		svm_set_intercept(svm, INTERCEPT_CR8_WRITE);
-
-	/*
-	 * If running nested and the guest uses its own MSR bitmap, there
-	 * is no need to update L0's msr bitmap
-	 */
-	if (is_guest_mode(&svm->vcpu) &&
-	    vmcb12_is_intercept(&svm->nested.ctl, INTERCEPT_MSR_PROT))
-		return;
 
 	/* Enabling MSR intercept for x2APIC registers */
 	avic_set_x2apic_msr_interception(svm, true);
@@ -282,12 +285,9 @@ static int avic_get_physical_id_table_order(struct kvm *kvm)
 	return get_order((__avic_get_max_physical_id(kvm, NULL) + 1) * sizeof(u64));
 }
 
-int avic_alloc_physical_id_table(struct kvm *kvm)
+static int avic_alloc_physical_id_table(struct kvm *kvm)
 {
 	struct kvm_svm *kvm_svm = to_kvm_svm(kvm);
-
-	if (!irqchip_in_kernel(kvm) || !enable_apicv)
-		return 0;
 
 	if (kvm_svm->avic_physical_id_table)
 		return 0;
@@ -300,39 +300,32 @@ int avic_alloc_physical_id_table(struct kvm *kvm)
 	return 0;
 }
 
-void avic_vm_destroy(struct kvm *kvm)
+static int avic_alloc_logical_id_table(struct kvm *kvm)
 {
-	unsigned long flags;
 	struct kvm_svm *kvm_svm = to_kvm_svm(kvm);
 
-	if (!enable_apicv)
-		return;
-
-	free_page((unsigned long)kvm_svm->avic_logical_id_table);
-	free_pages((unsigned long)kvm_svm->avic_physical_id_table,
-		   avic_get_physical_id_table_order(kvm));
-
-	spin_lock_irqsave(&svm_vm_data_hash_lock, flags);
-	hash_del(&kvm_svm->hnode);
-	spin_unlock_irqrestore(&svm_vm_data_hash_lock, flags);
-}
-
-int avic_vm_init(struct kvm *kvm)
-{
-	unsigned long flags;
-	int err = -ENOMEM;
-	struct kvm_svm *kvm_svm = to_kvm_svm(kvm);
-	struct kvm_svm *k2;
-	u32 vm_id;
-
-	if (!enable_apicv)
+	if (kvm_svm->avic_logical_id_table)
 		return 0;
 
 	kvm_svm->avic_logical_id_table = (void *)get_zeroed_page(GFP_KERNEL_ACCOUNT);
 	if (!kvm_svm->avic_logical_id_table)
-		goto free_avic;
+		return -ENOMEM;
 
-	spin_lock_irqsave(&svm_vm_data_hash_lock, flags);
+	return 0;
+}
+
+static void avic_add_vm_to_ga_log_list(struct kvm *kvm)
+{
+	struct kvm_svm *kvm_svm = to_kvm_svm(kvm);
+	struct kvm_svm *k2;
+	u32 vm_id;
+
+	lockdep_assert_held(&kvm->lock);
+
+	if (kvm_svm->avic_vm_id)
+		return;
+
+	guard(spinlock_irqsave)(&svm_vm_data_hash_lock);
  again:
 	vm_id = next_vm_id = (next_vm_id + 1) & AVIC_VM_ID_MASK;
 	if (vm_id == 0) { /* id is 1-based, zero is not okay */
@@ -348,13 +341,53 @@ int avic_vm_init(struct kvm *kvm)
 	}
 	kvm_svm->avic_vm_id = vm_id;
 	hash_add(svm_vm_data_hash, &kvm_svm->hnode, kvm_svm->avic_vm_id);
-	spin_unlock_irqrestore(&svm_vm_data_hash_lock, flags);
+}
 
+int avic_vcpu_precreate(struct kvm *kvm)
+{
+	int r;
+
+	if (!irqchip_in_kernel(kvm) || WARN_ON_ONCE(!enable_apicv))
+		return 0;
+
+	/*
+	 * Don't unwind on failure, all actions must be idempotent with respect
+	 * to creating multiple vCPUs, i.e. must persist until the VM is destroyed.
+	 */
+	r = avic_alloc_physical_id_table(kvm);
+	if (r)
+		return r;
+
+	r = avic_alloc_logical_id_table(kvm);
+	if (r)
+		return r;
+
+	avic_add_vm_to_ga_log_list(kvm);
 	return 0;
+}
 
-free_avic:
-	avic_vm_destroy(kvm);
-	return err;
+void avic_vm_pre_destroy(struct kvm *kvm)
+{
+	struct kvm_svm *kvm_svm = to_kvm_svm(kvm);
+
+	if (WARN_ON_ONCE(!enable_apicv) || !kvm_svm->avic_vm_id)
+		return;
+
+	guard(spinlock_irqsave)(&svm_vm_data_hash_lock);
+
+	hash_del(&kvm_svm->hnode);
+}
+
+void avic_vm_destroy(struct kvm *kvm)
+{
+	struct kvm_svm *kvm_svm = to_kvm_svm(kvm);
+
+	if (!enable_apicv)
+		return;
+
+	free_page((unsigned long)kvm_svm->avic_logical_id_table);
+	free_pages((unsigned long)kvm_svm->avic_physical_id_table,
+		   avic_get_physical_id_table_order(kvm));
 }
 
 static phys_addr_t avic_get_backing_page_address(struct vcpu_svm *svm)
@@ -449,8 +482,8 @@ void avic_ring_doorbell(struct kvm_vcpu *vcpu)
 	int cpu = READ_ONCE(vcpu->cpu);
 
 	if (cpu != get_cpu()) {
-		wrmsrq(MSR_AMD64_SVM_AVIC_DOORBELL, kvm_cpu_get_apicid(cpu));
-		trace_kvm_avic_doorbell(vcpu->vcpu_id, kvm_cpu_get_apicid(cpu));
+		wrmsrq(MSR_AMD64_SVM_AVIC_DOORBELL, cpu_physical_id(cpu));
+		trace_kvm_avic_doorbell(vcpu->vcpu_id, cpu_physical_id(cpu));
 	}
 	put_cpu();
 }
@@ -1002,7 +1035,7 @@ static void __avic_vcpu_load(struct kvm_vcpu *vcpu, int cpu,
 			     enum avic_vcpu_action action)
 {
 	struct kvm_svm *kvm_svm = to_kvm_svm(vcpu->kvm);
-	int h_physical_id = kvm_cpu_get_apicid(cpu);
+	int h_physical_id = cpu_physical_id(cpu);
 	struct vcpu_svm *svm = to_svm(vcpu);
 	unsigned long flags;
 	u64 entry;
@@ -1289,12 +1322,14 @@ bool __init avic_hardware_setup(void)
 	}
 
 	/*
-	 * Disable IPI virtualization for AMD Family 17h CPUs (Zen1 and Zen2)
-	 * due to erratum 1235, which results in missed VM-Exits on the sender
-	 * and thus missed wake events for blocking vCPUs due to the CPU
-	 * failing to see a software update to clear IsRunning.
+	 * Disable IPI virtualization for AMD Family 17h (Zen1 and Zen2) and
+	 * Hygon Family 18h (derived from AMD Zen1) CPUs due to erratum 1235,
+	 * which results in missed VM-Exits on the sender and thus missed wake
+	 * events for blocking vCPUs due to the CPU failing to see a software
+	 * update to clear IsRunning.
 	 */
-	enable_ipiv = enable_ipiv && boot_cpu_data.x86 != 0x17;
+	if (boot_cpu_data.x86 == 0x17 || boot_cpu_data.x86 == 0x18)
+		enable_ipiv = false;
 
 	amd_iommu_register_ga_log_notifier(&avic_ga_log_notifier);
 

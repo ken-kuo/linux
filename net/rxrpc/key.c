@@ -10,7 +10,6 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#include <crypto/skcipher.h>
 #include <linux/module.h>
 #include <linux/net.h>
 #include <linux/overflow.h>
@@ -211,7 +210,7 @@ static int rxrpc_preparse_xdr_yfs_rxgk(struct key_preparsed_payload *prep,
 	if (!token)
 		goto nomem;
 
-	token->rxgk = kzalloc(struct_size_t(struct rxgk_key, _key, raw_keylen), GFP_KERNEL);
+	token->rxgk = kzalloc_flex(struct rxgk_key, _key, raw_keylen);
 	if (!token->rxgk)
 		goto nomem_token;
 
@@ -500,6 +499,10 @@ static int rxrpc_preparse(struct key_preparsed_payload *prep)
 
 	ret = -EPROTONOSUPPORT;
 	if (v1->security_index != RXRPC_SECURITY_RXKAD)
+		goto error;
+
+	ret = -EKEYREJECTED;
+	if (v1->ticket_length > AFSTOKEN_RK_TIX_MAX)
 		goto error;
 
 	plen = sizeof(*token->kad) + v1->ticket_length;

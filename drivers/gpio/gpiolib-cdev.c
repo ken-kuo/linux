@@ -1184,6 +1184,7 @@ static int gpio_v2_line_flags_validate(u64 flags)
 static int gpio_v2_line_config_validate(struct gpio_v2_line_config *lc,
 					unsigned int num_lines)
 {
+	size_t unused_attrs;
 	unsigned int i;
 	u64 flags;
 	int ret;
@@ -1191,8 +1192,20 @@ static int gpio_v2_line_config_validate(struct gpio_v2_line_config *lc,
 	if (lc->num_attrs > GPIO_V2_LINE_NUM_ATTRS_MAX)
 		return -EINVAL;
 
+	unused_attrs = GPIO_V2_LINE_NUM_ATTRS_MAX - lc->num_attrs;
+
 	if (!mem_is_zero(lc->padding, sizeof(lc->padding)))
 		return -EINVAL;
+
+	for (i = 0; i < lc->num_attrs; i++) {
+		if (lc->attrs[i].attr.padding != 0)
+			return -EINVAL;
+	}
+
+	if (unused_attrs) {
+		if (!mem_is_zero(&lc->attrs[lc->num_attrs], unused_attrs * sizeof(*lc->attrs)))
+			return -EINVAL;
+	}
 
 	for (i = 0; i < num_lines; i++) {
 		flags = gpio_v2_line_config_flags(lc, i);
@@ -2640,7 +2653,7 @@ static int gpio_chrdev_open(struct inode *inode, struct file *file)
 	struct gpio_chardev_data *cdev;
 	int ret = -ENOMEM;
 
-	cdev = kzalloc(sizeof(*cdev), GFP_KERNEL);
+	cdev = kzalloc_obj(*cdev);
 	if (!cdev)
 		return -ENOMEM;
 
@@ -2669,15 +2682,8 @@ static int gpio_chrdev_open(struct inode *inode, struct file *file)
 	file->private_data = cdev;
 	cdev->fp = file;
 
-	ret = nonseekable_open(inode, file);
-	if (ret)
-		goto out_unregister_device_notifier;
+	return nonseekable_open(inode, file);
 
-	return ret;
-
-out_unregister_device_notifier:
-	blocking_notifier_chain_unregister(&gdev->device_notifier,
-					   &cdev->device_unregistered_nb);
 out_unregister_line_notifier:
 	scoped_guard(write_lock_irqsave, &gdev->line_state_lock)
 		raw_notifier_chain_unregister(&gdev->line_state_notifier,

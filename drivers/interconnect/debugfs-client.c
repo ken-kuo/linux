@@ -142,6 +142,8 @@ int icc_debugfs_client_init(struct dentry *icc_dir)
 	int ret;
 
 	pdev = platform_device_alloc("icc-debugfs-client", PLATFORM_DEVID_NONE);
+	if (!pdev)
+		return -ENOMEM;
 
 	ret = platform_device_add(pdev);
 	if (ret) {
@@ -150,10 +152,13 @@ int icc_debugfs_client_init(struct dentry *icc_dir)
 		return ret;
 	}
 
-	src_node = devm_kstrdup(&pdev->dev, "", GFP_KERNEL);
-	dst_node = devm_kstrdup(&pdev->dev, "", GFP_KERNEL);
-	if (!src_node || !dst_node)
+	src_node = kstrdup("", GFP_KERNEL);
+	dst_node = kstrdup("", GFP_KERNEL);
+	if (!src_node || !dst_node) {
+		kfree(dst_node);
+		kfree(src_node);
 		return -ENOMEM;
+	}
 
 	client_dir = debugfs_create_dir("test_client", icc_dir);
 

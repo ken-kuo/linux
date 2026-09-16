@@ -203,12 +203,32 @@ For RFC postings specifically, if nobody responded in a week - reviewers
 either missed the posting or have no strong opinions. If the code is ready,
 repost as a PATCH.
 
+There are 2 services actively providing LLM-generated review on posted patches:
+
+- https://sashiko.dev/
+- https://netdev-ai.bots.linux.dev/sashiko/
+
+both use the Sashiko infrastructure on top of different models. Reviews are
+available after 24h. Patch authors are expected to proactively look into the
+AI-generated reviews and handle such feedback as any other kind of review:
+either debate it or address it. In both cases a reply on the mailing list is
+expected.
+
+Authors are strongly encouraged to run LLM reviews on the posted patches in
+advance of the actual post. Large series triggering a significant amount of
+AI-generated feedback will likely get little attention from maintainers and
+reviewers.
+
 Emails saying just "ping" or "bump" are considered rude. If you can't figure
 out the status of the patch from patchwork or where the discussion has
 landed - describe your best guess and ask if it's correct. For example::
 
   I don't understand what the next steps are. Person X seems to be unhappy
   with A, should I do B and repost the patches?
+
+Don't reach out to maintainers or reviewers via private email and/or other
+communications channels: all the discussion must remain public, and
+requesting special attention is unfair towards the community, at best.
 
 .. _Changes requested:
 
@@ -528,7 +548,7 @@ The exact rules a driver must follow to acquire the ``Supported`` status:
    status will be withdrawn.
 
 5. Test failures due to bugs either in the driver or the test itself,
-   or lack of support for the feature the test is targgeting are
+   or lack of support for the feature the test is targeting are
    *not* a basis for losing the ``Supported`` status.
 
 netdev CI will maintain an official page of supported devices, listing their

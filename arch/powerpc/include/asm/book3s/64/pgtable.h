@@ -490,13 +490,13 @@ static inline pte_t pte_clear_soft_dirty(pte_t pte)
 }
 #endif /* CONFIG_HAVE_ARCH_SOFT_DIRTY */
 
-#ifdef CONFIG_NUMA_BALANCING
+#ifdef CONFIG_ARCH_HAS_PTE_PROTNONE
 static inline int pte_protnone(pte_t pte)
 {
 	return (pte_raw(pte) & cpu_to_be64(_PAGE_PRESENT | _PAGE_PTE | _PAGE_RWX)) ==
 		cpu_to_be64(_PAGE_PRESENT | _PAGE_PTE);
 }
-#endif /* CONFIG_NUMA_BALANCING */
+#endif /* CONFIG_ARCH_HAS_PTE_PROTNONE */
 
 static inline bool pte_hw_valid(pte_t pte)
 {
@@ -549,7 +549,7 @@ static inline bool pte_access_permitted(pte_t pte, bool write)
 	return arch_pte_access_permitted(pte_val(pte), write, 0);
 }
 
-static inline bool pte_user_accessible_page(pte_t pte, unsigned long addr)
+static inline bool pte_user_accessible_page(struct mm_struct *mm, unsigned long addr, pte_t pte)
 {
 	return pte_present(pte) && pte_user(pte);
 }
@@ -925,9 +925,9 @@ static inline bool pud_access_permitted(pud_t pud, bool write)
 }
 
 #define pud_user_accessible_page pud_user_accessible_page
-static inline bool pud_user_accessible_page(pud_t pud, unsigned long addr)
+static inline bool pud_user_accessible_page(struct mm_struct *mm, unsigned long addr, pud_t pud)
 {
-	return pud_leaf(pud) && pte_user_accessible_page(pud_pte(pud), addr);
+	return pud_leaf(pud) && pte_user_accessible_page(mm, addr, pud_pte(pud));
 }
 
 #define __p4d_raw(x)	((p4d_t) { __pgd_raw(x) })
@@ -1060,19 +1060,19 @@ static inline pte_t *pmdp_ptep(pmd_t *pmd)
 #define pmd_mksoft_dirty(pmd)  pte_pmd(pte_mksoft_dirty(pmd_pte(pmd)))
 #define pmd_clear_soft_dirty(pmd) pte_pmd(pte_clear_soft_dirty(pmd_pte(pmd)))
 
-#ifdef CONFIG_ARCH_ENABLE_THP_MIGRATION
+#ifdef CONFIG_ARCH_HAS_PMD_SOFTLEAVES
 #define pmd_swp_mksoft_dirty(pmd)	pte_pmd(pte_swp_mksoft_dirty(pmd_pte(pmd)))
 #define pmd_swp_soft_dirty(pmd)		pte_swp_soft_dirty(pmd_pte(pmd))
 #define pmd_swp_clear_soft_dirty(pmd)	pte_pmd(pte_swp_clear_soft_dirty(pmd_pte(pmd)))
 #endif
 #endif /* CONFIG_HAVE_ARCH_SOFT_DIRTY */
 
-#ifdef CONFIG_NUMA_BALANCING
+#ifdef CONFIG_ARCH_HAS_PTE_PROTNONE
 static inline int pmd_protnone(pmd_t pmd)
 {
 	return pte_protnone(pmd_pte(pmd));
 }
-#endif /* CONFIG_NUMA_BALANCING */
+#endif /* CONFIG_ARCH_HAS_PTE_PROTNONE */
 
 #define pmd_write(pmd)		pte_write(pmd_pte(pmd))
 
@@ -1096,9 +1096,9 @@ static inline bool pmd_access_permitted(pmd_t pmd, bool write)
 }
 
 #define pmd_user_accessible_page pmd_user_accessible_page
-static inline bool pmd_user_accessible_page(pmd_t pmd, unsigned long addr)
+static inline bool pmd_user_accessible_page(struct mm_struct *mm, unsigned long addr, pmd_t pmd)
 {
-	return pmd_leaf(pmd) && pte_user_accessible_page(pmd_pte(pmd), addr);
+	return pmd_leaf(pmd) && pte_user_accessible_page(mm, addr, pmd_pte(pmd));
 }
 
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE

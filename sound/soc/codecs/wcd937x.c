@@ -2,6 +2,7 @@
 // Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
 
 #include <linux/component.h>
+#include <linux/cleanup.h>
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/gpio/consumer.h>
@@ -547,6 +548,9 @@ static int wcd937x_codec_aux_dac_event(struct snd_soc_dapm_widget *w,
 					      WCD937X_DIGITAL_CDC_ANA_CLK_CTL,
 					      BIT(2), BIT(2));
 		snd_soc_component_update_bits(component,
+					      WCD937X_AUX_AUXPA,
+					      BIT(4), BIT(4));
+		snd_soc_component_update_bits(component,
 					      WCD937X_DIGITAL_CDC_DIG_CLK_CTL,
 					      BIT(2), BIT(2));
 		snd_soc_component_update_bits(component,
@@ -562,6 +566,9 @@ static int wcd937x_codec_aux_dac_event(struct snd_soc_dapm_widget *w,
 		snd_soc_component_update_bits(component,
 					      WCD937X_DIGITAL_CDC_ANA_CLK_CTL,
 					      BIT(2), 0x00);
+		snd_soc_component_update_bits(component,
+					      WCD937X_AUX_AUXPA,
+					      BIT(4), 0x00);
 		break;
 	}
 
@@ -730,10 +737,23 @@ static int wcd937x_codec_enable_aux_pa(struct snd_soc_dapm_widget *w,
 			snd_soc_component_update_bits(component,
 						      WCD937X_ANA_RX_SUPPLIES,
 						      BIT(1), BIT(1));
+		/* Enable AUX PA related RX supplies */
+		snd_soc_component_update_bits(component,
+					      WCD937X_ANA_RX_SUPPLIES,
+					      BIT(6), BIT(6));
+		snd_soc_component_update_bits(component,
+					      WCD937X_ANA_RX_SUPPLIES,
+					      BIT(7), BIT(7));
 		enable_irq(wcd937x->aux_pdm_wd_int);
 		break;
 	case SND_SOC_DAPM_PRE_PMD:
 		disable_irq_nosync(wcd937x->aux_pdm_wd_int);
+		snd_soc_component_update_bits(component,
+					      WCD937X_ANA_RX_SUPPLIES,
+					      BIT(6), 0x00);
+		snd_soc_component_update_bits(component,
+					      WCD937X_ANA_RX_SUPPLIES,
+					      BIT(7), 0x00);
 		break;
 	case SND_SOC_DAPM_POST_PMD:
 		usleep_range(2000, 2010);
@@ -1037,7 +1057,7 @@ static int wcd937x_micbias_control(struct snd_soc_component *component,
 		return -EINVAL;
 	}
 
-	mutex_lock(&wcd937x->micb_lock);
+	guard(mutex)(&wcd937x->micb_lock);
 	switch (req) {
 	case MICB_PULLUP_ENABLE:
 		wcd937x->pullup_ref[micb_index]++;
@@ -1117,7 +1137,6 @@ static int wcd937x_micbias_control(struct snd_soc_component *component,
 		}
 		break;
 	}
-	mutex_unlock(&wcd937x->micb_lock);
 
 	return 0;
 }
@@ -1441,7 +1460,7 @@ static int wcd937x_mbhc_micb_adjust_voltage(struct snd_soc_component *component,
 					    int req_volt, int micb_num)
 {
 	struct wcd937x_priv *wcd937x = snd_soc_component_get_drvdata(component);
-	int cur_vout_ctl, req_vout_ctl, micb_reg, micb_en, ret = 0;
+	int cur_vout_ctl, req_vout_ctl, micb_reg, micb_en;
 
 	switch (micb_num) {
 	case MIC_BIAS_1:
@@ -1456,7 +1475,7 @@ static int wcd937x_mbhc_micb_adjust_voltage(struct snd_soc_component *component,
 	default:
 		return -EINVAL;
 	}
-	mutex_lock(&wcd937x->micb_lock);
+	guard(mutex)(&wcd937x->micb_lock);
 	/*
 	 * If requested micbias voltage is same as current micbias
 	 * voltage, then just return. Otherwise, adjust voltage as
@@ -1471,15 +1490,11 @@ static int wcd937x_mbhc_micb_adjust_voltage(struct snd_soc_component *component,
 						    WCD937X_MICB_VOUT_MASK);
 
 	req_vout_ctl = wcd_get_micb_vout_ctl_val(component->dev, req_volt);
-	if (req_vout_ctl < 0) {
-		ret = -EINVAL;
-		goto exit;
-	}
+	if (req_vout_ctl < 0)
+		return -EINVAL;
 
-	if (cur_vout_ctl == req_vout_ctl) {
-		ret = 0;
-		goto exit;
-	}
+	if (cur_vout_ctl == req_vout_ctl)
+		return 0;
 
 	if (micb_en == WCD937X_MICB_ENABLE)
 		snd_soc_component_write_field(component, micb_reg,
@@ -1500,9 +1515,8 @@ static int wcd937x_mbhc_micb_adjust_voltage(struct snd_soc_component *component,
 		 */
 		usleep_range(2000, 2100);
 	}
-exit:
-	mutex_unlock(&wcd937x->micb_lock);
-	return ret;
+
+	return 0;
 }
 
 static int wcd937x_mbhc_micb_ctrl_threshold_mic(struct snd_soc_component *component,
@@ -2051,7 +2065,12 @@ static const struct snd_kcontrol_new wcd937x_snd_controls[] = {
 		       wcd937x_get_swr_port, wcd937x_set_swr_port),
 	SOC_SINGLE_EXT("LO Switch", WCD937X_LO, 0, 1, 0,
 		       wcd937x_get_swr_port, wcd937x_set_swr_port),
-
+	SOC_SINGLE_EXT("CLSH PA Switch", WCD937X_CLSH, 0, 1, 0,
+		       wcd937x_get_swr_port, wcd937x_set_swr_port),
+	SOC_SINGLE_EXT("DSD_L Switch", WCD937X_DSD_L, 0, 1, 0,
+		       wcd937x_get_swr_port, wcd937x_set_swr_port),
+	SOC_SINGLE_EXT("DSD_R Switch", WCD937X_DSD_R, 0, 1, 0,
+		       wcd937x_get_swr_port, wcd937x_set_swr_port),
 	SOC_SINGLE_EXT("ADC1 Switch", WCD937X_ADC1, 1, 1, 0,
 		       wcd937x_get_swr_port, wcd937x_set_swr_port),
 	SOC_SINGLE_EXT("ADC2 Switch", WCD937X_ADC2, 1, 1, 0,
@@ -2475,18 +2494,13 @@ static int wcd937x_soc_codec_probe(struct snd_soc_component *component)
 {
 	struct snd_soc_dapm_context *dapm = snd_soc_component_to_dapm(component);
 	struct wcd937x_priv *wcd937x = snd_soc_component_get_drvdata(component);
-	struct sdw_slave *tx_sdw_dev = wcd937x->tx_sdw_dev;
 	struct device *dev = component->dev;
-	unsigned long time_left;
 	int i, ret;
 	u32 chipid;
 
-	time_left = wait_for_completion_timeout(&tx_sdw_dev->initialization_complete,
-						msecs_to_jiffies(5000));
-	if (!time_left) {
-		dev_err(dev, "soundwire device init timeout\n");
-		return -ETIMEDOUT;
-	}
+	ret = sdw_slave_wait_for_init(wcd937x->tx_sdw_dev, 5000);
+	if (ret)
+		return ret;
 
 	snd_soc_component_init_regmap(component, wcd937x->regmap);
 	ret = pm_runtime_resume_and_get(dev);

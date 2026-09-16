@@ -7,7 +7,6 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/irqflags.h>
-#include <linux/randomize_kstack.h>
 #include <linux/sched.h>
 #include <linux/sched/debug.h>
 #include <linux/sched/signal.h>
@@ -142,11 +141,7 @@ static void do_trap_error(struct pt_regs *regs, int signo, int code,
 	}
 }
 
-#if defined(CONFIG_XIP_KERNEL) && defined(CONFIG_RISCV_ALTERNATIVE)
-#define __trap_section __noinstr_section(".xip.traps")
-#else
 #define __trap_section noinstr
-#endif
 #define DO_ERROR_INFO(name, signo, code, str)					\
 asmlinkage __visible __trap_section void name(struct pt_regs *regs)		\
 {										\
@@ -165,6 +160,8 @@ asmlinkage __visible __trap_section void name(struct pt_regs *regs)		\
 
 DO_ERROR_INFO(do_trap_unknown,
 	SIGILL, ILL_ILLTRP, "unknown exception");
+DO_ERROR_INFO(do_trap_hardware_error,
+	SIGBUS, BUS_MCEERR_AR, "hardware error");
 DO_ERROR_INFO(do_trap_insn_misaligned,
 	SIGBUS, BUS_ADRALN, "instruction address misaligned");
 DO_ERROR_INFO(do_trap_insn_fault,
@@ -272,6 +269,7 @@ static bool probe_single_step_handler(struct pt_regs *regs)
 
 	return user ? uprobe_single_step_handler(regs) : kprobe_single_step_handler(regs);
 }
+NOKPROBE_SYMBOL(probe_single_step_handler);
 
 static bool probe_breakpoint_handler(struct pt_regs *regs)
 {
@@ -279,6 +277,7 @@ static bool probe_breakpoint_handler(struct pt_regs *regs)
 
 	return user ? uprobe_breakpoint_handler(regs) : kprobe_breakpoint_handler(regs);
 }
+NOKPROBE_SYMBOL(probe_breakpoint_handler);
 
 void handle_break(struct pt_regs *regs)
 {
@@ -303,6 +302,7 @@ void handle_break(struct pt_regs *regs)
 	else
 		die(regs, "Kernel BUG");
 }
+NOKPROBE_SYMBOL(handle_break);
 
 asmlinkage __visible __trap_section void do_trap_break(struct pt_regs *regs)
 {
@@ -335,15 +335,12 @@ void do_trap_ecall_u(struct pt_regs *regs)
 
 		riscv_v_vstate_discard(regs);
 
-		syscall = syscall_enter_from_user_mode(regs, syscall);
-
-		add_random_kstack_offset();
-
-		if (syscall >= 0 && syscall < NR_syscalls) {
-			syscall = array_index_nospec(syscall, NR_syscalls);
-			syscall_handler(regs, syscall);
+		if (likely(syscall_enter_from_user_mode_randomize_stack(regs, &syscall))) {
+			if (syscall >= 0 && syscall < NR_syscalls) {
+				syscall = array_index_nospec(syscall, NR_syscalls);
+				syscall_handler(regs, syscall);
+			}
 		}
-
 		syscall_exit_to_user_mode(regs);
 	} else {
 		irqentry_state_t state = irqentry_nmi_enter(regs);

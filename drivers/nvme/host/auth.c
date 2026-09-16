@@ -8,6 +8,7 @@
 #include <linux/prandom.h>
 #include <linux/unaligned.h>
 #include <crypto/dh.h>
+#include <crypto/utils.h>
 #include "nvme.h"
 #include "fabrics.h"
 #include <linux/nvme-auth.h>
@@ -361,7 +362,7 @@ static int nvme_auth_process_dhchap_success1(struct nvme_ctrl *ctrl,
 		return 0;
 
 	/* Validate controller response */
-	if (memcmp(chap->response, data->rval, data->hl)) {
+	if (crypto_memneq(chap->response, data->rval, data->hl)) {
 		dev_dbg(ctrl->device, "%s: qid %d ctrl response %*ph\n",
 			__func__, chap->qid, (int)chap->hash_len, data->rval);
 		dev_dbg(ctrl->device, "%s: qid %d host response %*ph\n",
@@ -535,11 +536,12 @@ static int nvme_auth_dhchap_setup_ctrl_response(struct nvme_ctrl *ctrl,
 	put_unaligned_le16(chap->transaction, buf);
 	nvme_auth_hmac_update(&hmac, buf, 2);
 
-	memset(buf, 0, 4);
+	*buf = chap->sc_c;
 	nvme_auth_hmac_update(&hmac, buf, 1);
 	nvme_auth_hmac_update(&hmac, "Controller", 10);
 	nvme_auth_hmac_update(&hmac, ctrl->opts->subsysnqn,
 			      strlen(ctrl->opts->subsysnqn));
+	memset(buf, 0, 4);
 	nvme_auth_hmac_update(&hmac, buf, 1);
 	nvme_auth_hmac_update(&hmac, ctrl->opts->host->nqn,
 			      strlen(ctrl->opts->host->nqn));
@@ -587,7 +589,7 @@ static int nvme_auth_dhchap_exponential(struct nvme_ctrl *ctrl,
 	}
 
 gen_sesskey:
-	chap->sess_key_len = chap->host_key_len;
+	chap->sess_key_len = chap->hash_len;
 	chap->sess_key = kmalloc(chap->sess_key_len, GFP_KERNEL);
 	if (!chap->sess_key) {
 		chap->sess_key_len = 0;
@@ -595,16 +597,17 @@ gen_sesskey:
 		return -ENOMEM;
 	}
 
-	ret = nvme_auth_gen_shared_secret(chap->dh_tfm,
-					  chap->ctrl_key, chap->ctrl_key_len,
-					  chap->sess_key, chap->sess_key_len);
+	ret = nvme_auth_gen_session_key(chap->dh_tfm,
+					chap->ctrl_key, chap->ctrl_key_len,
+					chap->sess_key, chap->sess_key_len,
+					chap->hash_id);
 	if (ret) {
 		dev_dbg(ctrl->device,
-			"failed to generate shared secret, error %d\n", ret);
+			"failed to generate session key, error %d\n", ret);
 		chap->status = NVME_AUTH_DHCHAP_FAILURE_INCORRECT_PAYLOAD;
 		return ret;
 	}
-	dev_dbg(ctrl->device, "shared secret %*ph\n",
+	dev_dbg(ctrl->device, "session key %*ph\n",
 		(int)chap->sess_key_len, chap->sess_key);
 	return 0;
 }

@@ -1058,40 +1058,6 @@ int pmac_i2c_match_adapter(struct device_node *dev, struct i2c_adapter *adapter)
 }
 EXPORT_SYMBOL_GPL(pmac_i2c_match_adapter);
 
-int pmac_low_i2c_lock(struct device_node *np)
-{
-	struct pmac_i2c_bus *bus, *found = NULL;
-
-	list_for_each_entry(bus, &pmac_i2c_busses, link) {
-		if (np == bus->controller) {
-			found = bus;
-			break;
-		}
-	}
-	if (!found)
-		return -ENODEV;
-	return pmac_i2c_open(bus, 0);
-}
-EXPORT_SYMBOL_GPL(pmac_low_i2c_lock);
-
-int pmac_low_i2c_unlock(struct device_node *np)
-{
-	struct pmac_i2c_bus *bus, *found = NULL;
-
-	list_for_each_entry(bus, &pmac_i2c_busses, link) {
-		if (np == bus->controller) {
-			found = bus;
-			break;
-		}
-	}
-	if (!found)
-		return -ENODEV;
-	pmac_i2c_close(bus);
-	return 0;
-}
-EXPORT_SYMBOL_GPL(pmac_low_i2c_unlock);
-
-
 int pmac_i2c_open(struct pmac_i2c_bus *bus, int polled)
 {
 	int rc;
@@ -1505,7 +1471,7 @@ static int __init pmac_i2c_create_platform_devices(void)
 		if (bus->platform_dev == NULL)
 			return -ENOMEM;
 		bus->platform_dev->dev.platform_data = bus;
-		bus->platform_dev->dev.of_node = bus->busnode;
+		platform_device_set_of_node(bus->platform_dev, bus->busnode);
 		platform_device_add(bus->platform_dev);
 	}
 

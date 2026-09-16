@@ -287,6 +287,12 @@
 /* PHY Control 2 / PHY Control (if no PHY Control 1) */
 #define MII_KSZPHY_CTRL_2			0x1f
 #define MII_KSZPHY_CTRL				MII_KSZPHY_CTRL_2
+
+/* Vendor-specific Clause 22 register, virtualized by KSZ87xx embedded PHYs DSA driver */
+#define MII_KSZ87XX_SHORT_CABLE			0x1a
+#define MII_KSZ87XX_LPF_BW				0x1b
+#define MII_KSZ87XX_EQ_INIT				0x1c
+
 /* bitmap of PHY register to set interrupt mode */
 #define KSZ8081_CTRL2_HP_MDIX			BIT(15)
 #define KSZ8081_CTRL2_MDI_MDI_X_SELECT		BIT(14)
@@ -940,6 +946,59 @@ static int ksz8795_match_phy_device(struct phy_device *phydev,
 	return ksz8051_ksz8795_match_phy_device(phydev, false);
 }
 
+static int ksz8795_get_tunable(struct phy_device *phydev,
+			       struct ethtool_tunable *tuna, void *data)
+{
+	int ret;
+
+	switch (tuna->id) {
+	case ETHTOOL_PHY_SHORT_CABLE_PRESET:
+		ret = phy_read(phydev, MII_KSZ87XX_SHORT_CABLE);
+		if (ret < 0)
+			return ret;
+		*(u8 *)data = ret;
+		return 0;
+	case ETHTOOL_PHY_LPF_BW:
+		ret = phy_read(phydev, MII_KSZ87XX_LPF_BW);
+		if (ret < 0)
+			return ret;
+		*(u32 *)data = ret & 0xff;
+		return 0;
+	case ETHTOOL_PHY_DSP_EQ_INIT_VALUE:
+		ret = phy_read(phydev, MII_KSZ87XX_EQ_INIT);
+		if (ret < 0)
+			return ret;
+		*(u32 *)data = ret & 0xff;
+		return 0;
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
+static int ksz8795_set_tunable(struct phy_device *phydev,
+			       struct ethtool_tunable *tuna, const void *data)
+{
+	u32 val;
+
+	switch (tuna->id) {
+	case ETHTOOL_PHY_SHORT_CABLE_PRESET:
+		return phy_write(phydev, MII_KSZ87XX_SHORT_CABLE,
+				 *(const u8 *)data);
+	case ETHTOOL_PHY_LPF_BW:
+		val = *(const u32 *)data;
+		if (val > 0xff)
+			return -EINVAL;
+		return phy_write(phydev, MII_KSZ87XX_LPF_BW, (u8)val);
+	case ETHTOOL_PHY_DSP_EQ_INIT_VALUE:
+		val = *(const u32 *)data;
+		if (val > 0xff)
+			return -EINVAL;
+		return phy_write(phydev, MII_KSZ87XX_EQ_INIT, (u8)val);
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
 static int ksz9021_load_values_from_of(struct phy_device *phydev,
 				       const struct device_node *of_node,
 				       u16 reg,
@@ -1100,6 +1159,65 @@ static int ksz9031_set_loopback(struct phy_device *phydev, bool enable,
 
 	return phy_read_poll_timeout(phydev, MII_BMSR, val, val & BMSR_LSTATUS,
 				     5000, 500000, true);
+}
+
+/* KSZ9131-specific sequence to enable loopback, registers are undocumented
+ * in the datasheet but mentionned in the local loopback mode configuration
+ * steps.
+ *
+ * Without taking these steps, the PHY appears to disable its RXC while in
+ * loopback mode, which may be needed by some MACs such as stmmac.
+ */
+static int ksz9131_loopback_enable(struct phy_device *phydev)
+{
+	int ret;
+
+	ret = phy_write_mmd(phydev, 0x1c, 0x15, 0xeeee);
+	if (ret)
+		return ret;
+
+	ret = phy_write_mmd(phydev, 0x1c, 0x16, 0xeeee);
+	if (ret)
+		return ret;
+
+	ret = phy_write_mmd(phydev, 0x1c, 0x18, 0xeeee);
+	if (ret)
+		return ret;
+
+	return phy_write_mmd(phydev, 0x1c, 0x1b, 0xeeee);
+}
+
+/* KSZ9131 datasheet doesn't state how to deal with the MMD 0x1c registers
+ * when disabling loopback.
+ *
+ * Set them back to their measured initial state when disabling loopback, and
+ * ignore errors while doing so.
+ */
+static void ksz9131_loopback_disable(struct phy_device *phydev)
+{
+	phy_write_mmd(phydev, 0x1c, 0x15, 0x6eff);
+	phy_write_mmd(phydev, 0x1c, 0x16, 0xe6ff);
+	phy_write_mmd(phydev, 0x1c, 0x18, 0x43ff);
+	phy_write_mmd(phydev, 0x1c, 0x1b, 0x07ff);
+}
+
+static int ksz9131_set_loopback(struct phy_device *phydev, bool enable,
+				int speed)
+{
+	int ret;
+
+	if (enable) {
+		ret = ksz9131_loopback_enable(phydev);
+		if (ret)
+			return ret;
+	}
+
+	ret = ksz9031_set_loopback(phydev, enable, speed);
+
+	if (ret || !enable)
+		ksz9131_loopback_disable(phydev);
+
+	return ret;
 }
 
 static int ksz9031_of_load_skew_values(struct phy_device *phydev,
@@ -4548,6 +4666,13 @@ static int lan8814_config_init(struct phy_device *phydev)
 	struct kszphy_priv *lan8814 = phydev->priv;
 	int ret;
 
+	if (phy_package_init_once(phydev))
+		/* Reset the PHY */
+		lanphy_modify_page_reg(phydev, LAN8814_PAGE_COMMON_REGS,
+				       LAN8814_QSGMII_SOFT_RESET,
+				       LAN8814_QSGMII_SOFT_RESET_BIT,
+				       LAN8814_QSGMII_SOFT_RESET_BIT);
+
 	/* Based on the interface type select how the advertise ability is
 	 * encoded, to set as SGMII or as USGMII.
 	 */
@@ -4655,13 +4780,7 @@ static int lan8814_probe(struct phy_device *phydev)
 	priv->is_ptp_available = err == LAN8814_REV_LAN8814 ||
 				 err == LAN8814_REV_LAN8818;
 
-	if (phy_package_init_once(phydev)) {
-		/* Reset the PHY */
-		lanphy_modify_page_reg(phydev, LAN8814_PAGE_COMMON_REGS,
-				       LAN8814_QSGMII_SOFT_RESET,
-				       LAN8814_QSGMII_SOFT_RESET_BIT,
-				       LAN8814_QSGMII_SOFT_RESET_BIT);
-
+	if (phy_package_probe_once(phydev)) {
 		err = lan8814_release_coma_mode(phydev);
 		if (err)
 			return err;
@@ -6933,6 +7052,7 @@ static struct phy_driver ksphy_driver[] = {
 	.cable_test_start	= ksz9x31_cable_test_start,
 	.cable_test_get_status	= ksz9x31_cable_test_get_status,
 	.get_features	= ksz9477_get_features,
+	.set_loopback	= ksz9131_set_loopback,
 }, {
 	PHY_ID_MATCH_MODEL(PHY_ID_KSZ8873MLL),
 	.name		= "Micrel KSZ8873MLL Switch",
@@ -6960,6 +7080,8 @@ static struct phy_driver ksphy_driver[] = {
 	/* PHY_BASIC_FEATURES */
 	.config_init	= kszphy_config_init,
 	.match_phy_device = ksz8795_match_phy_device,
+	.get_tunable	= ksz8795_get_tunable,
+	.set_tunable	= ksz8795_set_tunable,
 	.suspend	= genphy_suspend,
 	.resume		= genphy_resume,
 }, {

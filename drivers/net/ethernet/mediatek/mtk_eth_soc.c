@@ -26,6 +26,7 @@
 #include <linux/bitfield.h>
 #include <net/dsa.h>
 #include <net/dst_metadata.h>
+#include <net/netdev_lock.h>
 #include <net/page_pool/helpers.h>
 #include <linux/genalloc.h>
 
@@ -3467,7 +3468,7 @@ static void mtk_poll_controller(struct net_device *dev)
 
 	mtk_tx_irq_disable(eth, MTK_TX_DONE_INT);
 	mtk_rx_irq_disable(eth, eth->soc->rx.irq_done_mask);
-	mtk_handle_irq_rx(eth->irq[MTK_FE_IRQ_RX], dev);
+	mtk_handle_irq_rx(eth->irq[MTK_FE_IRQ_RX], eth);
 	mtk_tx_irq_enable(eth, MTK_TX_DONE_INT);
 	mtk_rx_irq_enable(eth, eth->soc->rx.irq_done_mask);
 }
@@ -4491,7 +4492,7 @@ static int mtk_free_dev(struct mtk_eth *eth)
 	for (i = 0; i < ARRAY_SIZE(eth->dsa_meta); i++) {
 		if (!eth->dsa_meta[i])
 			break;
-		metadata_dst_free(eth->dsa_meta[i]);
+		dst_release(&eth->dsa_meta[i]->dst);
 	}
 
 	return 0;
@@ -4827,7 +4828,7 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 	phy_interface_t phy_mode;
 	struct phylink *phylink;
 	struct mtk_mac *mac;
-	int id, err;
+	int id, err, i;
 	int txqs = 1;
 	u32 val;
 
@@ -4906,8 +4907,8 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 	mac->phylink_config.type = PHYLINK_NETDEV;
 	mac->phylink_config.mac_capabilities = MAC_ASYM_PAUSE | MAC_SYM_PAUSE |
 		MAC_10 | MAC_100 | MAC_1000 | MAC_2500FD;
-	mac->phylink_config.lpi_capabilities = MAC_100FD | MAC_1000FD |
-		MAC_2500FD;
+	/* LPI above 1 Gbps is not supported */
+	mac->phylink_config.lpi_capabilities = MAC_100FD | MAC_1000FD;
 	mac->phylink_config.lpi_timer_default = 1000;
 
 	/* MT7623 gmac0 is now missing its speed-specific PLL configuration
@@ -4960,6 +4961,23 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628))
 		mac_ops = &rt5350_phylink_ops;
 
+	if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_2P5GPHY) &&
+	    id == MTK_GMAC2_ID)
+		__set_bit(PHY_INTERFACE_MODE_INTERNAL,
+			  mac->phylink_config.supported_interfaces);
+
+	/* LPI wake-up timing is only verified on MTK_GMAC_EEE SoCs */
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_GMAC_EEE)) {
+		phy_interface_copy(mac->phylink_config.lpi_interfaces,
+				   mac->phylink_config.supported_interfaces);
+		__clear_bit(PHY_INTERFACE_MODE_2500BASEX,
+			    mac->phylink_config.lpi_interfaces);
+		for (i = 0; i < PHY_INTERFACE_MODE_MAX; i++)
+			if (mtk_interface_mode_is_xgmii(eth, i))
+				__clear_bit(i,
+					    mac->phylink_config.lpi_interfaces);
+	}
+
 	phylink = phylink_create(&mac->phylink_config,
 				 of_fwnode_handle(mac->of_node),
 				 phy_mode, mac_ops);
@@ -4969,11 +4987,6 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 	}
 
 	mac->phylink = phylink;
-
-	if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_2P5GPHY) &&
-	    id == MTK_GMAC2_ID)
-		__set_bit(PHY_INTERFACE_MODE_INTERNAL,
-			  mac->phylink_config.supported_interfaces);
 
 	SET_NETDEV_DEV(eth->netdev[id], eth->dev);
 	eth->netdev[id]->watchdog_timeo = 5 * HZ;
@@ -5030,9 +5043,13 @@ void mtk_eth_set_dma_device(struct mtk_eth *eth, struct device *dma_dev)
 			continue;
 
 		list_add_tail(&dev->close_list, &dev_list);
+		netdev_lock_ops(dev);
 	}
 
 	netif_close_many(&dev_list, false);
+
+	list_for_each_entry(dev, &dev_list, close_list)
+		netdev_unlock_ops(dev);
 
 	eth->dma_dev = dma_dev;
 

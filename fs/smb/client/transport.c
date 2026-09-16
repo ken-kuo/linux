@@ -101,12 +101,11 @@ void __release_mid(struct TCP_Server_Info *server, struct mid_q_entry *midEntry)
 		trace_smb3_slow_rsp(smb_cmd, midEntry->mid, midEntry->pid,
 			       midEntry->when_sent, midEntry->when_received);
 		if (cifsFYI & CIFS_TIMER) {
-			pr_debug("slow rsp: cmd %d mid %llu",
-				 midEntry->command, midEntry->mid);
-			cifs_info("A: 0x%lx S: 0x%lx R: 0x%lx\n",
-				  now - midEntry->when_alloc,
-				  now - midEntry->when_sent,
-				  now - midEntry->when_received);
+			pr_debug("slow rsp: cmd %d mid %llu A: 0x%lx S: 0x%lx R: 0x%lx\n",
+				 midEntry->command, midEntry->mid,
+				 now - midEntry->when_alloc,
+				 now - midEntry->when_sent,
+				 now - midEntry->when_received);
 		}
 	}
 #endif
@@ -1158,7 +1157,7 @@ int
 cifs_readv_receive(struct TCP_Server_Info *server, struct mid_q_entry *mid)
 {
 	int length, len;
-	unsigned int data_offset, data_len;
+	unsigned int data_offset, data_len, end_off;
 	struct cifs_io_subrequest *rdata = mid->callback_data;
 	char *buf = server->smallbuf;
 	unsigned int buflen = server->pdu_size;
@@ -1256,11 +1255,14 @@ cifs_readv_receive(struct TCP_Server_Info *server, struct mid_q_entry *mid)
 	use_rdma_mr = rdata->mr;
 #endif
 	data_len = server->ops->read_data_length(buf, use_rdma_mr);
-	if (!use_rdma_mr && (data_offset + data_len > buflen)) {
-		/* data_len is corrupt -- discard frame */
-		rdata->result = smb_EIO2(smb_eio_trace_read_rsp_malformed,
-					 data_offset + data_len, buflen);
-		return cifs_readv_discard(server, mid);
+	if (!use_rdma_mr) {
+		if (check_add_overflow(data_offset, data_len, &end_off) ||
+		    end_off > buflen) {
+			/* data_len is corrupt -- discard frame */
+			rdata->result = smb_EIO2(smb_eio_trace_read_rsp_malformed,
+						 end_off, buflen);
+			return cifs_readv_discard(server, mid);
+		}
 	}
 
 #ifdef CONFIG_CIFS_SMB_DIRECT

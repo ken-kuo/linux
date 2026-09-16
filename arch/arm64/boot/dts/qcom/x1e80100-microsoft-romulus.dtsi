@@ -864,7 +864,6 @@
 };
 
 &gpu_zap_shader {
-	memory-region = <&gpu_microcode_mem>;
 	firmware-name = "qcom/x1e80100/microsoft/qcdxkmsuc8380.mbn";
 };
 
@@ -1492,18 +1491,16 @@
 };
 
 &usb_1_ss0_qmpphy {
-	vdda-phy-supply = <&vreg_l2j>;
-	vdda-pll-supply = <&vreg_l1j>;
+	vdda-phy-supply = <&vreg_l1j>;
+	vdda-pll-supply = <&vreg_l2j>;
 
 	status = "okay";
 };
 
 &usb_1_ss0 {
-	status = "okay";
-};
-
-&usb_1_ss0_dwc3 {
 	dr_mode = "host";
+
+	status = "okay";
 };
 
 &usb_1_ss0_dwc3_hs {
@@ -1524,18 +1521,16 @@
 };
 
 &usb_1_ss1_qmpphy {
-	vdda-phy-supply = <&vreg_l2j>;
-	vdda-pll-supply = <&vreg_l2d>;
+	vdda-phy-supply = <&vreg_l2d>;
+	vdda-pll-supply = <&vreg_l2j>;
 
 	status = "okay";
 };
 
 &usb_1_ss1 {
-	status = "okay";
-};
-
-&usb_1_ss1_dwc3 {
 	dr_mode = "host";
+
+	status = "okay";
 };
 
 &usb_1_ss1_dwc3_hs {
@@ -1570,15 +1565,15 @@
 };
 
 &usb_mp_qmpphy0 {
-	vdda-phy-supply = <&vreg_l3e>;
-	vdda-pll-supply = <&vreg_l3c>;
+	vdda-phy-supply = <&vreg_l3c>;
+	vdda-pll-supply = <&vreg_l3e>;
 
 	status = "okay";
 };
 
 &usb_mp_qmpphy1 {
-	vdda-phy-supply = <&vreg_l3e>;
-	vdda-pll-supply = <&vreg_l3c>;
+	vdda-phy-supply = <&vreg_l3c>;
+	vdda-pll-supply = <&vreg_l3e>;
 
 	status = "okay";
 };

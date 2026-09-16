@@ -173,7 +173,7 @@ static inline void con_debug_leave(void) { }
  * @CON_BRL:		Indicates a braille device which is exempt from
  *			receiving the printk spam for obvious reasons.
  * @CON_EXTENDED:	The console supports the extended output format of
- *			/dev/kmesg which requires a larger output buffer.
+ *			/dev/kmsg which requires a larger output buffer.
  * @CON_SUSPENDED:	Indicates if a console is suspended. If true, the
  *			printing callbacks must not be called.
  * @CON_NBCON:		Console can operate outside of the legacy style console_lock
@@ -717,8 +717,6 @@ extern bool console_suspend_enabled;
 /* Suspend and resume console messages over PM events */
 extern void console_suspend_all(void);
 extern void console_resume_all(void);
-
-int mda_console_init(void);
 
 void vcs_make_sysfs(int index);
 void vcs_remove_sysfs(int index);

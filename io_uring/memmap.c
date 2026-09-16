@@ -16,8 +16,10 @@
 #include "zcrx.h"
 
 static bool io_mem_alloc_compound(struct page **pages, int nr_pages,
-				  size_t size, gfp_t gfp)
+				  size_t size, gfp_t gfp,
+				  struct user_struct *user)
 {
+	unsigned long nr_compound, extra;
 	struct page *page;
 	int i, order;
 
@@ -27,9 +29,22 @@ static bool io_mem_alloc_compound(struct page **pages, int nr_pages,
 	else if (order)
 		gfp |= __GFP_COMP;
 
-	page = alloc_pages(gfp, order);
-	if (!page)
+	/*
+	 * get_order() rounds a non power of two size up, so the allocation
+	 * can hold more pages than the region exposes. Account those too,
+	 * and leave the compound allocation alone if they do not fit.
+	 */
+	nr_compound = 1UL << order;
+	extra = nr_compound - nr_pages;
+	if (extra && user && __io_account_mem(user, extra))
 		return false;
+
+	page = alloc_pages(gfp, order);
+	if (!page) {
+		if (extra && user)
+			__io_unaccount_mem(user, extra);
+		return false;
+	}
 
 	for (i = 0; i < nr_pages; i++)
 		pages[i] = page + i;
@@ -53,7 +68,7 @@ struct page **io_pin_pages(unsigned long uaddr, unsigned long len, int *npages)
 	nr_pages = end - start;
 	if (WARN_ON_ONCE(!nr_pages))
 		return ERR_PTR(-EINVAL);
-	if (WARN_ON_ONCE(nr_pages > INT_MAX))
+	if (nr_pages > INT_MAX / sizeof(struct page *))
 		return ERR_PTR(-EOVERFLOW);
 
 	pages = kvmalloc_objs(struct page *, nr_pages, GFP_KERNEL_ACCOUNT);
@@ -105,8 +120,15 @@ void io_free_region(struct user_struct *user, struct io_mapped_region *mr)
 	}
 	if ((mr->flags & IO_REGION_F_VMAP) && mr->ptr)
 		vunmap(mr->ptr);
-	if (mr->nr_pages && user)
-		__io_unaccount_mem(user, mr->nr_pages);
+	if (mr->nr_pages && user) {
+		unsigned long nr_accounted = mr->nr_pages;
+
+		/* a compound region was accounted for the whole allocation */
+		if (mr->flags & IO_REGION_F_SINGLE_REF)
+			nr_accounted = 1UL << get_order(io_region_size(mr));
+
+		__io_unaccount_mem(user, nr_accounted);
+	}
 
 	memset(mr, 0, sizeof(*mr));
 }
@@ -151,7 +173,8 @@ static int io_region_pin_pages(struct io_mapped_region *mr,
 
 static int io_region_allocate_pages(struct io_mapped_region *mr,
 				    struct io_uring_region_desc *reg,
-				    unsigned long mmap_offset)
+				    unsigned long mmap_offset,
+				    struct user_struct *user)
 {
 	gfp_t gfp = GFP_KERNEL_ACCOUNT | __GFP_ZERO | __GFP_NOWARN;
 	size_t size = io_region_size(mr);
@@ -162,7 +185,7 @@ static int io_region_allocate_pages(struct io_mapped_region *mr,
 	if (!pages)
 		return -ENOMEM;
 
-	if (io_mem_alloc_compound(pages, mr->nr_pages, size, gfp)) {
+	if (io_mem_alloc_compound(pages, mr->nr_pages, size, gfp, user)) {
 		mr->flags |= IO_REGION_F_SINGLE_REF;
 		goto done;
 	}
@@ -217,7 +240,7 @@ int io_create_region(struct io_ring_ctx *ctx, struct io_mapped_region *mr,
 	if (reg->flags & IORING_MEM_REGION_TYPE_USER)
 		ret = io_region_pin_pages(mr, reg);
 	else
-		ret = io_region_allocate_pages(mr, reg, mmap_offset);
+		ret = io_region_allocate_pages(mr, reg, mmap_offset, ctx->user);
 	if (ret)
 		goto out_free;
 
@@ -337,7 +360,7 @@ unsigned long io_uring_get_unmapped_area(struct file *filp, unsigned long addr,
 
 	ptr = io_uring_validate_mmap_request(filp, pgoff);
 	if (IS_ERR(ptr))
-		return -ENOMEM;
+		return PTR_ERR(ptr);
 
 	/*
 	 * Some architectures have strong cache aliasing requirements.
@@ -366,9 +389,53 @@ unsigned long io_uring_get_unmapped_area(struct file *filp, unsigned long addr,
 
 #else /* !CONFIG_MMU */
 
+/*
+ * Drop the pages that were initially referenced and added in
+ * io_uring_mmap(). We cannot have had a mremap() as that isn't supported,
+ * hence the vma should be identical to the one we initially referenced and
+ * mapped, and partial unmaps and splitting isn't possible on a file backed
+ * mapping.
+ */
+static void io_uring_nommu_vm_close(struct vm_area_struct *vma)
+{
+	unsigned long index;
+
+	for (index = vma->vm_start; index < vma->vm_end; index += PAGE_SIZE)
+		put_page(virt_to_page((void *) index));
+}
+
+static const struct vm_operations_struct io_uring_nommu_vm_ops = {
+	.close = io_uring_nommu_vm_close,
+};
+
 int io_uring_mmap(struct file *file, struct vm_area_struct *vma)
 {
-	return is_nommu_shared_mapping(vma->vm_flags) ? 0 : -EINVAL;
+	struct io_ring_ctx *ctx = file->private_data;
+	struct io_mapped_region *region;
+	unsigned long i;
+
+	if (!is_nommu_shared_mapping(vma->vm_flags))
+		return -EINVAL;
+
+	guard(mutex)(&ctx->mmap_lock);
+	region = io_mmap_get_region(ctx, vma->vm_pgoff);
+	if (!region || !io_region_is_set(region))
+		return -EINVAL;
+
+	if ((vma->vm_end - vma->vm_start) !=
+	    (unsigned long) region->nr_pages << PAGE_SHIFT)
+		return -EINVAL;
+
+	/*
+	 * Pin the pages so io_free_region()'s release_pages() does not
+	 * drop the last reference while this VMA exists. delete_vma()
+	 * in mm/nommu.c calls vma_close() which runs ->close above.
+	 */
+	for (i = 0; i < region->nr_pages; i++)
+		get_page(region->pages[i]);
+
+	vma->vm_ops = &io_uring_nommu_vm_ops;
+	return 0;
 }
 
 unsigned int io_uring_nommu_mmap_capabilities(struct file *file)

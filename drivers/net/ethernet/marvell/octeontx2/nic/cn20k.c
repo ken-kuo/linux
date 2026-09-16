@@ -619,11 +619,13 @@ static int cn20k_pool_aq_init(struct otx2_nic *pfvf, u16 pool_id,
 		err = otx2_sync_mbox_msg(&pfvf->mbox);
 		if (err) {
 			qmem_free(pfvf->dev, pool->stack);
+			pool->stack = NULL;
 			return err;
 		}
 		aq = otx2_mbox_alloc_msg_npa_cn20k_aq_enq(&pfvf->mbox);
 		if (!aq) {
 			qmem_free(pfvf->dev, pool->stack);
+			pool->stack = NULL;
 			return -ENOMEM;
 		}
 	}
@@ -654,6 +656,7 @@ static int cn20k_pool_aq_init(struct otx2_nic *pfvf, u16 pool_id,
 	pp_params.nid = NUMA_NO_NODE;
 	pp_params.dev = pfvf->dev;
 	pp_params.dma_dir = DMA_FROM_DEVICE;
+	pp_params.netdev = pfvf->netdev;
 	pool->page_pool = page_pool_create(&pp_params);
 	if (IS_ERR(pool->page_pool)) {
 		netdev_err(pfvf->netdev, "Creation of page pool failed\n");
