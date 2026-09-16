@@ -223,6 +223,8 @@ int pcache_recv_sync_params(struct socket *sock,
 			    struct pcache_sync_params_pkt *out);
 int pcache_send_bio_pages(struct socket *sock, struct bio *bio,
 			  struct pcache_request *preq);
+int pcache_send_pages_inline(struct socket *sock, struct page **pages,
+			     u32 nr_pages, u32 total_size);
 
 /* Phase 3.5 — B1 coordinated demote */
 int pcache_send_demote_req(struct socket *sock, u32 initiator_node_id, u32 flags);

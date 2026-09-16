@@ -596,6 +596,170 @@ out:
 }
 
 /*
+ * Zero-copy completion context for a caller-owned page array.
+ *
+ * The bio path above has a pcache_request to pin, and its completion drops that
+ * reference so the bio cannot end while an skb still points at its pages. The
+ * resync sweep has no request: the pages are its own chunk buffer, rewritten
+ * for the next chunk and freed when the sweep ends. So the completion has to
+ * run the other way -- it wakes the sender, which waits for it before handing
+ * the pages back to the caller.
+ *
+ * Two reference counts, and they are not the same thing:
+ *
+ *   - uarg.refcnt is the network stack's (one for us, one per skb). Reaching
+ *     zero is what "the NIC is done with these pages" means, and it is what
+ *     drives complete();
+ *   - ref keeps this struct alive, because the waiter can time out and walk
+ *     away while the stack still owns skbs built from these pages.
+ */
+struct pcache_inline_zc {
+	struct ubuf_info	uarg;
+	struct completion	done;
+	refcount_t		ref;
+};
+
+static void pcache_inline_zc_put(struct pcache_inline_zc *zc)
+{
+	if (refcount_dec_and_test(&zc->ref))
+		kfree(zc);
+}
+
+static void pcache_inline_zc_complete(struct sk_buff *skb,
+				      struct ubuf_info *uarg, bool success)
+{
+	struct pcache_inline_zc *zc = container_of(uarg, struct pcache_inline_zc,
+						   uarg);
+
+	if (!refcount_dec_and_test(&uarg->refcnt))
+		return;
+
+	/*
+	 * success is ignored on purpose, as in the bio path: a chunk that never
+	 * reached the peer is caught by the RS_ACK timeout, which puts the bits
+	 * back on the dirty bitmap. All this says is that the pages are ours.
+	 */
+	complete(&zc->done);
+	pcache_inline_zc_put(zc);
+}
+
+static const struct ubuf_info_ops pcache_inline_zc_ops = {
+	.complete = pcache_inline_zc_complete,
+};
+
+/*
+ * Bound on how long one chunk's pages may stay pinned by the stack. Same order
+ * as the resync ACK timeout: the peer cannot ACK a chunk it has not received,
+ * so anything outliving this is a dead link rather than a slow one.
+ */
+#define PCACHE_ZC_DRAIN_TIMEOUT		(60 * HZ)
+
+/**
+ * pcache_send_pages_inline - Transmit a caller-owned page array.
+ *
+ * Used by the resync sweep for a chunk it has just read from the backing
+ * device. The pages are the sweep's own buffer: it rewrites them for the next
+ * chunk and frees them when the sweep ends, including on every error path.
+ *
+ * This used to pass MSG_SPLICE_PAGES on the premise that a chunk buffer is not
+ * reused until the peer's P_RS_ACK arrives, which cannot happen before the data
+ * does. The premise held on the success path and nowhere else: a send that
+ * fails halfway, or an RS_ACK that times out, frees these pages while skbs
+ * built from them can still sit in the TCP send queue -- fix-history #20 on the
+ * paths nobody exercises.
+ *
+ * MSG_ZEROCOPY removes the premise rather than narrowing it. The stack takes a
+ * real reference on every page (iov_iter_get_pages2() -> folio_get()) and says
+ * through ubuf_info::ops->complete() when the last skb carrying them is gone.
+ * Waiting for that here means the pages belong to the caller again on return,
+ * whichever path got there.
+ *
+ * Returns 0, or a negative errno.
+ */
+int pcache_send_pages_inline(struct socket *sock, struct page **pages,
+			     u32 nr_pages, u32 total_size)
+{
+	struct pcache_inline_zc *zc;
+	unsigned int zc_flag = 0;
+	u32 off = 0;
+	u32 i;
+	int ret = 0;
+
+	/*
+	 * Without a uarg the send simply falls back to letting TCP copy, which
+	 * is always safe: the pages are ours again as soon as sock_sendmsg()
+	 * returns. So an allocation failure here is not worth failing the sweep.
+	 */
+	zc = kzalloc(sizeof(*zc), GFP_NOIO);
+	if (zc) {
+		zc->uarg.ops = &pcache_inline_zc_ops;
+		/* Load-bearing; see pcache_send_bio_pages() for why. */
+		zc->uarg.flags = SKBFL_ZEROCOPY_FRAG | SKBFL_DONT_ORPHAN;
+		refcount_set(&zc->uarg.refcnt, 1);
+		refcount_set(&zc->ref, 2);	/* this function, and complete() */
+		init_completion(&zc->done);
+		zc_flag = MSG_ZEROCOPY;
+	}
+
+	for (i = 0; i < nr_pages && off < total_size; i++) {
+		u32 page_left = min_t(u32, PAGE_SIZE, total_size - off);
+		u32 page_off  = 0;
+
+		while (page_left > 0) {
+			/*
+			 * MSG_MORE until the chunk's last byte, as the bio path
+			 * does: otherwise each page becomes its own skb, and
+			 * each skb takes its own uarg reference.
+			 */
+			unsigned int more = (off + page_left < total_size) ?
+					    MSG_MORE : 0;
+			struct msghdr msg = {
+				.msg_flags = MSG_NOSIGNAL | zc_flag | more,
+				.msg_ubuf  = zc ? &zc->uarg : NULL,
+			};
+			struct bio_vec bvec;
+			int sent;
+
+			bvec_set_page(&bvec, pages[i], page_left, page_off);
+			iov_iter_bvec(&msg.msg_iter, ITER_SOURCE, &bvec, 1,
+				      page_left);
+			sent = sock_sendmsg(sock, &msg);
+			if (sent <= 0) {
+				ret = sent ? sent : -ECONNRESET;
+				goto out;
+			}
+			page_left -= sent;
+			page_off  += sent;
+			off       += sent;
+		}
+	}
+out:
+	if (!zc)
+		return ret;
+
+	/*
+	 * Drop the reference we initialised the uarg with; complete() then fires
+	 * once the stack drops its last one. On the error path this is equally
+	 * correct: whatever was already queued keeps the pages pinned until the
+	 * stack is finished with it.
+	 */
+	net_zcopy_put(&zc->uarg);
+	if (!wait_for_completion_timeout(&zc->done, PCACHE_ZC_DRAIN_TIMEOUT)) {
+		/*
+		 * The stack holds its own page references, so the sweep's
+		 * cleanup cannot free these pages out from under it -- only
+		 * rewrite them. Report the link dead so the sweep stops before
+		 * it reaches the next chunk.
+		 */
+		pcache_err("resync chunk pages still held by the network stack after %ums; treating the link as dead\n",
+			   jiffies_to_msecs(PCACHE_ZC_DRAIN_TIMEOUT));
+		ret = ret ? ret : -ETIMEDOUT;
+	}
+	pcache_inline_zc_put(zc);
+	return ret;
+}
+
+/*
  * Phase 3.5 B1 — coordinated demote handshake.
  *
  * Promoter sends P_DEMOTE_REQ to each connected peer; each peer that is

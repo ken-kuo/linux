@@ -1170,37 +1170,6 @@ static int pcache_primary_receiver(void *arg)
 /* How long a chunk waits for writes already in flight to that region. */
 #define PCACHE_RS_QUIESCE_TIMEOUT	(5 * HZ)
 
-static int pcache_send_pages_inline(struct socket *sock, struct page **pages,
-				    u32 nr_pages, u32 total_size)
-{
-	u32 off = 0;
-	u32 i;
-	int ret;
-
-	for (i = 0; i < nr_pages && off < total_size; i++) {
-		u32 page_left = min_t(u32, PAGE_SIZE, total_size - off);
-		u32 page_off  = 0;
-
-		while (page_left > 0) {
-			struct msghdr msg = {
-				.msg_flags = MSG_NOSIGNAL | MSG_SPLICE_PAGES,
-			};
-			struct bio_vec bvec;
-
-			bvec_set_page(&bvec, pages[i], page_left, page_off);
-			iov_iter_bvec(&msg.msg_iter, ITER_SOURCE, &bvec, 1,
-				      page_left);
-			ret = sock_sendmsg(sock, &msg);
-			if (ret <= 0)
-				return ret ? ret : -ECONNRESET;
-			page_left -= ret;
-			page_off  += ret;
-			off       += ret;
-		}
-	}
-	return 0;
-}
-
 /*
  * Send whatever is queued and unsent on the control stream.
  *
