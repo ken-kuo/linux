@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef _DM_PCACHE_H
 #define _DM_PCACHE_H
+#include <linux/interval_tree.h>
 #include <linux/device-mapper.h>
 
 #include "../dm-core.h"
@@ -30,6 +31,19 @@ struct dm_pcache {
 	struct workqueue_struct		*task_wq;
 
 	struct work_struct		defered_req_work;
+
+	/*
+	 * In-flight replicated writes, by sector range, and the writes waiting
+	 * on them. Two overlapping writes that are both in flight have no order
+	 * the Primary and a Secondary agree on: the Primary copies them locally
+	 * and hands them to the sender as two separate steps, so it can apply
+	 * A then B while sending B then A, and the peer ends up with the other
+	 * winner. Holding the second back until the first has been applied on
+	 * every peer gives both nodes the same order. See pcache_wr_admit().
+	 */
+	spinlock_t			wr_lock;
+	struct rb_root_cached		wr_tree;
+	struct list_head		wr_waiters;
 
 	atomic_t			state;
 	atomic_t			inflight_reqs;
@@ -101,10 +115,22 @@ struct pcache_request {
 	int			ret;
 
 	struct list_head	list_node;
+
+	/* Membership of pcache->wr_tree while a replicated write is in flight. */
+	struct interval_tree_node wr_node;
+	bool			wr_tracked;
 #if PCACHE_LAT_TRACE
 	u64			t_map;		/* ns at dm_pcache_map_bio entry */
 #endif
 };
+
+/*
+ * Returned by pcache_submit_req() when the request overlaps an in-flight
+ * replicated write and has been parked on pcache->wr_waiters. The caller must
+ * leave it alone: it keeps its reference and is resubmitted when the write it
+ * waits for completes.
+ */
+#define PCACHE_REQ_PARKED	1
 
 void pcache_req_get(struct pcache_request *pcache_req);
 void pcache_req_put(struct pcache_request *pcache_req, int ret);

@@ -79,6 +79,105 @@ static void defer_req(struct pcache_request *pcache_req)
 }
 
 /*
+ * Serialise overlapping replicated writes, the way DRBD does in
+ * drbd_conflict_submit_write(): a write that overlaps one still in flight is
+ * held until that one has completed -- locally and on every peer -- and only
+ * then copied and sent.
+ *
+ * Without this, two overlapping writes in flight at once have no order the
+ * nodes agree on. pcache_submit_req() reserves and copies locally and hands the
+ * request to the sender as separate steps, so the Primary can apply A then B
+ * while sending B then A; the Secondary applies what it receives in the order
+ * it receives it and keeps the other winner. With a single stream this still
+ * happens (F40 with mixed block sizes failed 3/5 on streams=1); several streams
+ * add a second source of reordering on top (5/5). Fully serialised
+ * application writes never diverged (0/5), which is what says the fault is the
+ * missing order and not how partial overlaps are stored.
+ *
+ * The peer ACKs only after pcache_net_write_to_cache() has applied the write,
+ * so "completed on every peer" means applied there, whichever stream carried
+ * it -- which is also why this closes the stream-0 fallback during a data
+ * stream reconnect.
+ *
+ * Returns 0 if admitted (now tracked in wr_tree) or PCACHE_REQ_PARKED.
+ */
+static int pcache_wr_admit(struct pcache_request *pcache_req)
+{
+	struct dm_pcache *pcache = pcache_req->pcache;
+	struct bio *bio = pcache_req->bio;
+	unsigned long start = bio->bi_iter.bi_sector;
+	unsigned long last = start + (bio->bi_iter.bi_size >> SECTOR_SHIFT) - 1;
+	unsigned long flags;
+
+	/* Already admitted: a write deferred on a full cache after admission
+	 * comes back through here, and must not wait on itself. */
+	if (pcache_req->wr_tracked)
+		return 0;
+
+	spin_lock_irqsave(&pcache->wr_lock, flags);
+	if (interval_tree_iter_first(&pcache->wr_tree, start, last)) {
+		list_add_tail(&pcache_req->list_node, &pcache->wr_waiters);
+		spin_unlock_irqrestore(&pcache->wr_lock, flags);
+		return PCACHE_REQ_PARKED;
+	}
+	pcache_req->wr_node.start = start;
+	pcache_req->wr_node.last = last;
+	interval_tree_insert(&pcache_req->wr_node, &pcache->wr_tree);
+	pcache_req->wr_tracked = true;
+	spin_unlock_irqrestore(&pcache->wr_lock, flags);
+	return 0;
+}
+
+/*
+ * Drop a completed write from wr_tree and give every waiter another try. They
+ * are all requeued rather than only the ones this write blocked: a waiter
+ * re-checks on resubmission and parks again if something else still overlaps,
+ * and waiters are rare enough that the simpler rule costs nothing.
+ *
+ * During teardown the deferred work no longer runs, so waiters are failed
+ * here instead of being requeued where nothing would pick them up. The check
+ * is made under defered_req_list_lock, which defer_req_stop() also takes after
+ * STOPPING is set: either the waiters land on the list before it is drained,
+ * or STOPPING is already visible here.
+ */
+static void pcache_wr_release(struct pcache_request *pcache_req)
+{
+	struct dm_pcache *pcache = pcache_req->pcache;
+	struct pcache_request *w;
+	unsigned long flags;
+	LIST_HEAD(woken);
+	bool stopping;
+
+	if (!pcache_req->wr_tracked)
+		return;
+
+	spin_lock_irqsave(&pcache->wr_lock, flags);
+	interval_tree_remove(&pcache_req->wr_node, &pcache->wr_tree);
+	pcache_req->wr_tracked = false;
+	list_splice_tail_init(&pcache->wr_waiters, &woken);
+	spin_unlock_irqrestore(&pcache->wr_lock, flags);
+
+	if (list_empty(&woken))
+		return;
+
+	spin_lock(&pcache->defered_req_list_lock);
+	stopping = pcache_is_stopping(pcache);
+	if (!stopping)
+		list_splice_tail(&woken, &pcache->defered_req_list);
+	spin_unlock(&pcache->defered_req_list_lock);
+
+	if (!stopping) {
+		queue_work(pcache->task_wq, &pcache->defered_req_work);
+		return;
+	}
+	while (!list_empty(&woken)) {
+		w = list_first_entry(&woken, struct pcache_request, list_node);
+		list_del_init(&w->list_node);
+		pcache_req_put(w, -EIO);
+	}
+}
+
+/*
  * Submit one request through the primary-aware path.
  *
  * On the primary replicated-write fast path: reserve cache space, kick the
@@ -106,6 +205,10 @@ static int pcache_submit_req(struct dm_pcache *pcache,
 	    bio->bi_iter.bi_size > 0 && pcache_peer_connected(pcache)) {
 		LIST_HEAD(keys);
 		int net_ret;
+
+		ret = pcache_wr_admit(pcache_req);
+		if (ret)
+			return ret;	/* PCACHE_REQ_PARKED */
 
 		ret = pcache_cache_write_reserve(&pcache->cache, pcache_req, &keys);
 		if (ret)
@@ -202,6 +305,8 @@ static void defered_req_fn(struct work_struct *work)
 		list_del_init(&pcache_req->list_node);
 		pcache_req->ret = 0;
 		ret = pcache_submit_req(pcache, pcache_req);
+		if (ret == PCACHE_REQ_PARKED)
+			continue;
 		if (ret == -EBUSY)
 			defer_req(pcache_req);
 		else
@@ -225,6 +330,9 @@ static void end_req(struct kref *ref)
 		pcache_req_get(pcache_req);
 		defer_req(pcache_req);
 	} else {
+		/* Local copy and every peer's ACK are in: overlapping writes
+		 * waiting on this one may now go. */
+		pcache_wr_release(pcache_req);
 		bio->bi_status = errno_to_blk_status(ret);
 		bio_endio(bio);
 
@@ -475,6 +583,9 @@ static int dm_pcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 
 	spin_lock_init(&pcache->defered_req_list_lock);
 	INIT_LIST_HEAD(&pcache->defered_req_list);
+	spin_lock_init(&pcache->wr_lock);
+	pcache->wr_tree = RB_ROOT_CACHED;
+	INIT_LIST_HEAD(&pcache->wr_waiters);
 	INIT_WORK(&pcache->defered_req_work, defered_req_fn);
 	pcache->ti = ti;
 	pcache->net = NULL;
@@ -555,6 +666,24 @@ static void defer_req_stop(struct dm_pcache *pcache)
 	}
 }
 
+static void wr_waiters_stop(struct dm_pcache *pcache)
+{
+	struct pcache_request *pcache_req;
+	unsigned long flags;
+	LIST_HEAD(tmp_list);
+
+	spin_lock_irqsave(&pcache->wr_lock, flags);
+	list_splice_init(&pcache->wr_waiters, &tmp_list);
+	spin_unlock_irqrestore(&pcache->wr_lock, flags);
+
+	while (!list_empty(&tmp_list)) {
+		pcache_req = list_first_entry(&tmp_list,
+					    struct pcache_request, list_node);
+		list_del_init(&pcache_req->list_node);
+		pcache_req_put(pcache_req, -EIO);
+	}
+}
+
 static void dm_pcache_dtr(struct dm_target *ti)
 {
 	struct dm_pcache *pcache;
@@ -562,9 +691,19 @@ static void dm_pcache_dtr(struct dm_target *ti)
 	pcache = ti->private;
 	atomic_set(&pcache->state, PCACHE_STATE_STOPPING);
 	defer_req_stop(pcache);
+	wr_waiters_stop(pcache);
 
 	/* Drop pending network refs before waiting for inflight to drain. */
 	pcache_net_stop(pcache);
+
+	/*
+	 * Writes completing inside pcache_net_stop() release their intervals,
+	 * and any waiter they wake is failed there because STOPPING is set.
+	 * Drain both lists again anyway: a request left on either would keep
+	 * inflight_reqs from reaching zero and hang the wait below.
+	 */
+	defer_req_stop(pcache);
+	wr_waiters_stop(pcache);
 
 	wait_event(pcache->inflight_wq,
 			atomic_read(&pcache->inflight_reqs) == 0);
@@ -617,6 +756,7 @@ static int dm_pcache_map_bio(struct dm_target *ti, struct bio *bio)
 	pcache_req->off = (u64)bio->bi_iter.bi_sector << SECTOR_SHIFT;
 	pcache_req->data_len = bio->bi_iter.bi_size;
 	INIT_LIST_HEAD(&pcache_req->list_node);
+	pcache_req->wr_tracked = false;
 	atomic_inc(&pcache->inflight_reqs);
 
 	/*
@@ -626,6 +766,8 @@ static int dm_pcache_map_bio(struct dm_target *ti, struct bio *bio)
 	 * runs before anything is sent, the deferred retry replicates cleanly.
 	 */
 	ret = pcache_submit_req(pcache, pcache_req);
+	if (ret == PCACHE_REQ_PARKED)
+		return DM_MAPIO_SUBMITTED;
 	if (ret == -EBUSY) {
 		defer_req(pcache_req);
 		return DM_MAPIO_SUBMITTED;
