@@ -2927,7 +2927,15 @@ static int virtnet_receive(struct receive_queue *rq, int budget,
 		packets = virtnet_receive_packets(vi, rq, budget, xdp_xmit, &stats);
 
 	u64_stats_set(&stats.packets, packets);
-	if (rq->vq->num_free > min((unsigned int)budget, virtqueue_get_vring_size(rq->vq)) / 2) {
+	/* A budget of 0 means netpoll is cleaning Tx only, possibly on another
+	 * CPU and outside softirq; page pool APIs must not be used then (see
+	 * Documentation/networking/napi.rst). With budget 0 the threshold
+	 * below collapses to num_free > 0, so without this check every
+	 * netconsole message refilled the ring from the page pool -- racing
+	 * the NAPI owner's direct recycling into pool->alloc.cache.
+	 */
+	if (budget &&
+	    rq->vq->num_free > min((unsigned int)budget, virtqueue_get_vring_size(rq->vq)) / 2) {
 		if (!try_fill_recv(vi, rq, GFP_ATOMIC))
 			/* We need to retry refilling in the next NAPI poll so
 			 * we must return budget to make sure the NAPI is
