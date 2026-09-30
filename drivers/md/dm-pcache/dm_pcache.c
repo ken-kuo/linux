@@ -726,7 +726,6 @@ static int dm_pcache_map_bio(struct dm_target *ti, struct bio *bio)
 {
 	struct pcache_request *pcache_req = dm_per_bio_data(bio, sizeof(struct pcache_request));
 	struct dm_pcache *pcache = ti->private;
-	int ret;
 
 	/* Phase 3 Step 8 — Secondary write protection.
 	 * In distributed mode, only the Primary may serve WRITEs. Allowing a
@@ -761,20 +760,14 @@ static int dm_pcache_map_bio(struct dm_target *ti, struct bio *bio)
 	atomic_inc(&pcache->inflight_reqs);
 
 	/*
-	 * Submit through the shared primary-aware path (Cut A: the local cache
-	 * write overlaps the network send). -EBUSY means the cache is full:
-	 * defer and retry later. Because reservation -- the only -EBUSY step --
-	 * runs before anything is sent, the deferred retry replicates cleanly.
+	 * Defer all requests to the workqueue. pcache_cache_handle_req may
+	 * synchronously submit bios against the cache medium (kset writes,
+	 * REQ_PREFLUSH, metadata I/O via cache_dev_sync_kmem_io). Running
+	 * that path inline from submit_bio_noacct deadlocks: the inner bios
+	 * are queued on current->bio_list and never reach the medium while
+	 * the outer bio is still being processed.
 	 */
-	ret = pcache_submit_req(pcache, pcache_req);
-	if (ret == PCACHE_REQ_PARKED)
-		return DM_MAPIO_SUBMITTED;
-	if (ret == -EBUSY) {
-		defer_req(pcache_req);
-		return DM_MAPIO_SUBMITTED;
-	}
-
-	pcache_req_put(pcache_req, ret);
+	defer_req(pcache_req);
 	return DM_MAPIO_SUBMITTED;
 }
 
