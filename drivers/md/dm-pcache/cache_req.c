@@ -1131,23 +1131,35 @@ int pcache_net_write_to_cache(struct pcache_cache *cache, u64 sector,
 }
 
 /**
- * pcache_cache_flush - Flush all ksets to persist any pending cache data
- * @cache: Pointer to the cache structure
+ * pcache_cache_flush - Honour an upper-layer REQ_PREFLUSH on the cache device.
+ * @cache: Pointer to the cache structure.
  *
- * This function iterates through all ksets associated with the provided `cache`
- * and ensures that any data marked for persistence is written to media. For each
- * kset, it acquires the kset lock, then invokes `cache_kset_close`, which handles
- * the persistence logic for that kset.
+ * Enforces the data-before-kset durability invariant at the FLUSH boundary:
  *
- * If `cache_kset_close` encounters an error, the function exits immediately with
- * the respective error code, preventing the flush operation from proceeding to
- * subsequent ksets.
+ *   1. cache_dev_data_drain waits for every cache-device data write that was
+ *      submitted before this FLUSH to complete. Writes submitted concurrently
+ *      with the FLUSH belong to a later epoch and are not waited on here.
+ *   2. cmedium_flush pushes the device's volatile write cache to media, so
+ *      every byte of data referenced by a key in any kset is now durable.
+ *   3. Each open kset is closed in turn — cache_kset_close itself uses
+ *      cmedium_write + cmedium_flush, so its on-media record (which may
+ *      reference any of the drained data writes) lands strictly after the
+ *      data it references.
+ *
+ * On the PMEM backend the drain is a no-op (data writes are synchronous and
+ * complete before submit returns) and cmedium_flush is pmem_wmb, so this
+ * sequence collapses to the prior behaviour. On NVMe the drain + device
+ * flush is the new ordering point.
  */
 int pcache_cache_flush(struct pcache_cache *cache)
 {
+	struct pcache_cache_dev *cache_dev = cache->cache_dev;
 	struct pcache_cache_kset *kset;
 	int ret;
 	u32 i;
+
+	cache_dev_data_drain(cache_dev);
+	cmedium_flush(cache_dev);
 
 	for (i = 0; i < cache->n_ksets; i++) {
 		kset = get_kset(cache, i);

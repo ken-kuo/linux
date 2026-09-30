@@ -25,6 +25,9 @@ void cache_dev_req_end(struct pcache_cache_dev_req *req)
 	case CACHE_DEV_REQ_TYPE_REQ:
 		if (req->req.upper_req)
 			pcache_req_put(req->req.upper_req, req->ret);
+		/* Account this data write for cache_dev_data_drain. */
+		atomic64_inc(&ctx->nr_data_completed);
+		wake_up(&ctx->data_drain_wq);
 		break;
 	case CACHE_DEV_REQ_TYPE_KMEM:
 		if (req->kmem.bvecs != req->kmem.inline_bvecs)
@@ -155,6 +158,13 @@ req_type_req_alloc(struct pcache_cache_dev *cache_dev,
 	req->type = CACHE_DEV_REQ_TYPE_REQ;
 	req->cache_dev = cache_dev;
 	atomic_inc(&ctx->inflight_reqs);
+	/*
+	 * Account this data write for cache_dev_data_drain. Increment at
+	 * alloc (not at submit) so a req that is allocated but ends up
+	 * failed before submission also contributes to the matching
+	 * nr_data_completed bump in cache_dev_req_end.
+	 */
+	atomic64_inc(&ctx->nr_data_submitted);
 
 	return req;
 }
@@ -285,6 +295,22 @@ void cache_dev_bdev_flush(struct pcache_cache_dev *cache_dev)
 	blkdev_issue_flush(cache_dev->dm_dev->bdev);
 }
 
+void cache_dev_data_drain(struct pcache_cache_dev *cache_dev)
+{
+	struct pcache_cache_dev_req_ctx *ctx = &cache_dev->req_ctx;
+	u64 target;
+
+	/*
+	 * Snapshot the number of data writes that have been submitted up
+	 * to this point. Wait for the completion counter to catch up — any
+	 * write submitted after the snapshot bumps nr_data_submitted past
+	 * @target but does not delay this drain.
+	 */
+	target = atomic64_read(&ctx->nr_data_submitted);
+	wait_event(ctx->data_drain_wq,
+		   atomic64_read(&ctx->nr_data_completed) >= target);
+}
+
 struct cache_dev_sync_ctx {
 	struct completion done;
 	int ret;
@@ -355,6 +381,10 @@ int cache_dev_req_ctx_init(struct pcache_cache_dev *cache_dev)
 	INIT_WORK(&ctx->req_complete_work, req_complete_fn);
 	atomic_set(&ctx->inflight_reqs, 0);
 	init_waitqueue_head(&ctx->inflight_wq);
+
+	atomic64_set(&ctx->nr_data_submitted, 0);
+	atomic64_set(&ctx->nr_data_completed, 0);
+	init_waitqueue_head(&ctx->data_drain_wq);
 
 	return 0;
 

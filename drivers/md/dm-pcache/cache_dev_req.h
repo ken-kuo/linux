@@ -70,6 +70,17 @@ struct pcache_cache_dev_req_ctx {
 
 	atomic_t			inflight_reqs;
 	wait_queue_head_t		inflight_wq;
+
+	/*
+	 * Monotonic counters for cache-device DATA writes (TYPE_REQ). Used
+	 * by cache_dev_data_drain at the FLUSH boundary to wait for writes
+	 * submitted before the FLUSH to complete, without blocking writes
+	 * submitted after it. nr_data_submitted is incremented when the
+	 * bio is allocated; nr_data_completed when the bio completes.
+	 */
+	atomic64_t			nr_data_submitted;
+	atomic64_t			nr_data_completed;
+	wait_queue_head_t		data_drain_wq;
 };
 
 struct pcache_cache_dev_req_opts {
@@ -109,6 +120,14 @@ void cache_dev_req_submit(struct pcache_cache_dev_req *req, bool direct);
 void cache_dev_req_end(struct pcache_cache_dev_req *req);
 
 void cache_dev_bdev_flush(struct pcache_cache_dev *cache_dev);
+
+/*
+ * Wait for all cache-device data writes (TYPE_REQ) submitted before the
+ * call to complete. Writes submitted after the call do not block this
+ * wait. Used by pcache_cache_flush to enforce data-before-kset
+ * durability ordering at the upper FLUSH boundary.
+ */
+void cache_dev_data_drain(struct pcache_cache_dev *cache_dev);
 
 /*
  * Synchronous helpers built on the bio request lifecycle. Block the
