@@ -433,6 +433,11 @@ static inline bool cache_key_clean(struct pcache_cache_key *key)
 	return key->flags & PCACHE_CACHE_KEY_FLAGS_CLEAN;
 }
 
+static inline bool cache_key_writing(struct pcache_cache_key *key)
+{
+	return key->flags & PCACHE_CACHE_KEY_FLAGS_WRITING;
+}
+
 static inline void cache_pos_copy(struct pcache_cache_pos *dst, struct pcache_cache_pos *src)
 {
 	memcpy(dst, src, sizeof(struct pcache_cache_pos));

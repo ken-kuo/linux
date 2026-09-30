@@ -524,6 +524,9 @@ static int read_overlap_tail(struct pcache_cache_key *key, struct pcache_cache_k
 
 		cache_miss_req_init(cache, backing_req, ctx->pcache_req, ctx->req_done, io_len, false);
 		submit_cache_miss_req(cache, backing_req);
+	} else if (cache_key_writing(key_tmp)) {
+		ctx->ret = -EBUSY;
+		return SUBTREE_WALK_RET_ERR;
 	} else {
 		ret = cache_copy_to_req_bio(ctx->cache_tree->cache, ctx->pcache_req, ctx->req_done,
 					io_len, &key_tmp->cache_pos, key_tmp->seg_gen);
@@ -585,6 +588,9 @@ static int read_overlap_contain(struct pcache_cache_key *key, struct pcache_cach
 
 		cache_miss_req_init(cache, backing_req, ctx->pcache_req, ctx->req_done, io_len, false);
 		submit_cache_miss_req(cache, backing_req);
+	} else if (cache_key_writing(key_tmp)) {
+		ctx->ret = -EBUSY;
+		return SUBTREE_WALK_RET_ERR;
 	} else {
 		ret = cache_copy_to_req_bio(ctx->cache_tree->cache, ctx->pcache_req, ctx->req_done,
 					io_len, &key_tmp->cache_pos, key_tmp->seg_gen);
@@ -632,6 +638,9 @@ static int read_overlap_contained(struct pcache_cache_key *key, struct pcache_ca
 
 		cache_miss_req_init(cache, backing_req, ctx->pcache_req, ctx->req_done, key->len, false);
 		submit_cache_miss_req(cache, backing_req);
+	} else if (cache_key_writing(key_tmp)) {
+		ctx->ret = -EBUSY;
+		return SUBTREE_WALK_RET_ERR;
 	} else {
 		cache_pos_copy(&pos, &key_tmp->cache_pos);
 		cache_pos_advance(&pos, cache_key_lstart(key) - cache_key_lstart(key_tmp));
@@ -677,6 +686,9 @@ static int read_overlap_head(struct pcache_cache_key *key, struct pcache_cache_k
 
 		cache_miss_req_init(cache, backing_req, ctx->pcache_req, ctx->req_done, io_len, false);
 		submit_cache_miss_req(cache, backing_req);
+	} else if (cache_key_writing(key_tmp)) {
+		ctx->ret = -EBUSY;
+		return SUBTREE_WALK_RET_ERR;
 	} else {
 		cache_pos_copy(&pos, &key_tmp->cache_pos);
 		cache_pos_advance(&pos, cache_key_lstart(key) - cache_key_lstart(key_tmp));
