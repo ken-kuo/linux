@@ -89,11 +89,17 @@ struct pcache_sb {
 	__le32 seg_num;
 };
 
+enum pcache_cache_dev_backend {
+	PCACHE_CACHE_DEV_PMEM = 0,	/* byte-addressable DAX (default) */
+	PCACHE_CACHE_DEV_NVME = 1,	/* block device via bio (cache_dev_req) */
+};
+
 struct pcache_cache_dev {
 	u32				sb_flags;
 	u32				seg_num;
 	void				*mapping;
 	bool				use_vmap;
+	enum pcache_cache_dev_backend	backend;
 
 	struct dm_dev			*dm_dev;
 
@@ -115,16 +121,25 @@ int cache_dev_get_empty_segment_id(struct pcache_cache_dev *cache_dev, u32 *seg_
  * dm-pcache reaches the cache device today by computing a virtual address
  * inside the DAX whole-device kernel mapping and issuing pmem-aware
  * primitives (memcpy_flushcache, copy_mc_to_kernel, dax_flush). To allow
- * the same call sites to address a non-byte-addressable medium (e.g. an
- * NVMe block device) without leaking the access model into callers,
- * primitives below take a byte offset rather than a raw pointer.
+ * the same call sites to address a non-byte-addressable medium (an NVMe
+ * block device) without leaking the access model into callers, primitives
+ * below take a byte offset rather than a raw pointer and dispatch on
+ * cache_dev->backend.
  *
- * The current implementation is a thin wrapper over the existing pmem
- * primitives. cmedium_write makes the bytes cache-line durable but does
- * not issue a store barrier; cmedium_flush is the explicit ordering point
- * (pmem_wmb / SFENCE on x86). cmedium_zero matches cache_dev_zero_range
- * and is also unfenced — callers must follow with cmedium_flush if a
+ * The PMEM backend is the existing path: cmedium_write makes the bytes
+ * cache-line durable but does not issue a store barrier, cmedium_flush is
+ * the explicit ordering point (pmem_wmb / SFENCE on x86), and cmedium_zero
+ * is also unfenced — callers must follow with cmedium_flush if a
  * dependent write requires the zeros to have landed first.
+ *
+ * The NVME backend routes each call through cache_dev_req. For now it
+ * issues each metadata write synchronously and silently swallows I/O
+ * errors at the cmedium_write level; later patches replace metadata
+ * writes with a DRAM-staged path that batches device I/O at flush
+ * boundaries. cmedium_read_iter and cmedium_write_iter (the per-bio data
+ * copies) intentionally stay pmem-only here and return -EOPNOTSUPP on
+ * NVMe; the async data path that supersedes them comes in the next
+ * patches.
  */
 static inline void *cmedium_addr(struct pcache_cache_dev *cache_dev, u64 off)
 {
@@ -139,6 +154,9 @@ static inline u64 cmedium_off(struct pcache_cache_dev *cache_dev, const void *ad
 static inline int cmedium_read(struct pcache_cache_dev *cache_dev, void *dst,
 			       u64 off, size_t len)
 {
+	if (cache_dev->backend == PCACHE_CACHE_DEV_NVME)
+		return cache_dev_sync_kmem_io(cache_dev, dst, off, len, REQ_OP_READ);
+
 	if (copy_mc_to_kernel(dst, cmedium_addr(cache_dev, off), len))
 		return -EIO;
 	return 0;
@@ -147,6 +165,9 @@ static inline int cmedium_read(struct pcache_cache_dev *cache_dev, void *dst,
 static inline int cmedium_read_iter(struct pcache_cache_dev *cache_dev, u64 off,
 				    size_t len, struct iov_iter *iter)
 {
+	if (cache_dev->backend == PCACHE_CACHE_DEV_NVME)
+		return -EOPNOTSUPP;
+
 	if (_copy_mc_to_iter(cmedium_addr(cache_dev, off), len, iter) != len)
 		return -EIO;
 	return 0;
@@ -155,12 +176,23 @@ static inline int cmedium_read_iter(struct pcache_cache_dev *cache_dev, u64 off,
 static inline void cmedium_write(struct pcache_cache_dev *cache_dev, u64 off,
 				 const void *src, size_t len)
 {
+	if (cache_dev->backend == PCACHE_CACHE_DEV_NVME) {
+		/*
+		 * Cast away const: cache_dev_sync_kmem_io builds a bio over
+		 * the buffer and does not modify it for REQ_OP_WRITE.
+		 */
+		cache_dev_sync_kmem_io(cache_dev, (void *)src, off, len, REQ_OP_WRITE);
+		return;
+	}
 	memcpy_flushcache(cmedium_addr(cache_dev, off), src, len);
 }
 
 static inline int cmedium_write_iter(struct pcache_cache_dev *cache_dev, u64 off,
 				     size_t len, struct iov_iter *iter)
 {
+	if (cache_dev->backend == PCACHE_CACHE_DEV_NVME)
+		return -EOPNOTSUPP;
+
 	if (_copy_from_iter_flushcache(cmedium_addr(cache_dev, off), len, iter) != len)
 		return -EIO;
 	return 0;
@@ -169,14 +201,23 @@ static inline int cmedium_write_iter(struct pcache_cache_dev *cache_dev, u64 off
 static inline void cmedium_zero(struct pcache_cache_dev *cache_dev, u64 off,
 				size_t len)
 {
-	void *addr = cmedium_addr(cache_dev, off);
+	void *addr;
 
+	if (cache_dev->backend == PCACHE_CACHE_DEV_NVME) {
+		cache_dev_zeroout(cache_dev, off, len);
+		return;
+	}
+	addr = cmedium_addr(cache_dev, off);
 	memset(addr, 0, len);
 	dax_flush(cache_dev->dm_dev->dax_dev, addr, len);
 }
 
 static inline void cmedium_flush(struct pcache_cache_dev *cache_dev)
 {
+	if (cache_dev->backend == PCACHE_CACHE_DEV_NVME) {
+		cache_dev_bdev_flush(cache_dev);
+		return;
+	}
 	pmem_wmb();
 }
 

@@ -110,6 +110,15 @@ void cache_dev_req_end(struct pcache_cache_dev_req *req);
 
 void cache_dev_bdev_flush(struct pcache_cache_dev *cache_dev);
 
+/*
+ * Synchronous helpers built on the bio request lifecycle. Block the
+ * caller until the bio completes. Intended for the NVMe-backed
+ * cmedium dispatch where metadata I/O is rare and small.
+ */
+int cache_dev_sync_kmem_io(struct pcache_cache_dev *cache_dev, void *data,
+			   u64 cdev_off, u32 len, blk_opf_t opf);
+int cache_dev_zeroout(struct pcache_cache_dev *cache_dev, u64 cdev_off, u64 len);
+
 int pcache_cache_dev_req_init(void);
 void pcache_cache_dev_req_exit(void);
 

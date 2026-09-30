@@ -285,6 +285,55 @@ void cache_dev_bdev_flush(struct pcache_cache_dev *cache_dev)
 	blkdev_issue_flush(cache_dev->dm_dev->bdev);
 }
 
+struct cache_dev_sync_ctx {
+	struct completion done;
+	int ret;
+};
+
+static void cache_dev_sync_end(struct pcache_cache_dev_req *req, int ret)
+{
+	struct cache_dev_sync_ctx *sync = req->priv_data;
+
+	sync->ret = ret;
+	complete(&sync->done);
+}
+
+int cache_dev_sync_kmem_io(struct pcache_cache_dev *cache_dev, void *data,
+			   u64 cdev_off, u32 len, blk_opf_t opf)
+{
+	struct pcache_cache_dev_req_opts opts = { 0 };
+	struct pcache_cache_dev_req *req;
+	struct cache_dev_sync_ctx sync;
+
+	init_completion(&sync.done);
+	sync.ret = 0;
+
+	opts.type = CACHE_DEV_REQ_TYPE_KMEM;
+	opts.cdev_off = cdev_off;
+	opts.kmem.data = data;
+	opts.kmem.opf = opf;
+	opts.kmem.len = len;
+	opts.gfp_mask = GFP_NOIO;
+	opts.end_fn = cache_dev_sync_end;
+	opts.priv_data = &sync;
+
+	req = cache_dev_req_create(cache_dev, &opts);
+	if (!req)
+		return -ENOMEM;
+
+	cache_dev_req_submit(req, true);
+	wait_for_completion(&sync.done);
+	return sync.ret;
+}
+
+int cache_dev_zeroout(struct pcache_cache_dev *cache_dev, u64 cdev_off, u64 len)
+{
+	return blkdev_issue_zeroout(cache_dev->dm_dev->bdev,
+				    cdev_off >> SECTOR_SHIFT,
+				    len >> SECTOR_SHIFT,
+				    GFP_NOIO, 0);
+}
+
 int cache_dev_req_ctx_init(struct pcache_cache_dev *cache_dev)
 {
 	struct pcache_cache_dev_req_ctx *ctx = &cache_dev->req_ctx;

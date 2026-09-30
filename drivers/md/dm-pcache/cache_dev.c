@@ -275,6 +275,8 @@ int cache_dev_start(struct dm_pcache *pcache)
 
 	mutex_init(&cache_dev->seg_lock);
 
+	cache_dev->backend = PCACHE_CACHE_DEV_PMEM;
+
 	ret = cache_dev_dax_init(cache_dev);
 	if (ret) {
 		pcache_dev_err(pcache, "failed to init cache_dev %s via dax way: %d.",
