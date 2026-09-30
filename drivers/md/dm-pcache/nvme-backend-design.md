@@ -306,8 +306,15 @@ cache I/O is block-aligned; no RMW.
 dm-pcache adopts the same approach. It is nearly free in the existing format:
 - segment data region already starts 4K-aligned (`data_off = 12K`);
 - subtree split is 4MB, segment `data_size` is 4K-based — all LBA multiples;
-- DM core already stacks `logical_block_size = max(cache LBA, backing LBA)` via
-  `blk_stack_limits` over both `dm_get_device`'d devices.
+- DM core stacks `logical_block_size = max(cache LBA, backing LBA)` (plus the
+  other queue limits) via `blk_stack_limits` over both `dm_get_device`'d
+  devices — **but only because the target implements `.iterate_devices`**.
+  `dm_calculate_queue_limits` invokes `dm_set_device_limits` (which does the
+  `blk_stack_limits` call) *solely* for targets that expose their devices
+  through that callout; without it the pcache device silently keeps the
+  512-byte stacking default and can emit sub-LBA bios a 4Kn medium rejects.
+  `dm_pcache_iterate_devices` iterates the cache and backing devices so the
+  stacking actually happens (mirrors `cache_iterate_devices` in dm-cache).
 
 So once upper I/O is an LBA multiple, the byte-granular `head_pos` advance lands on LBA
 boundaries on its own (it only ever adds LBA-multiple lengths to an already-aligned base),

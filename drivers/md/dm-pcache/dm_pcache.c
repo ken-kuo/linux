@@ -1076,6 +1076,31 @@ err:
 	return -EINVAL;
 }
 
+/*
+ * Expose the underlying devices so DM core can stack their queue limits
+ * onto the pcache device (dm_calculate_queue_limits only calls
+ * dm_set_device_limits for targets that implement this). Both the cache
+ * medium and the backing device carry data, so the exported device must
+ * satisfy both: DM's blk_stack_limits takes the max logical_block_size,
+ * combines alignment/discard/virt_boundary, etc. Without this the pcache
+ * device defaults to a 512-byte LBA and can emit sub-LBA bios that a
+ * 4K-LBA medium rejects.
+ */
+static int dm_pcache_iterate_devices(struct dm_target *ti,
+				     iterate_devices_callout_fn fn, void *data)
+{
+	struct dm_pcache *pcache = ti->private;
+	struct dm_dev *cache_dd = pcache->cache_dev.dm_dev;
+	struct dm_dev *backing_dd = pcache->backing_dev.dm_dev;
+	int r;
+
+	r = fn(ti, cache_dd, 0, bdev_nr_sectors(cache_dd->bdev), data);
+	if (!r)
+		r = fn(ti, backing_dd, 0, ti->len, data);
+
+	return r;
+}
+
 static struct target_type dm_pcache_target = {
 	.name		= "pcache-dist",
 	.version	= {0, 1, 0},
@@ -1086,6 +1111,7 @@ static struct target_type dm_pcache_target = {
 	.map		= dm_pcache_map_bio,
 	.status		= dm_pcache_status,
 	.message	= dm_pcache_message,
+	.iterate_devices = dm_pcache_iterate_devices,
 };
 
 static int __init dm_pcache_init(void)
