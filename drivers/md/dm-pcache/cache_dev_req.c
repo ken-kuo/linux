@@ -324,8 +324,9 @@ static void cache_dev_sync_end(struct pcache_cache_dev_req *req, int ret)
 	complete(&sync->done);
 }
 
-int cache_dev_sync_kmem_io(struct pcache_cache_dev *cache_dev, void *data,
-			   u64 cdev_off, u32 len, blk_opf_t opf)
+static int cache_dev_sync_kmem_io_raw(struct pcache_cache_dev *cache_dev,
+				      void *data, u64 cdev_off, u32 len,
+				      blk_opf_t opf)
 {
 	struct pcache_cache_dev_req_opts opts = { 0 };
 	struct pcache_cache_dev_req *req;
@@ -350,6 +351,64 @@ int cache_dev_sync_kmem_io(struct pcache_cache_dev *cache_dev, void *data,
 	cache_dev_req_submit(req, true);
 	wait_for_completion(&sync.done);
 	return sync.ret;
+}
+
+/*
+ * Synchronous metadata I/O on the cache medium.
+ *
+ * Metadata accesses on dm-pcache are often sub-LBA (e.g. struct pcache_sb
+ * is 28 bytes, a single pcache_cache_pos_onmedia is 12 bytes), but the
+ * block layer rejects bios whose byte size is not a multiple of the
+ * device's logical block size. Route any non-LBA-aligned access through
+ * an LBA-aligned bounce buffer: for reads, fetch the covering blocks and
+ * copy out the requested sub-range; for writes, read-modify-write —
+ * read the head/tail blocks first, splice the new bytes, and write the
+ * whole aligned region back.
+ *
+ * The metadata layout already places everything inside 4K-aligned
+ * 4K-sized slots, so the bounce buffer is bounded (one or two LBAs).
+ */
+int cache_dev_sync_kmem_io(struct pcache_cache_dev *cache_dev, void *data,
+			   u64 cdev_off, u32 len, blk_opf_t opf)
+{
+	u32 lba = bdev_logical_block_size(cache_dev->dm_dev->bdev);
+	u32 lba_mask = lba - 1;
+	u64 aligned_off;
+	u32 head_skip;
+	u32 aligned_len;
+	void *buf;
+	int ret;
+
+	if (!(cdev_off & lba_mask) && !(len & lba_mask))
+		return cache_dev_sync_kmem_io_raw(cache_dev, data,
+						  cdev_off, len, opf);
+
+	aligned_off = cdev_off & ~(u64)lba_mask;
+	head_skip = cdev_off - aligned_off;
+	aligned_len = round_up(head_skip + len, lba);
+
+	buf = kmalloc(aligned_len, GFP_NOIO);
+	if (!buf)
+		return -ENOMEM;
+
+	if (opf == REQ_OP_READ) {
+		ret = cache_dev_sync_kmem_io_raw(cache_dev, buf, aligned_off,
+						 aligned_len, REQ_OP_READ);
+		if (!ret)
+			memcpy(data, (char *)buf + head_skip, len);
+	} else {
+		/* RMW: read the covering blocks, splice in @data, write back. */
+		ret = cache_dev_sync_kmem_io_raw(cache_dev, buf, aligned_off,
+						 aligned_len, REQ_OP_READ);
+		if (ret)
+			goto out;
+		memcpy((char *)buf + head_skip, data, len);
+		ret = cache_dev_sync_kmem_io_raw(cache_dev, buf, aligned_off,
+						 aligned_len, opf);
+	}
+out:
+	kfree(buf);
+	return ret;
 }
 
 int cache_dev_zeroout(struct pcache_cache_dev *cache_dev, u64 cdev_off, u64 len)
