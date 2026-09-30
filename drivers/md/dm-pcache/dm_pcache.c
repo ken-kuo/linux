@@ -4,6 +4,8 @@
 #include <linux/blkdev.h>
 #include <linux/bio.h>
 #include <linux/timekeeping.h>
+#include <linux/debugfs.h>
+#include <linux/seq_file.h>
 
 #include "../dm-core.h"
 #include "cache_dev.h"
@@ -56,6 +58,9 @@ bool pcache_should_fail(unsigned int type)
 			    pcache_fault_str(type), pcache_fault_count);
 	return true;
 }
+
+/* debugfs root for all pcache instances; per-instance dirs hang off it. */
+static struct dentry *pcache_debugfs_root;
 
 void pcache_defer_reqs_kick(struct dm_pcache *pcache)
 {
@@ -558,6 +563,71 @@ out_dev:
 	return ret;
 }
 
+static int pcache_stats_show(struct seq_file *m, void *v)
+{
+	struct dm_pcache *pcache = m->private;
+	struct pcache_cache_dev *cache_dev = &pcache->cache_dev;
+	struct pcache_cache_dev_req_ctx *rc = &cache_dev->req_ctx;
+	struct pcache_backing_dev *backing_dev = &pcache->backing_dev;
+	struct pcache_cache *cache = &pcache->cache;
+	u64 data_sub, data_cmp, meta_sub, meta_cmp;
+
+	/*
+	 * Lockless sampling — each value is individually consistent; the set
+	 * is a racy snapshot, which is all a stats view needs and keeps the
+	 * I/O path free of any observability lock.
+	 */
+	seq_printf(m, "cache_dev_type: %s\n",
+		   cache_dev_is_bio(cache_dev) ? "bio" : "dax");
+	seq_printf(m, "state: %s\n",
+		   pcache_is_stopping(pcache) ? "stopping" : "running");
+
+	/* Inflight requests at each layer. */
+	seq_printf(m, "inflight_reqs: %d\n", atomic_read(&pcache->inflight_reqs));
+	seq_printf(m, "cache_dev_inflight_reqs: %d\n", atomic_read(&rc->inflight_reqs));
+	seq_printf(m, "backing_inflight_reqs: %d\n", atomic_read(&backing_dev->inflight_reqs));
+
+	/*
+	 * Data/metadata write epoch counters (BIO backend; 0 on DAX, where
+	 * writes are synchronous). inflight = submitted - completed is the
+	 * live drain backlog a FLUSH/FUA would wait on.
+	 */
+	data_sub = atomic64_read(&rc->nr_data_submitted);
+	data_cmp = atomic64_read(&rc->nr_data_completed);
+	meta_sub = atomic64_read(&rc->nr_meta_submitted);
+	meta_cmp = atomic64_read(&rc->nr_meta_completed);
+	seq_printf(m, "data_submitted: %llu\n", data_sub);
+	seq_printf(m, "data_completed: %llu\n", data_cmp);
+	seq_printf(m, "data_inflight: %llu\n", data_sub - data_cmp);
+	seq_printf(m, "meta_submitted: %llu\n", meta_sub);
+	seq_printf(m, "meta_completed: %llu\n", meta_cmp);
+	seq_printf(m, "meta_inflight: %llu\n", meta_sub - meta_cmp);
+
+	/* Segment occupancy. */
+	seq_printf(m, "cache_dev_segs: %u\n", cache_dev->seg_num);
+	seq_printf(m, "cache_segs: %u\n", cache->n_segs);
+	seq_printf(m, "cache_segs_used: %u\n",
+		   bitmap_weight(cache->seg_map, cache->n_segs));
+	seq_printf(m, "cache_full: %d\n", cache->cache_full);
+
+	/* GC / writeback progress cursors (seg:off) and GC health. */
+	seq_printf(m, "gc_percent: %u\n", pcache_cache_get_gc_percent(cache));
+	seq_printf(m, "gc_errors: %d\n", atomic_read(&cache->gc_errors));
+	seq_printf(m, "key_head: %u:%u\n",
+		   cache->key_head.cache_seg->cache_seg_id, cache->key_head.seg_off);
+	seq_printf(m, "dirty_tail: %u:%u\n",
+		   cache->dirty_tail.cache_seg->cache_seg_id, cache->dirty_tail.seg_off);
+	seq_printf(m, "key_tail: %u:%u\n",
+		   cache->key_tail.cache_seg->cache_seg_id, cache->key_tail.seg_off);
+
+	/* Read-miss async promote outcomes (BIO backend). */
+	seq_printf(m, "promote_ok: %llu\n", atomic64_read(&cache->promote_ok));
+	seq_printf(m, "promote_skip: %llu\n", atomic64_read(&cache->promote_skip));
+
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(pcache_stats);
+
 static int dm_pcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 {
 	struct mapped_device *md = ti->table->md;
@@ -646,6 +716,10 @@ static int dm_pcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	atomic_set(&pcache->state, PCACHE_STATE_RUNNING);
 	init_waitqueue_head(&pcache->inflight_wq);
 
+	pcache->debugfs_dir = debugfs_create_dir(md->name, pcache_debugfs_root);
+	debugfs_create_file("stats", 0400, pcache->debugfs_dir, pcache,
+			    &pcache_stats_fops);
+
 	return 0;
 exit_registry:
 	pcache_registry_exit(pcache);
@@ -706,6 +780,10 @@ static void dm_pcache_dtr(struct dm_target *ti)
 
 	pcache = ti->private;
 	atomic_set(&pcache->state, PCACHE_STATE_STOPPING);
+
+	/* Tear down debugfs first so no reader touches state we free below. */
+	debugfs_remove_recursive(pcache->debugfs_dir);
+
 	defer_req_stop(pcache);
 	wr_waiters_stop(pcache);
 
@@ -1014,6 +1092,8 @@ static int __init dm_pcache_init(void)
 {
 	int ret;
 
+	pcache_debugfs_root = debugfs_create_dir("dm-pcache", NULL);
+
 	ret = pcache_cache_dev_req_init();
 	if (ret)
 		goto err;
@@ -1044,6 +1124,7 @@ backing_exit:
 cache_dev_req_exit:
 	pcache_cache_dev_req_exit();
 err:
+	debugfs_remove_recursive(pcache_debugfs_root);
 	return ret;
 }
 module_init(dm_pcache_init);
@@ -1055,6 +1136,7 @@ static void __exit dm_pcache_exit(void)
 	pcache_cache_exit();
 	pcache_backing_exit();
 	pcache_cache_dev_req_exit();
+	debugfs_remove_recursive(pcache_debugfs_root);
 }
 module_exit(dm_pcache_exit);
 

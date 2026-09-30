@@ -79,6 +79,8 @@ struct dm_pcache {
 
 	/* Phase 3 persistent peer registry (always present once cache_dev is up) */
 	struct pcache_peer_registry	*registry;
+
+	struct dentry			*debugfs_dir;
 };
 
 static inline bool pcache_is_stopping(struct dm_pcache *pcache)

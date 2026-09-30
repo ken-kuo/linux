@@ -564,12 +564,14 @@ static void miss_read_end_req(struct pcache_backing_dev_req *backing_req, int re
 				 * stays uncached; a future read re-misses).
 				 */
 				if (!promo_buf) {
+					atomic64_inc(&cache->promote_skip);
 					cache_key_delete(key);
 					goto unlock;
 				}
 
 				ret = cache_data_alloc(cache, key);
 				if (ret) {
+					atomic64_inc(&cache->promote_skip);
 					cache_key_delete(key);
 					goto unlock;
 				}
@@ -587,6 +589,7 @@ static void miss_read_end_req(struct pcache_backing_dev_req *backing_req, int re
 
 				ret = cache_promote_submit(cache, key, cache_subtree, promo_buf);
 				if (ret) {
+					atomic64_inc(&cache->promote_skip);
 					key->flags &= ~PCACHE_CACHE_KEY_FLAGS_WRITING;
 					cache_seg_put(key->cache_pos.cache_seg);
 					cache_key_delete(key);
@@ -597,10 +600,12 @@ static void miss_read_end_req(struct pcache_backing_dev_req *backing_req, int re
 				/* Journal the key; WRITING is masked out by cache_key_encode. */
 				ret = cache_key_append(cache, key, false);
 				if (ret) {
+					atomic64_inc(&cache->promote_skip);
 					cache_seg_put(key->cache_pos.cache_seg);
 					cache_key_delete(key);
 					goto unlock;
 				}
+				atomic64_inc(&cache->promote_ok);
 				goto unlock;
 			}
 

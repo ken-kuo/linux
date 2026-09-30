@@ -198,6 +198,10 @@ struct pcache_cache {
 	struct delayed_work	gc_work;
 	atomic_t		gc_errors;
 
+	/* BIO async read-miss promote outcomes (see miss_read_end_req). */
+	atomic64_t		promote_ok;
+	atomic64_t		promote_skip;
+
 	struct mutex			cache_info_lock;
 	struct pcache_cache_info	cache_info;
 	struct pcache_cache_info	*cache_info_addr;
