@@ -7,9 +7,18 @@ dm-pcache — Persistent Cache
 *Author: Dongsheng Yang <dongsheng.yang@linux.dev>*
 
 This document describes *dm-pcache*, a Device-Mapper target that lets a
-byte-addressable *DAX* (persistent-memory, “pmem”) region act as a
-high-performance, crash-persistent cache in front of a slower block
-device.  The code lives in `drivers/md/dm-pcache/`.
+fast block device act as a high-performance, crash-persistent cache in
+front of a slower backing block device. The fast device may be either:
+
+* a *DAX-capable* block device exposing byte-addressable persistent
+  memory (e.g. ``/dev/pmem0``) — *PMEM mode*, the original target; or
+* a plain block device such as an NVMe SSD — *NVMe mode*, where all
+  cache-medium I/O is issued via the block layer with explicit
+  data-before-metadata ordering at FLUSH boundaries.
+
+The mode is auto-detected from the cache device's DAX capability at
+construction and recorded in the on-media superblock. The code lives
+in ``drivers/md/dm-pcache/``.
 
 Quick feature summary
 =====================
@@ -32,8 +41,10 @@ Constructor
     pcache <cache_dev> <backing_dev> [<number_of_optional_arguments> <cache_mode writeback> <data_crc true|false>]
 
 =========================  ====================================================
-``cache_dev``               Any DAX-capable block device (``/dev/pmem0``…).
-                            All metadata *and* cached blocks are stored here.
+``cache_dev``               Any block device. A DAX-capable device
+                            (``/dev/pmem0``…) activates PMEM mode; any
+                            other block device activates NVMe mode. All
+                            metadata *and* cached blocks are stored here.
 
 ``backing_dev``             The slow block device to be cached.
 
@@ -117,8 +128,28 @@ Sub-devices
 
 ====================  =========================================================
 backing_dev             Any block device (SSD/HDD/loop/LVM, etc.).
-cache_dev               DAX device; must expose direct-access memory.
+cache_dev               Any block device. DAX capability is auto-detected:
+                        present -> PMEM mode (byte-addressable mapping);
+                        absent  -> NVMe mode (bio-based I/O, DRAM-staged
+                        metadata, FLUSH-boundary data drain + device flush).
+                        The chosen mode is recorded in the superblock
+                        (``cache_type``) and validated on re-attach.
 ====================  =========================================================
+
+Format
+------
+
+At format time (first attach) the superblock records:
+
+* ``block_size`` — the logical-block granularity dm-pcache addresses,
+  derived from the cache device's logical block size. Constrained to a
+  power of two, no smaller than the cache device's LBA, no larger than
+  the host page (bcache parity). Re-attach on a device whose LBA exceeds
+  this value is rejected.
+* ``cache_type`` — ``PMEM`` (0) or ``NVMe`` (1), set from the
+  auto-detection above. Re-attach must agree: a PMEM-formatted image on
+  a non-DAX device, or an NVMe-formatted image on a device that exposes
+  DAX, is rejected.
 
 Segments and key-sets
 ---------------------
@@ -156,13 +187,22 @@ validate the CRC before copying to the caller.
 Failure handling
 ================
 
-* *pmem media errors* – all metadata copies are read with
+* *pmem media errors* (PMEM mode) – all metadata copies are read with
   ``copy_mc_to_kernel``; an uncorrectable error logs and aborts initialisation.
+* *cache-device I/O errors* (NVMe mode) – bio errors surface as
+  ``-EIO`` at the cmedium layer; metadata corruption is caught by the
+  existing dual-copy + CRC + sequence scheme on replay.
 * *Cache full* – if no free segment can be found, writes return ``-EBUSY``;
   dm-pcache retries internally (request deferral).
+* *In-flight cache writes* (NVMe mode) – reads that hit a key whose
+  cache-device data write is still in flight defer via the same ``-EBUSY``
+  path; the write completion kicks the defer queue.
 * *System crash* – on attach, the driver replays ksets from *key_tail* to
-  rebuild the in-core trees; every segment’s generation guards against
-  use-after-free keys.
+  rebuild the in-core trees; every segment's generation guards against
+  use-after-free keys. In NVMe mode the FLUSH boundary drains in-flight
+  data writes and issues ``blkdev_issue_flush`` before persisting any
+  kset record, so a kset never describes data that did not reach the
+  cache device.
 
 
 Limitations & TODO
