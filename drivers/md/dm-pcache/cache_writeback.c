@@ -170,21 +170,40 @@ err:
 	return ret;
 }
 
-static void cache_key_writeback(struct pcache_cache *cache, struct pcache_cache_key *key)
+/*
+ * Tracks an NVMe-mode writeback chunk that owns a transient cache->backing
+ * staging buffer. cache_key_writeback_nvme allocates @buf, fills it via
+ * cmedium_read, hands the buffer to backing_dev_req_create, and registers
+ * writeback_kmem_buf_end so the buffer is freed when the backing write
+ * completes.
+ */
+struct writeback_kmem_buf {
+	struct pcache_cache	*cache;
+	void			*buf;
+};
+
+static void writeback_kmem_buf_end(struct pcache_backing_dev_req *backing_req, int ret)
+{
+	struct writeback_kmem_buf *wb = backing_req->priv_data;
+	struct pcache_cache *cache = wb->cache;
+
+	kvfree(wb->buf);
+	kfree(wb);
+
+	mutex_lock(&cache->writeback_lock);
+	writeback_ctx_end(cache, ret);
+	mutex_unlock(&cache->writeback_lock);
+}
+
+static void cache_key_writeback_pmem(struct pcache_cache *cache,
+				     struct pcache_cache_key *key)
 {
 	struct pcache_backing_dev_req *writeback_req;
 	struct pcache_backing_dev_req_opts writeback_req_opts = { 0 };
-	struct pcache_cache_pos *pos;
+	struct pcache_cache_pos *pos = &key->cache_pos;
 	void *addr;
-	u32 seg_remain, req_len, done = 0;
+	u32 req_len, done = 0;
 
-	if (cache_key_clean(key))
-		return;
-
-	pos = &key->cache_pos;
-
-	seg_remain = cache_seg_remain(pos);
-	BUG_ON(seg_remain < key->len);
 next_req:
 	addr = cache_pos_addr(pos) + done;
 	req_len = backing_dev_req_coalesced_max_len(addr, key->len - done);
@@ -207,6 +226,92 @@ next_req:
 	done += req_len;
 	if (done < key->len)
 		goto next_req;
+}
+
+static void cache_key_writeback_nvme(struct pcache_cache *cache,
+				     struct pcache_cache_key *key)
+{
+	struct pcache_cache_dev *cache_dev = cache->cache_dev;
+	struct pcache_cache_pos *pos = &key->cache_pos;
+	struct pcache_segment *segment = &pos->cache_seg->segment;
+	struct pcache_backing_dev_req *writeback_req;
+	struct pcache_backing_dev_req_opts writeback_req_opts = { 0 };
+	struct writeback_kmem_buf *wb;
+	u64 cdev_off;
+	int ret;
+
+	cdev_off = cmedium_off(cache_dev, segment->data) + pos->seg_off;
+
+	wb = kmalloc_obj(*wb, GFP_NOIO);
+	if (!wb)
+		goto err;
+	wb->cache = cache;
+	wb->buf = kvmalloc(key->len, GFP_NOIO);
+	if (!wb->buf)
+		goto err_free_wb;
+
+	ret = cmedium_read(cache_dev, wb->buf, cdev_off, key->len);
+	if (ret)
+		goto err_free_buf;
+
+	writeback_req_opts.type = BACKING_DEV_REQ_TYPE_KMEM;
+	writeback_req_opts.gfp_mask = GFP_NOIO;
+	writeback_req_opts.end_fn = writeback_kmem_buf_end;
+	writeback_req_opts.priv_data = wb;
+
+	writeback_req_opts.kmem.data = wb->buf;
+	writeback_req_opts.kmem.opf = REQ_OP_WRITE;
+	writeback_req_opts.kmem.len = key->len;
+	writeback_req_opts.kmem.backing_off = key->off;
+
+	writeback_req = backing_dev_req_create(cache->backing_dev, &writeback_req_opts);
+	if (!writeback_req)
+		goto err_free_buf;
+
+	atomic_inc(&cache->writeback_ctx.pending);
+	backing_dev_req_submit(writeback_req, true);
+	return;
+
+err_free_buf:
+	kvfree(wb->buf);
+err_free_wb:
+	kfree(wb);
+err:
+	/*
+	 * No backing write was submitted, so take a pending reference to
+	 * balance the writeback_ctx_end() drop below. This records the error
+	 * (so dirty_tail is not advanced) without skewing the pending count.
+	 */
+	atomic_inc(&cache->writeback_ctx.pending);
+	mutex_lock(&cache->writeback_lock);
+	writeback_ctx_end(cache, -EIO);
+	mutex_unlock(&cache->writeback_lock);
+}
+
+static void cache_key_writeback(struct pcache_cache *cache, struct pcache_cache_key *key)
+{
+	if (cache_key_clean(key))
+		return;
+
+	/*
+	 * Cached data for a key never crosses a segment boundary, so the
+	 * remaining space from the key's position must cover its length. If
+	 * that invariant is somehow violated, fail this writeback cycle
+	 * (recording the error keeps dirty_tail from advancing) rather than
+	 * crashing.
+	 */
+	if (WARN_ON_ONCE(cache_seg_remain(&key->cache_pos) < key->len)) {
+		atomic_inc(&cache->writeback_ctx.pending);
+		mutex_lock(&cache->writeback_lock);
+		writeback_ctx_end(cache, -EIO);
+		mutex_unlock(&cache->writeback_lock);
+		return;
+	}
+
+	if (cache->cache_dev->backend == PCACHE_CACHE_DEV_NVME)
+		cache_key_writeback_nvme(cache, key);
+	else
+		cache_key_writeback_pmem(cache, key);
 }
 
 static void cache_wb_tree_writeback(struct pcache_cache *cache, u32 advance)
