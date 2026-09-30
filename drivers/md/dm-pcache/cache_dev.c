@@ -121,28 +121,15 @@ out:
 	return ret;
 }
 
-void cache_dev_zero_range(struct pcache_cache_dev *cache_dev, void *pos, u32 size)
-{
-	memset(pos, 0, size);
-	dax_flush(cache_dev->dm_dev->dax_dev, pos, size);
-}
-
 static int sb_read(struct pcache_cache_dev *cache_dev, struct pcache_sb *sb)
 {
-	struct pcache_sb *sb_addr = CACHE_DEV_SB(cache_dev);
-
-	if (copy_mc_to_kernel(sb, sb_addr, sizeof(struct pcache_sb)))
-		return -EIO;
-
-	return 0;
+	return cmedium_read(cache_dev, sb, PCACHE_SB_OFF, sizeof(struct pcache_sb));
 }
 
 static void sb_write(struct pcache_cache_dev *cache_dev, struct pcache_sb *sb)
 {
-	struct pcache_sb *sb_addr = CACHE_DEV_SB(cache_dev);
-
-	memcpy_flushcache(sb_addr, sb, sizeof(struct pcache_sb));
-	pmem_wmb();
+	cmedium_write(cache_dev, PCACHE_SB_OFF, sb, sizeof(struct pcache_sb));
+	cmedium_flush(cache_dev);
 }
 
 static int sb_init(struct pcache_cache_dev *cache_dev, struct pcache_sb *sb)
@@ -174,9 +161,9 @@ static int sb_init(struct pcache_cache_dev *cache_dev, struct pcache_sb *sb)
 	sb->seg_num = cpu_to_le32(nr_segs);
 	sb->crc = cpu_to_le32(crc32c(PCACHE_CRC_SEED, (void *)(sb) + 4, sizeof(struct pcache_sb) - 4));
 
-	cache_dev_zero_range(cache_dev, CACHE_DEV_CACHE_INFO(cache_dev),
-			     PCACHE_CACHE_INFO_SIZE * PCACHE_META_INDEX_MAX +
-			     PCACHE_CACHE_CTRL_SIZE);
+	cmedium_zero(cache_dev, PCACHE_CACHE_INFO_OFF,
+		     PCACHE_CACHE_INFO_SIZE * PCACHE_META_INDEX_MAX +
+		     PCACHE_CACHE_CTRL_SIZE);
 
 	return 0;
 }

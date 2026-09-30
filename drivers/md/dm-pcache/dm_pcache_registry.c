@@ -161,8 +161,8 @@ int pcache_registry_init(struct dm_pcache *pcache)
 		/* Zero both copies so any residual data from an earlier on-disk
 		 * layout (e.g. Phase 2 bitmap region overlapping this offset)
 		 * cannot accidentally pass CRC validation on future loads. */
-		cache_dev_zero_range(cdev, reg->pmem_base,
-				     PCACHE_PEER_REGISTRY_REGION_SIZE);
+		cmedium_zero(cdev, cmedium_off(cdev, reg->pmem_base),
+			     PCACHE_PEER_REGISTRY_REGION_SIZE);
 		mutex_lock(&reg->lock);
 		pcache_reg_flush_locked(reg);
 		mutex_unlock(&reg->lock);

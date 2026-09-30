@@ -518,7 +518,8 @@ int pcache_peer_bitmap_init(struct pcache_peer *peer, u64 backing_sectors,
 	peer->bm = bm;
 
 	if (fresh) {
-		cache_dev_zero_range(cdev, bm->pmem_data, PCACHE_BITMAP_SLOT_DATA_SIZE);
+		cmedium_zero(cdev, cmedium_off(cdev, bm->pmem_data),
+			     PCACHE_BITMAP_SLOT_DATA_SIZE);
 		pcache_bm_header_flush(bm);
 	}
 	return 0;

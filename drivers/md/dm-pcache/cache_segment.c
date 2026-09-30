@@ -19,8 +19,10 @@ static inline struct pcache_segment_info *get_seg_info_addr(struct pcache_cache_
 
 static void cache_seg_info_write(struct pcache_cache_segment *cache_seg)
 {
-	struct pcache_segment_info *seg_info_addr;
+	struct pcache_cache_dev *cache_dev = cache_seg->cache->cache_dev;
 	struct pcache_segment_info *seg_info = &cache_seg->cache_seg_info;
+	u32 seg_id = cache_seg->segment.seg_id;
+	u64 off;
 
 	mutex_lock(&cache_seg->info_lock);
 	seg_info->header.seq++;
@@ -28,9 +30,9 @@ static void cache_seg_info_write(struct pcache_cache_segment *cache_seg)
 
 	cache_seg->info_index = (cache_seg->info_index + 1) % PCACHE_META_INDEX_MAX;
 
-	seg_info_addr = get_seg_info_addr(cache_seg);
-	memcpy_flushcache(seg_info_addr, seg_info, sizeof(struct pcache_segment_info));
-	pmem_wmb();
+	off = CACHE_DEV_SEGMENT_OFF(seg_id) + PCACHE_SEG_INFO_SIZE * cache_seg->info_index;
+	cmedium_write(cache_dev, off, seg_info, sizeof(struct pcache_segment_info));
+	cmedium_flush(cache_dev);
 	mutex_unlock(&cache_seg->info_lock);
 }
 
@@ -125,6 +127,7 @@ static inline struct pcache_cache_seg_gen *get_cache_seg_gen_addr(struct pcache_
  */
 static void cache_seg_ctrl_write(struct pcache_cache_segment *cache_seg)
 {
+	struct pcache_cache_dev *cache_dev = cache_seg->cache->cache_dev;
 	struct pcache_cache_seg_gen cache_seg_gen;
 
 	cache_seg_gen.gen = cache_seg->gen;
@@ -134,8 +137,9 @@ static void cache_seg_ctrl_write(struct pcache_cache_segment *cache_seg)
 
 	cache_seg->gen_index = (cache_seg->gen_index + 1) % PCACHE_META_INDEX_MAX;
 
-	memcpy_flushcache(get_cache_seg_gen_addr(cache_seg), &cache_seg_gen, sizeof(struct pcache_cache_seg_gen));
-	pmem_wmb();
+	cmedium_write(cache_dev, cmedium_off(cache_dev, get_cache_seg_gen_addr(cache_seg)),
+		      &cache_seg_gen, sizeof(struct pcache_cache_seg_gen));
+	cmedium_flush(cache_dev);
 }
 
 static void cache_seg_ctrl_init(struct pcache_cache_segment *cache_seg)
@@ -204,9 +208,9 @@ int cache_seg_init(struct pcache_cache *cache, u32 seg_id, u32 cache_seg_id,
 	cache_seg->cache_seg_ctrl = CACHE_DEV_SEGMENT(cache_dev, seg_id) + PCACHE_CACHE_SEG_CTRL_OFF;
 
 	if (new_cache) {
-		cache_dev_zero_range(cache_dev, CACHE_DEV_SEGMENT(cache_dev, seg_id),
-				     PCACHE_SEG_INFO_SIZE * PCACHE_META_INDEX_MAX +
-				     PCACHE_CACHE_SEG_CTRL_SIZE);
+		cmedium_zero(cache_dev, CACHE_DEV_SEGMENT_OFF(seg_id),
+			     PCACHE_SEG_INFO_SIZE * PCACHE_META_INDEX_MAX +
+			     PCACHE_CACHE_SEG_CTRL_SIZE);
 
 		cache_seg_ctrl_init(cache_seg);
 
@@ -214,8 +218,9 @@ int cache_seg_init(struct pcache_cache *cache, u32 seg_id, u32 cache_seg_id,
 		cache_seg_info_write(cache_seg);
 
 		/* clear outdated kset in segment */
-		memcpy_flushcache(segment->data, &pcache_empty_kset, sizeof(struct pcache_cache_kset_onmedia));
-		pmem_wmb();
+		cmedium_write(cache_dev, cmedium_off(cache_dev, segment->data),
+			      &pcache_empty_kset, sizeof(struct pcache_cache_kset_onmedia));
+		cmedium_flush(cache_dev);
 	} else {
 		ret = cache_seg_meta_load(cache_seg);
 		if (ret)

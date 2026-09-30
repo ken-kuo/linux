@@ -20,14 +20,13 @@ static void cache_key_gc(struct pcache_cache_key *key)
 static bool need_gc(struct pcache_cache *cache, struct pcache_cache_pos *dirty_tail, struct pcache_cache_pos *key_tail)
 {
 	struct dm_pcache *pcache = CACHE_TO_PCACHE(cache);
+	struct pcache_cache_dev *cache_dev = cache->cache_dev;
 	struct pcache_cache_kset_onmedia *kset_onmedia;
-	void *dirty_addr, *key_addr;
 	u32 segs_used, segs_gc_threshold, to_copy;
 	int ret;
 
-	dirty_addr = cache_pos_addr(dirty_tail);
-	key_addr = cache_pos_addr(key_tail);
-	if (dirty_addr == key_addr) {
+	if (dirty_tail->cache_seg == key_tail->cache_seg &&
+	    dirty_tail->seg_off == key_tail->seg_off) {
 		pcache_dev_debug(pcache, "key tail is equal to dirty tail: %u:%u\n",
 				dirty_tail->cache_seg->cache_seg_id,
 				dirty_tail->seg_off);
@@ -37,7 +36,9 @@ static bool need_gc(struct pcache_cache *cache, struct pcache_cache_pos *dirty_t
 	kset_onmedia = (struct pcache_cache_kset_onmedia *)cache->gc_kset_onmedia_buf;
 
 	to_copy = min(PCACHE_KSET_ONMEDIA_SIZE_MAX, cache_seg_remain(key_tail));
-	ret = copy_mc_to_kernel(kset_onmedia, key_addr, to_copy);
+	ret = cmedium_read(cache_dev, kset_onmedia,
+			   cmedium_off(cache_dev, cache_pos_addr(key_tail)),
+			   to_copy);
 	if (ret) {
 		pcache_dev_err(pcache, "error to read kset: %d", ret);
 		return false;

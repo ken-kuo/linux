@@ -69,6 +69,7 @@
 #define CACHE_DEV_PEER_REGISTRY(cache_dev)	((void *)cache_dev->mapping + PCACHE_PEER_REGISTRY_OFF)
 #define CACHE_DEV_SEGMENTS(cache_dev)		((void *)cache_dev->mapping + PCACHE_SEGMENTS_OFF)
 #define CACHE_DEV_SEGMENT(cache_dev, id)	((void *)CACHE_DEV_SEGMENTS(cache_dev) + (u64)id * PCACHE_SEG_SIZE)
+#define CACHE_DEV_SEGMENT_OFF(id)		(PCACHE_SEGMENTS_OFF + (u64)(id) * PCACHE_SEG_SIZE)
 
 /*
  * PCACHE SB flags configured during formatting
@@ -102,8 +103,6 @@ struct pcache_cache_dev {
 struct dm_pcache;
 int cache_dev_start(struct dm_pcache *pcache);
 void cache_dev_stop(struct dm_pcache *pcache);
-
-void cache_dev_zero_range(struct pcache_cache_dev *cache_dev, void *pos, u32 size);
 
 int cache_dev_get_empty_segment_id(struct pcache_cache_dev *cache_dev, u32 *seg_id);
 

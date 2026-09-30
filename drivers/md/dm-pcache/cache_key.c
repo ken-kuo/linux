@@ -136,6 +136,7 @@ int cache_key_decode(struct pcache_cache *cache,
 
 static void append_last_kset(struct pcache_cache *cache, u32 next_seg)
 {
+	struct pcache_cache_dev *cache_dev = cache->cache_dev;
 	struct pcache_cache_kset_onmedia kset_onmedia = { 0 };
 
 	kset_onmedia.flags |= PCACHE_KSET_FLAGS_LAST;
@@ -143,13 +144,15 @@ static void append_last_kset(struct pcache_cache *cache, u32 next_seg)
 	kset_onmedia.magic = PCACHE_KSET_MAGIC;
 	kset_onmedia.crc = cache_kset_crc(&kset_onmedia);
 
-	memcpy_flushcache(get_key_head_addr(cache), &kset_onmedia, sizeof(struct pcache_cache_kset_onmedia));
-	pmem_wmb();
+	cmedium_write(cache_dev, cmedium_off(cache_dev, get_key_head_addr(cache)),
+		      &kset_onmedia, sizeof(struct pcache_cache_kset_onmedia));
+	cmedium_flush(cache_dev);
 	cache_pos_advance(&cache->key_head, sizeof(struct pcache_cache_kset_onmedia));
 }
 
 int cache_kset_close(struct pcache_cache *cache, struct pcache_cache_kset *kset)
 {
+	struct pcache_cache_dev *cache_dev = cache->cache_dev;
 	struct pcache_cache_kset_onmedia *kset_onmedia;
 	u32 kset_onmedia_size;
 	int ret;
@@ -174,8 +177,8 @@ again:
 		}
 
 		/* clear outdated kset in next seg */
-		memcpy_flushcache(next_seg->segment.data, &pcache_empty_kset,
-					sizeof(struct pcache_cache_kset_onmedia));
+		cmedium_write(cache_dev, cmedium_off(cache_dev, next_seg->segment.data),
+			      &pcache_empty_kset, sizeof(struct pcache_cache_kset_onmedia));
 		append_last_kset(cache, next_seg->cache_seg_id);
 		cache->key_head.cache_seg = next_seg;
 		cache->key_head.seg_off = 0;
@@ -186,11 +189,13 @@ again:
 	kset_onmedia->crc = cache_kset_crc(kset_onmedia);
 
 	/* clear outdated kset after current kset */
-	memcpy_flushcache(get_key_head_addr(cache) + kset_onmedia_size, &pcache_empty_kset,
-				sizeof(struct pcache_cache_kset_onmedia));
+	cmedium_write(cache_dev,
+		      cmedium_off(cache_dev, get_key_head_addr(cache) + kset_onmedia_size),
+		      &pcache_empty_kset, sizeof(struct pcache_cache_kset_onmedia));
 	/* write current kset into segment */
-	memcpy_flushcache(get_key_head_addr(cache), kset_onmedia, kset_onmedia_size);
-	pmem_wmb();
+	cmedium_write(cache_dev, cmedium_off(cache_dev, get_key_head_addr(cache)),
+		      kset_onmedia, kset_onmedia_size);
+	cmedium_flush(cache_dev);
 
 	/* reset kset_onmedia */
 	memset(kset_onmedia, 0, sizeof(struct pcache_cache_kset_onmedia));
@@ -805,11 +810,11 @@ int cache_replay(struct pcache_cache *cache)
 
 	while (true) {
 		to_copy = min(PCACHE_KSET_ONMEDIA_SIZE_MAX, cache_seg_remain(pos));
-		ret = copy_mc_to_kernel(kset_onmedia, cache_pos_addr(pos), to_copy);
-		if (ret) {
-			ret = -EIO;
+		ret = cmedium_read(cache->cache_dev, kset_onmedia,
+				   cmedium_off(cache->cache_dev, cache_pos_addr(pos)),
+				   to_copy);
+		if (ret)
 			goto out;
-		}
 
 		if (!kset_onmedia_valid(kset_onmedia) ||
 				kset_onmedia->crc != cache_kset_crc(kset_onmedia)) {

@@ -40,16 +40,17 @@ static void writeback_end_req(struct pcache_backing_dev_req *backing_req, int re
 static inline bool is_cache_clean(struct pcache_cache *cache, struct pcache_cache_pos *dirty_tail)
 {
 	struct dm_pcache *pcache = CACHE_TO_PCACHE(cache);
+	struct pcache_cache_dev *cache_dev = cache->cache_dev;
 	struct pcache_cache_kset_onmedia *kset_onmedia;
 	u32 to_copy;
-	void *addr;
 	int ret;
 
-	addr = cache_pos_addr(dirty_tail);
 	kset_onmedia = (struct pcache_cache_kset_onmedia *)cache->wb_kset_onmedia_buf;
 
 	to_copy = min(PCACHE_KSET_ONMEDIA_SIZE_MAX, cache_seg_remain(dirty_tail));
-	ret = copy_mc_to_kernel(kset_onmedia, addr, to_copy);
+	ret = cmedium_read(cache_dev, kset_onmedia,
+			   cmedium_off(cache_dev, cache_pos_addr(dirty_tail)),
+			   to_copy);
 	if (ret) {
 		pcache_dev_err(pcache, "error to read kset: %d", ret);
 		return true;
