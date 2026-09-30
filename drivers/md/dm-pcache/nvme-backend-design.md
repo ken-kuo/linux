@@ -388,61 +388,17 @@ it are explicitly **not** implemented.
 - Whether to submit kset bios eagerly on close (warm the device) or hold until the flush
   boundary (fewer small writes); tunable.
 
-- **Stop funnelling every request through the single task workqueue (scalability).**
-  `dm_pcache_map_bio()` currently defers *every* request to `pcache->task_wq` via `defer_req()`.
-  That reintroduces exactly the serialization blk-mq exists to avoid, and it bites hardest on the
-  BIO backend (the high-IOPS target):
-  - a single per-device `defered_req_list_lock` that every submitting CPU contends on per bio, and
-  - a single `defered_req_work` work item — a workqueue never runs the same `work_struct` on two
-    CPUs at once, so all request *processing* (subtree walk + key bookkeeping + dispatch) is
-    serialized on one CPU, wasting the per-subtree `tree_lock` sharding.
-  It also defeats the **per-CPU data head**: `cache_data_alloc()` does
-  `this_cpu_ptr(cache->data_heads)` under `preempt_disable()` so each CPU appends to its own
-  segment, but defer-all routes every write through whatever CPU the one worker lands on, so all
-  allocation funnels through a single head.
+- **FUA durability of the kset mapping on BIO.** A `REQ_FUA` write must be crash-recoverable the
+  moment it is acked. On BIO the *data* is fine — `cache_data_write_submit` clones the upper bio,
+  so the cache-device write inherits `REQ_FUA` and the device flushes it to media before
+  completing. The *kset mapping* is not: `cache_write` passes `fua` to `cache_key_append` as
+  `force_close`, but on BIO `cache_kset_close` only *stages* the kset write (async, no device
+  flush), and the FUA bio is acked when the data write completes — before the kset is written and
+  flushed. A crash just after the ack loses the mapping; replay can't find the cached extent, so
+  reads fall through to the stale backing device and the acked write is effectively invisible.
+  DAX is unaffected (its `force_close` does a synchronous `cmedium_flush`/`pmem_wmb`). This
+  predates the submitter-context work — it came in with the async BIO write path.
 
-  Note "deferred to the workqueue" vs "run in the submitter's context" (the thread that called
-  `submit_bio`) is the axis here — *not* the C `inline` keyword, and *not* synchronous vs async
-  I/O (device I/O stays async either way).
-
-  **Chosen approach (direction 2): process requests in the submitter's context again, and defer
-  only what must block.** `map_bio` runs `pcache_cache_handle_req()` directly (per-CPU, parallel)
-  and hands off to `task_wq` only:
-  - `REQ_PREFLUSH` — `pcache_cache_flush()` drains (`cache_dev_data_drain` + `cmedium_flush` →
-    `blkdev_issue_flush`) and therefore *waits* on inner bios; it cannot run under the submit
-    recursion. (FLUSH is infrequent/heavy, so one worker is fine.)
-  - `-EBUSY` — no forward progress now (cache full → GC/writeback; or a read that hit a `WRITING`
-    key); defer and let the existing `pcache_defer_reqs_kick()` re-run it. This is the original
-    upstream deferral.
-
-  This is essentially reverting `map_bio` toward the upstream shape (process in context + defer
-  `-EBUSY`) plus a `REQ_PREFLUSH` guard. It is safe now because the reasons defer-all was added
-  have since been removed: the data path is async (`TYPE_REQ` submit with `direct=false`, never
-  waited), backing misses are `direct=false`, and metadata writes are DRAM-staged — so a
-  submitter-context `cache_read`/`cache_write` does only DRAM work plus *enqueueing* async bios
-  and never `submit_bio_noacct`+waits. The deadlock condition needs submit **and** synchronous
-  wait on an inner bio (parked on `current->bio_list`, which `schedule()` does not flush — unlike
-  a blk plug); the read/write path has no such wait, only FLUSH does, which is why FLUSH stays
-  deferred.
-
-  Risks to settle before doing it:
-  1. Audit every branch reachable from submitter-context `cache_read`/`cache_write` on BIO and
-     confirm none calls a synchronous `cache_dev_sync_kmem_io` or `submit_bio_noacct`+wait —
-     including `NEED_REQ` replenish, `cache_data_alloc` segment rollover, kset rollover to a new
-     segment in `cache_kset_close`, and the read-hit pre-alloc.
-  2. Confirm the pcache device's submit path is never entered from atomic context (bio-based dm
-     `.map` is normally sleepable; the path does `GFP_NOIO`/`GFP_NOWAIT` allocs).
-  3. True-parallelism review: `handle_req` will run on many CPUs at once. Confirm all shared state
-     is lock-protected (`tree_lock`, `key_head_lock`, `seg_map_lock`, `gen_lock`, `kset_lock`,
-     per-CPU `data_head`, the `WRITING`/`-EBUSY` protocol) and that nothing silently relied on
-     single-threaded processing (the defer-all era would have masked such a bug).
-  4. Decide FUA durability: a `REQ_FUA` write currently just forces an async kset close and does
-     not drain before completion; if FUA must mean durable-before-ack it needs drain-on-completion
-     handling (orthogonal to this change, but it's the other "this write must block" candidate).
-
-  Fallbacks if the audit finds an inline blocker we can't make async: (1) backend-split — process
-  in context on DAX (as upstream), defer only on BIO; (3) keep deferring but replace the single
-  list + single `work_struct` with per-CPU lists + concurrent work items so independent requests
-  process in parallel (conflicts already serialized by the subtree locks + `WRITING`/`-EBUSY`).
-  Direction 2 is preferred: smallest behavioral surface, re-converges with upstream's model, and
-  it also fixes the per-CPU data-head funnel that (3) would not.
+  Fix direction: on a FUA write (BIO), before completing the upper bio, drain + device-flush the
+  data write *and* drain + flush the staged kset that references it — a write-scoped equivalent of
+  the REQ_PREFLUSH phase-1/phase-2 ordering, or route FUA writes through the deferred flush path.

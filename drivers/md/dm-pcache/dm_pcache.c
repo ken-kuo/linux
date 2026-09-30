@@ -741,6 +741,7 @@ static int dm_pcache_map_bio(struct dm_target *ti, struct bio *bio)
 {
 	struct pcache_request *pcache_req = dm_per_bio_data(bio, sizeof(struct pcache_request));
 	struct dm_pcache *pcache = ti->private;
+	int ret;
 
 	/* Phase 3 Step 8 — Secondary write protection.
 	 * In distributed mode, only the Primary may serve WRITEs. Allowing a
@@ -775,14 +776,31 @@ static int dm_pcache_map_bio(struct dm_target *ti, struct bio *bio)
 	atomic_inc(&pcache->inflight_reqs);
 
 	/*
-	 * Defer all requests to the workqueue. pcache_cache_handle_req may
-	 * synchronously submit bios against the cache medium (kset writes,
-	 * REQ_PREFLUSH, metadata I/O via cache_dev_sync_kmem_io). Running
-	 * that path inline from submit_bio_noacct deadlocks: the inner bios
-	 * are queued on current->bio_list and never reach the medium while
-	 * the outer bio is still being processed.
+	 * Process read/write requests in the submitter's context (per-CPU,
+	 * in parallel). The read/write path only queues asynchronous bios and
+	 * never waits on one, so it is safe under submit_bio_noacct's recursion
+	 * guard; its per-subtree/per-kset/per-segment locks and the per-CPU
+	 * data head make concurrent execution safe.
+	 *
+	 * Two cases must not run here and are deferred to the workqueue:
+	 *  - REQ_PREFLUSH: pcache_cache_flush() drains in-flight writes and
+	 *    issues a device flush, i.e. it *waits* on inner bios, which would
+	 *    deadlock under the submit recursion.
+	 *  - -EBUSY: the request can make no progress yet (cache full awaiting
+	 *    GC/writeback, or a read that hit a WRITING key); it is retried when
+	 *    pcache_defer_reqs_kick() wakes the deferred list.
 	 */
-	defer_req(pcache_req);
+	if (bio->bi_opf & REQ_PREFLUSH) {
+		defer_req(pcache_req);
+		return DM_MAPIO_SUBMITTED;
+	}
+
+	ret = pcache_cache_handle_req(&pcache->cache, pcache_req);
+	if (ret == -EBUSY)
+		defer_req(pcache_req);
+	else
+		pcache_req_put(pcache_req, ret);
+
 	return DM_MAPIO_SUBMITTED;
 }
 
