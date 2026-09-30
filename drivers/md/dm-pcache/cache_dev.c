@@ -260,6 +260,7 @@ void cache_dev_stop(struct dm_pcache *pcache)
 	struct pcache_cache_dev *cache_dev = &pcache->cache_dev;
 
 	cache_dev_exit(cache_dev);
+	cache_dev_req_ctx_exit(cache_dev);
 	cache_dev_dax_exit(cache_dev);
 }
 
@@ -281,20 +282,26 @@ int cache_dev_start(struct dm_pcache *pcache)
 		goto err;
 	}
 
+	ret = cache_dev_req_ctx_init(cache_dev);
+	if (ret) {
+		pcache_dev_err(pcache, "failed to init cache_dev req ctx: %d", ret);
+		goto dax_release;
+	}
+
 	ret = sb_read(cache_dev, &sb);
 	if (ret)
-		goto dax_release;
+		goto req_ctx_release;
 
 	if (le64_to_cpu(sb.magic) == 0) {
 		format = true;
 		ret = sb_init(cache_dev, &sb);
 		if (ret < 0)
-			goto dax_release;
+			goto req_ctx_release;
 	}
 
 	ret = sb_validate(cache_dev, &sb);
 	if (ret)
-		goto dax_release;
+		goto req_ctx_release;
 
 	cache_dev->sb_flags = le32_to_cpu(sb.flags);
 
@@ -317,13 +324,15 @@ int cache_dev_start(struct dm_pcache *pcache)
 
 	ret = cache_dev_init(cache_dev, seg_num);
 	if (ret)
-		goto dax_release;
+		goto req_ctx_release;
 
 	if (format)
 		sb_write(cache_dev, &sb);
 
 	return 0;
 
+req_ctx_release:
+	cache_dev_req_ctx_exit(cache_dev);
 dax_release:
 	cache_dev_dax_exit(cache_dev);
 err:
