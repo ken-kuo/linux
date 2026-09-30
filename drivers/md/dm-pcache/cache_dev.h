@@ -177,4 +177,22 @@ static inline void cmedium_flush(struct pcache_cache_dev *cache_dev)
 	pmem_wmb();
 }
 
+/*
+ * pcache_meta_find_latest - Find the latest valid metadata copy on the cache
+ *                           medium and load it into @meta_ret.
+ * @cache_dev: cache device the metadata lives on.
+ * @header_off: byte offset of the first metadata copy on the cache medium.
+ * @meta_size: size of the metadata structure being read.
+ * @meta_max_size: distance between consecutive copies (slot stride).
+ * @meta_ret: caller-supplied buffer of at least @meta_size bytes.
+ *
+ * Reads each of PCACHE_META_INDEX_MAX copies via cmedium_read, validates
+ * CRC, picks the highest sequence, and returns the chosen copy's index
+ * (0..PCACHE_META_INDEX_MAX-1). Returns -EIO on a media read error and
+ * -ENOENT if no valid copy was found.
+ */
+int __must_check pcache_meta_find_latest(struct pcache_cache_dev *cache_dev,
+					 u64 header_off, u32 meta_size,
+					 u32 meta_max_size, void *meta_ret);
+
 #endif /* _PCACHE_CACHE_DEV_H */

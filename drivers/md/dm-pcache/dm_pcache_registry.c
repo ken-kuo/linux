@@ -70,9 +70,9 @@ static void pcache_reg_flush_locked(struct pcache_peer_registry *reg)
 
 static int pcache_reg_load(struct pcache_peer_registry *reg)
 {
-	struct pcache_peer_registry_onmedia *hdr_array = reg->pmem_base;
+	struct pcache_cache_dev *cdev = &reg->pcache->cache_dev;
 	struct pcache_peer_registry_onmedia *buf;
-	struct pcache_peer_registry_onmedia *latest;
+	int latest;
 	int ret = 0;
 	u32 i;
 
@@ -80,14 +80,11 @@ static int pcache_reg_load(struct pcache_peer_registry *reg)
 	if (!buf)
 		return -ENOMEM;
 
-	latest = pcache_meta_find_latest(&hdr_array->header, sizeof(*buf),
+	latest = pcache_meta_find_latest(cdev, cmedium_off(cdev, reg->pmem_base),
+					 sizeof(*buf),
 					 PCACHE_PEER_REGISTRY_HDR_SIZE, buf);
-	if (IS_ERR(latest)) {
-		ret = PTR_ERR(latest);
-		goto out;
-	}
-	if (!latest) {
-		ret = -ENOENT;
+	if (latest < 0) {
+		ret = latest;
 		goto out;
 	}
 	if (le64_to_cpu(buf->magic) != PCACHE_PEER_REG_MAGIC) {
@@ -102,10 +99,8 @@ static int pcache_reg_load(struct pcache_peer_registry *reg)
 	reg->my_node_id = le32_to_cpu(buf->my_node_id);
 	reg->meta_seq   = buf->header.seq;
 	/* Pick up which copy was latest so subsequent flushes start on the
-	 * other copy. pcache_meta_find_latest returns a pointer into the
-	 * mapped region; derive the index from byte distance. */
-	reg->meta_index = ((u8 *)latest - (u8 *)hdr_array) /
-			  PCACHE_PEER_REGISTRY_HDR_SIZE;
+	 * other copy. */
+	reg->meta_index = latest;
 
 	for (i = 0; i < PCACHE_BM_MAX_PEERS; i++) {
 		const struct pcache_peer_entry_onmedia *e = &buf->entries[i];

@@ -258,15 +258,17 @@ static struct pcache_bm_header_onmedia *
 pcache_bm_header_load(struct pcache_bitmap *bm,
 		      struct pcache_bm_header_onmedia *out, u32 *which_idx)
 {
-	struct pcache_bm_header_onmedia *hdr_array = bm->pmem_base;
+	struct pcache_cache_dev *cdev = &bm->pcache->cache_dev;
+	int latest;
 
-	return pcache_meta_find_latest(&hdr_array->header,
-				       sizeof(*out),
-				       PCACHE_BITMAP_SLOT_HDR_SIZE,
-				       out);
-	/* Note: pcache_meta_find_latest doesn't return the index it picked,
-	 * but we re-derive it from out->header.seq below. */
-	(void)which_idx;
+	latest = pcache_meta_find_latest(cdev, cmedium_off(cdev, bm->pmem_base),
+					 sizeof(*out),
+					 PCACHE_BITMAP_SLOT_HDR_SIZE, out);
+	if (latest < 0)
+		return NULL;
+	if (which_idx)
+		*which_idx = latest;
+	return out;
 }
 
 /* Write the current in-memory header state to the next (round-robin) PMEM slot. */

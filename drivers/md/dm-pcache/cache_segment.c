@@ -38,31 +38,23 @@ static void cache_seg_info_write(struct pcache_cache_segment *cache_seg)
 
 static int cache_seg_info_load(struct pcache_cache_segment *cache_seg)
 {
-	struct pcache_segment_info *cache_seg_info_addr_base, *cache_seg_info_addr;
 	struct pcache_cache_dev *cache_dev = cache_seg->cache->cache_dev;
 	struct dm_pcache *pcache = CACHE_DEV_TO_PCACHE(cache_dev);
 	u32 seg_id = cache_seg->segment.seg_id;
-	int ret = 0;
-
-	cache_seg_info_addr_base = CACHE_DEV_SEGMENT(cache_dev, seg_id);
+	int ret;
 
 	mutex_lock(&cache_seg->info_lock);
-	cache_seg_info_addr = pcache_meta_find_latest(&cache_seg_info_addr_base->header,
-						sizeof(struct pcache_segment_info),
-						PCACHE_SEG_INFO_SIZE,
-						&cache_seg->cache_seg_info);
-	if (IS_ERR(cache_seg_info_addr)) {
-		ret = PTR_ERR(cache_seg_info_addr);
-		goto out;
-	} else if (!cache_seg_info_addr) {
+	ret = pcache_meta_find_latest(cache_dev,
+				      CACHE_DEV_SEGMENT_OFF(seg_id),
+				      sizeof(struct pcache_segment_info),
+				      PCACHE_SEG_INFO_SIZE,
+				      &cache_seg->cache_seg_info);
+	if (ret >= 0) {
+		cache_seg->info_index = ret;
+		ret = 0;
+	} else if (ret == -ENOENT) {
 		ret = -EIO;
-		goto out;
 	}
-
-	cache_seg->info_index =
-		((char *)cache_seg_info_addr - (char *)cache_seg_info_addr_base) /
-		PCACHE_SEG_INFO_SIZE;
-out:
 	mutex_unlock(&cache_seg->info_lock);
 
 	if (ret)
@@ -73,32 +65,30 @@ out:
 
 static int cache_seg_ctrl_load(struct pcache_cache_segment *cache_seg)
 {
+	struct pcache_cache_dev *cache_dev = cache_seg->cache->cache_dev;
 	struct pcache_cache_seg_ctrl *cache_seg_ctrl = cache_seg->cache_seg_ctrl;
-	struct pcache_cache_seg_gen cache_seg_gen, *cache_seg_gen_addr;
-	int ret = 0;
+	struct pcache_cache_seg_gen cache_seg_gen;
+	int ret;
 
-	cache_seg_gen_addr = pcache_meta_find_latest(&cache_seg_ctrl->gen->header,
-					     sizeof(struct pcache_cache_seg_gen),
-					     sizeof(struct pcache_cache_seg_gen),
-					     &cache_seg_gen);
-	if (IS_ERR(cache_seg_gen_addr)) {
-		ret = PTR_ERR(cache_seg_gen_addr);
-		goto out;
-	}
-
-	if (!cache_seg_gen_addr) {
+	ret = pcache_meta_find_latest(cache_dev,
+				      cmedium_off(cache_dev, &cache_seg_ctrl->gen[0].header),
+				      sizeof(struct pcache_cache_seg_gen),
+				      sizeof(struct pcache_cache_seg_gen),
+				      &cache_seg_gen);
+	if (ret == -ENOENT) {
 		cache_seg->gen = 0;
 		cache_seg->gen_seq = 0;
 		cache_seg->gen_index = 0;
-		goto out;
+		return 0;
 	}
+	if (ret < 0)
+		return ret;
 
 	cache_seg->gen = cache_seg_gen.gen;
 	cache_seg->gen_seq = cache_seg_gen.header.seq;
-	cache_seg->gen_index = (cache_seg_gen_addr - cache_seg_ctrl->gen);
-out:
+	cache_seg->gen_index = ret;
 
-	return ret;
+	return 0;
 }
 
 static inline struct pcache_cache_seg_gen *get_cache_seg_gen_addr(struct pcache_cache_segment *cache_seg)

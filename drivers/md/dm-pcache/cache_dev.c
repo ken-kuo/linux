@@ -121,6 +121,45 @@ out:
 	return ret;
 }
 
+int pcache_meta_find_latest(struct pcache_cache_dev *cache_dev,
+			    u64 header_off, u32 meta_size,
+			    u32 meta_max_size, void *meta_ret)
+{
+	struct pcache_meta_header *meta = meta_ret;
+	u32 i, seq_latest = 0;
+	int latest = -1;
+	u64 off;
+
+	for (i = 0; i < PCACHE_META_INDEX_MAX; i++) {
+		off = header_off + (u64)i * meta_max_size;
+		if (cmedium_read(cache_dev, meta, off, meta_size)) {
+			pcache_err("hardware memory error when copy meta");
+			return -EIO;
+		}
+
+		/* Skip if CRC check fails, which means corrupted */
+		if (meta->crc != pcache_meta_crc(meta, meta_size))
+			continue;
+
+		/* Update latest if a more recent sequence is found */
+		if (latest < 0 || pcache_meta_seq_after(meta->seq, seq_latest)) {
+			seq_latest = meta->seq;
+			latest = i;
+		}
+	}
+
+	if (latest < 0)
+		return -ENOENT;
+
+	off = header_off + (u64)latest * meta_max_size;
+	if (cmedium_read(cache_dev, meta_ret, off, meta_size)) {
+		pcache_err("hardware memory error");
+		return -EIO;
+	}
+
+	return latest;
+}
+
 static int sb_read(struct pcache_cache_dev *cache_dev, struct pcache_sb *sb)
 {
 	return cmedium_read(cache_dev, sb, PCACHE_SB_OFF, sizeof(struct pcache_sb));

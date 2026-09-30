@@ -34,16 +34,14 @@ static void cache_info_init_default(struct pcache_cache *cache);
 static int cache_info_init(struct pcache_cache *cache, struct pcache_cache_options *opts)
 {
 	struct dm_pcache *pcache = CACHE_TO_PCACHE(cache);
-	struct pcache_cache_info *cache_info_addr;
+	int ret;
 
-	cache_info_addr = pcache_meta_find_latest(&cache->cache_info_addr->header,
-						sizeof(struct pcache_cache_info),
-						PCACHE_CACHE_INFO_SIZE,
-						&cache->cache_info);
-	if (IS_ERR(cache_info_addr))
-		return PTR_ERR(cache_info_addr);
-
-	if (cache_info_addr) {
+	ret = pcache_meta_find_latest(cache->cache_dev,
+				      PCACHE_CACHE_INFO_OFF,
+				      sizeof(struct pcache_cache_info),
+				      PCACHE_CACHE_INFO_SIZE,
+				      &cache->cache_info);
+	if (ret >= 0) {
 		if (opts->data_crc !=
 				(cache->cache_info.flags & PCACHE_CACHE_FLAGS_DATA_CRC)) {
 			pcache_dev_err(pcache, "invalid option for data_crc: %s, expected: %s",
@@ -52,10 +50,12 @@ static int cache_info_init(struct pcache_cache *cache, struct pcache_cache_optio
 			return -EINVAL;
 		}
 
-		cache->info_index = ((char *)cache_info_addr - (char *)cache->cache_info_addr) / PCACHE_CACHE_INFO_SIZE;
-
+		cache->info_index = ret;
 		return 0;
 	}
+
+	if (ret != -ENOENT)
+		return ret;
 
 	/* init cache_info for new cache */
 	cache_info_init_default(cache);
@@ -110,17 +110,19 @@ int cache_pos_decode(struct pcache_cache *cache,
 			    struct pcache_cache_pos_onmedia *pos_onmedia,
 			    struct pcache_cache_pos *pos, u64 *seq, u32 *index)
 {
-	struct pcache_cache_pos_onmedia latest, *latest_addr;
+	struct pcache_cache_dev *cache_dev = cache->cache_dev;
+	struct pcache_cache_pos_onmedia latest;
+	int ret;
 
-	latest_addr = pcache_meta_find_latest(&pos_onmedia->header,
-					sizeof(struct pcache_cache_pos_onmedia),
-					sizeof(struct pcache_cache_pos_onmedia),
-					&latest);
-	if (IS_ERR(latest_addr))
-		return PTR_ERR(latest_addr);
-
-	if (!latest_addr)
+	ret = pcache_meta_find_latest(cache_dev,
+				      cmedium_off(cache_dev, &pos_onmedia[0].header),
+				      sizeof(struct pcache_cache_pos_onmedia),
+				      sizeof(struct pcache_cache_pos_onmedia),
+				      &latest);
+	if (ret == -ENOENT)
 		return -EIO;
+	if (ret < 0)
+		return ret;
 
 	if (!cache_seg_id_valid(cache, latest.cache_seg_id))
 		return -EIO;
@@ -132,7 +134,7 @@ int cache_pos_decode(struct pcache_cache *cache,
 
 	pos->seg_off = latest.seg_off;
 	*seq = latest.header.seq;
-	*index = (latest_addr - pos_onmedia);
+	*index = ret;
 
 	return 0;
 }
