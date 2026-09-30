@@ -290,6 +290,118 @@ static int cache_copy_to_req_bio(struct pcache_cache *cache, struct pcache_reque
 	return ret;
 }
 
+/*
+ * cache_hit_read_done - completion for an async cache-medium read hit (NVMe).
+ *
+ * Drops the segment reference taken in cache_hit_read_submit that pinned the
+ * cached data against GC for the duration of the bio. cache_dev_req_end then
+ * drops the upper request reference, completing the upper read once all of
+ * its hit/miss sub-requests have finished.
+ */
+static void cache_hit_read_done(struct pcache_cache_dev_req *req, int ret)
+{
+	struct pcache_cache_segment *cache_seg = req->priv_data;
+
+	cache_seg_put(cache_seg);
+}
+
+/*
+ * get_pre_alloc_cdev_req - obtain a cache-device request for a read hit.
+ *
+ * Returns the request pre-allocated outside the subtree lock if present,
+ * otherwise attempts a lock-safe GFP_NOWAIT allocation. The request is a
+ * clone of the upper bio (no data buffer of its own); the per-hit sub-range
+ * and cache-medium target are applied later by cache_dev_req_init.
+ */
+static struct pcache_cache_dev_req *
+get_pre_alloc_cdev_req(struct pcache_cache_subtree_walk_ctx *ctx)
+{
+	struct pcache_cache *cache = ctx->cache_tree->cache;
+	struct pcache_cache_dev_req_opts opts = { 0 };
+	struct pcache_cache_dev_req *req;
+
+	if (ctx->pre_alloc_cdev_req) {
+		req = ctx->pre_alloc_cdev_req;
+		ctx->pre_alloc_cdev_req = NULL;
+
+		return req;
+	}
+
+	opts.type = CACHE_DEV_REQ_TYPE_REQ;
+	opts.req.upper_req = ctx->pcache_req;
+	opts.gfp_mask = GFP_NOWAIT;
+
+	return cache_dev_req_alloc(cache->cache_dev, &opts);
+}
+
+/*
+ * cache_hit_read_submit - serve a read hit by reading the cache medium.
+ *
+ * On the PMEM backend the cached bytes are memory-mapped, so copy them into
+ * the upper bio inline. On the NVMe backend the cache medium is not
+ * byte-addressable: issue an asynchronous bio that DMAs the cached data
+ * directly into the upper bio's pages (zero-copy), refcounting the upper
+ * request so it completes when this and all sibling sub-requests finish.
+ *
+ * The inline memcpy in cache_copy_to_req_bio runs under the subtree spinlock,
+ * which is fine for a memory copy but must never sleep — so the NVMe bio is
+ * only queued here (cache_dev_req_submit with direct=false) and submitted from
+ * the workqueue outside any lock. A segment reference pins the cached data
+ * for the lifetime of the bio.
+ *
+ * Returns 0 on success, -EINVAL if the cached range was invalidated (caller
+ * deletes key_tmp and re-searches), -ENOMEM if no request could be obtained
+ * (caller returns SUBTREE_WALK_RET_NEED_REQ to replenish), or another -errno.
+ */
+static int cache_hit_read_submit(struct pcache_cache *cache,
+				 struct pcache_cache_subtree_walk_ctx *ctx,
+				 u32 bio_off, u32 len,
+				 struct pcache_cache_pos *pos, u64 key_gen)
+{
+	struct pcache_cache_dev *cache_dev = cache->cache_dev;
+	struct pcache_cache_segment *cache_seg = pos->cache_seg;
+	struct pcache_segment *segment = &cache_seg->segment;
+	struct pcache_cache_dev_req_opts opts = { 0 };
+	struct pcache_cache_dev_req *req;
+
+	if (cache_dev->backend != PCACHE_CACHE_DEV_NVME)
+		return cache_copy_to_req_bio(cache, ctx->pcache_req, bio_off, len,
+					     pos, key_gen);
+
+	/*
+	 * Validate the cached range is still live and pin its segment before
+	 * dropping into the async path. Holding a segment reference keeps the
+	 * segment out of GC (its gen cannot advance), so the data stays valid
+	 * for the whole bio without re-checking after the lock is released.
+	 */
+	spin_lock(&cache_seg->gen_lock);
+	if (key_gen < cache_seg->gen) {
+		spin_unlock(&cache_seg->gen_lock);
+		return -EINVAL;
+	}
+	cache_seg_get(cache_seg);
+	spin_unlock(&cache_seg->gen_lock);
+
+	req = get_pre_alloc_cdev_req(ctx);
+	if (!req) {
+		cache_seg_put(cache_seg);
+		return -ENOMEM;
+	}
+
+	opts.type = CACHE_DEV_REQ_TYPE_REQ;
+	opts.cdev_off = cmedium_off(cache_dev, segment->data) + pos->seg_off;
+	opts.req.upper_req = ctx->pcache_req;
+	opts.req.req_off = bio_off;
+	opts.req.len = len;
+	opts.end_fn = cache_hit_read_done;
+	opts.priv_data = cache_seg;
+	cache_dev_req_init(req, &opts);
+
+	cache_dev_req_submit(req, false);
+
+	return 0;
+}
+
 /**
  * miss_read_end_req - Handle the end of a miss read request.
  * @backing_req: Pointer to the request structure.
@@ -324,6 +436,22 @@ static void miss_read_end_req(struct pcache_backing_dev_req *backing_req, int re
 		if (cache_key_empty(key)) {
 			/* Check if the backing request was successful. */
 			if (read_ret) {
+				cache_key_delete(key);
+				goto unlock;
+			}
+
+			/*
+			 * Promote-on-miss is currently PMEM-only. On the NVMe
+			 * backend the synchronous data copy below would sleep
+			 * (cache_dev_sync_kmem_io waits for the bio) while
+			 * holding cache_subtree->tree_lock, which is a spinlock.
+			 * Skip the promote — the upper read has already
+			 * received the data from the backing device, so the
+			 * only effect is that this range is not cached. Async
+			 * promote that drops the lock around the copy is
+			 * follow-on work (see design doc, Phase 3e).
+			 */
+			if (cache->cache_dev->backend == PCACHE_CACHE_DEV_NVME) {
 				cache_key_delete(key);
 				goto unlock;
 			}
@@ -573,13 +701,15 @@ static int read_overlap_tail(struct pcache_cache_key *key, struct pcache_cache_k
 		ctx->ret = -EBUSY;
 		return SUBTREE_WALK_RET_ERR;
 	} else {
-		ret = cache_copy_to_req_bio(ctx->cache_tree->cache, ctx->pcache_req, ctx->req_done,
+		ret = cache_hit_read_submit(cache, ctx, ctx->req_done,
 					io_len, &key_tmp->cache_pos, key_tmp->seg_gen);
 		if (ret) {
 			if (ret == -EINVAL) {
 				cache_key_delete(key_tmp);
 				return SUBTREE_WALK_RET_RESEARCH;
 			}
+			if (ret == -ENOMEM)
+				return SUBTREE_WALK_RET_NEED_REQ;
 
 			ctx->ret = ret;
 			return SUBTREE_WALK_RET_ERR;
@@ -637,13 +767,15 @@ static int read_overlap_contain(struct pcache_cache_key *key, struct pcache_cach
 		ctx->ret = -EBUSY;
 		return SUBTREE_WALK_RET_ERR;
 	} else {
-		ret = cache_copy_to_req_bio(ctx->cache_tree->cache, ctx->pcache_req, ctx->req_done,
+		ret = cache_hit_read_submit(cache, ctx, ctx->req_done,
 					io_len, &key_tmp->cache_pos, key_tmp->seg_gen);
 		if (ret) {
 			if (ret == -EINVAL) {
 				cache_key_delete(key_tmp);
 				return SUBTREE_WALK_RET_RESEARCH;
 			}
+			if (ret == -ENOMEM)
+				return SUBTREE_WALK_RET_NEED_REQ;
 
 			ctx->ret = ret;
 			return SUBTREE_WALK_RET_ERR;
@@ -690,13 +822,15 @@ static int read_overlap_contained(struct pcache_cache_key *key, struct pcache_ca
 		cache_pos_copy(&pos, &key_tmp->cache_pos);
 		cache_pos_advance(&pos, cache_key_lstart(key) - cache_key_lstart(key_tmp));
 
-		ret = cache_copy_to_req_bio(ctx->cache_tree->cache, ctx->pcache_req, ctx->req_done,
+		ret = cache_hit_read_submit(cache, ctx, ctx->req_done,
 					key->len, &pos, key_tmp->seg_gen);
 		if (ret) {
 			if (ret == -EINVAL) {
 				cache_key_delete(key_tmp);
 				return SUBTREE_WALK_RET_RESEARCH;
 			}
+			if (ret == -ENOMEM)
+				return SUBTREE_WALK_RET_NEED_REQ;
 
 			ctx->ret = ret;
 			return SUBTREE_WALK_RET_ERR;
@@ -738,13 +872,15 @@ static int read_overlap_head(struct pcache_cache_key *key, struct pcache_cache_k
 		cache_pos_copy(&pos, &key_tmp->cache_pos);
 		cache_pos_advance(&pos, cache_key_lstart(key) - cache_key_lstart(key_tmp));
 
-		ret = cache_copy_to_req_bio(ctx->cache_tree->cache, ctx->pcache_req, ctx->req_done,
+		ret = cache_hit_read_submit(cache, ctx, ctx->req_done,
 					io_len, &pos, key_tmp->seg_gen);
 		if (ret) {
 			if (ret == -EINVAL) {
 				cache_key_delete(key_tmp);
 				return SUBTREE_WALK_RET_RESEARCH;
 			}
+			if (ret == -ENOMEM)
+				return SUBTREE_WALK_RET_NEED_REQ;
 
 			ctx->ret = ret;
 			return SUBTREE_WALK_RET_ERR;
@@ -906,8 +1042,26 @@ search:
 	}
 
 	if (ret == SUBTREE_WALK_RET_NEED_REQ) {
-		walk_ctx.pre_alloc_req = cache_miss_req_alloc(cache, pcache_req, GFP_NOIO);
-		pcache_dev_debug(CACHE_TO_PCACHE(cache), "allocate pre_alloc_req with GFP_NOIO");
+		/*
+		 * A read miss needs a backing_dev_req; a read hit on the NVMe
+		 * backend needs a cache_dev_req for the async cache-medium read.
+		 * The walk does not report which, so replenish whichever slot is
+		 * empty with a blocking allocation. Any leftover is released in
+		 * the out: path.
+		 */
+		if (!walk_ctx.pre_alloc_req) {
+			walk_ctx.pre_alloc_req = cache_miss_req_alloc(cache, pcache_req, GFP_NOIO);
+			pcache_dev_debug(CACHE_TO_PCACHE(cache), "allocate pre_alloc_req with GFP_NOIO");
+		}
+		if (cache->cache_dev->backend == PCACHE_CACHE_DEV_NVME &&
+		    !walk_ctx.pre_alloc_cdev_req) {
+			struct pcache_cache_dev_req_opts opts = { 0 };
+
+			opts.type = CACHE_DEV_REQ_TYPE_REQ;
+			opts.req.upper_req = pcache_req;
+			opts.gfp_mask = GFP_NOIO;
+			walk_ctx.pre_alloc_cdev_req = cache_dev_req_alloc(cache->cache_dev, &opts);
+		}
 	}
 
 	if (walk_ctx.req_done < pcache_req->data_len)
@@ -916,6 +1070,13 @@ search:
 out:
 	if (walk_ctx.pre_alloc_req)
 		cache_miss_req_free(walk_ctx.pre_alloc_req);
+	/*
+	 * Release an unused pre-allocated cache_dev_req. cache_dev_req_end on
+	 * an allocated-but-uninitialized request balances the inflight/data
+	 * counters (its upper_req is NULL, so no upper completion fires).
+	 */
+	if (walk_ctx.pre_alloc_cdev_req)
+		cache_dev_req_end(walk_ctx.pre_alloc_cdev_req);
 
 	list_for_each_entry_safe(backing_req, next_req, &submit_req_list, node) {
 		list_del_init(&backing_req->node);

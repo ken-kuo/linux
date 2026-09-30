@@ -298,6 +298,13 @@ struct pcache_cache_subtree_walk_ctx {
 	/* pre-allocated key and backing_dev_req */
 	struct pcache_cache_key		*pre_alloc_key;
 	struct pcache_backing_dev_req	*pre_alloc_req;
+	/*
+	 * Pre-allocated cache-device request for serving a read hit on the
+	 * NVMe backend, where the cache-medium read is an async bio rather
+	 * than an inline memcpy. Replenished outside the subtree lock on
+	 * SUBTREE_WALK_RET_NEED_REQ, mirroring pre_alloc_req.
+	 */
+	struct pcache_cache_dev_req	*pre_alloc_cdev_req;
 
 	struct list_head *delete_key_list;
 	struct list_head *submit_req_list;
