@@ -81,6 +81,35 @@ struct pcache_cache_dev_req_ctx {
 	atomic64_t			nr_data_submitted;
 	atomic64_t			nr_data_completed;
 	wait_queue_head_t		data_drain_wq;
+
+	/*
+	 * DRAM-staged metadata writes (NVMe backend only).
+	 *
+	 * Several metadata writers (cache_kset_close, cache_seg_ctrl_write)
+	 * run with a spinlock held, where the synchronous bio of
+	 * cache_dev_sync_kmem_io would sleep. On NVMe those writers instead
+	 * copy their bytes into a staging object under the lock (a non-
+	 * sleeping memcpy) and enqueue it here; meta_stage_work drains the
+	 * queue with real device I/O outside any lock. Durability is enforced
+	 * at the upper FLUSH boundary via cache_dev_meta_drain.
+	 */
+	mempool_t			meta_stage_pool;
+	struct list_head		meta_stage_list;
+	spinlock_t			meta_stage_lock;
+	struct work_struct		meta_stage_work;
+	atomic64_t			nr_meta_submitted;
+	atomic64_t			nr_meta_completed;
+	wait_queue_head_t		meta_drain_wq;
+};
+
+/* Upper bound on a single staged metadata write (largest is a full kset). */
+#define PCACHE_META_STAGE_BUF_SIZE	8192
+
+struct pcache_meta_stage {
+	struct list_head	node;
+	u64			off;
+	u32			len;
+	char			buf[PCACHE_META_STAGE_BUF_SIZE];
 };
 
 struct pcache_cache_dev_req_opts {
@@ -120,6 +149,22 @@ void cache_dev_req_submit(struct pcache_cache_dev_req *req, bool direct);
 void cache_dev_req_end(struct pcache_cache_dev_req *req);
 
 void cache_dev_bdev_flush(struct pcache_cache_dev *cache_dev);
+
+/*
+ * Stage a metadata write for the NVMe backend. Copies @len bytes from @src
+ * into a staging object and queues it; the actual device write happens
+ * asynchronously in meta_stage_work. Safe to call with a spinlock held (no
+ * sleeping). @len must not exceed PCACHE_META_STAGE_BUF_SIZE.
+ */
+void cache_dev_meta_stage_write(struct pcache_cache_dev *cache_dev, u64 off,
+				const void *src, u32 len);
+
+/*
+ * Wait for all metadata writes staged before this call to reach the device.
+ * Must be called from a sleepable context (no spinlock held). Pair with
+ * cache_dev_bdev_flush to make the staged metadata durable on media.
+ */
+void cache_dev_meta_drain(struct pcache_cache_dev *cache_dev);
 
 /*
  * Wait for all cache-device data writes (TYPE_REQ) submitted before the

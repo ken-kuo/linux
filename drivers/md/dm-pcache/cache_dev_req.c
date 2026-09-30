@@ -12,6 +12,7 @@
 
 static struct kmem_cache *cache_dev_req_cache;
 static struct kmem_cache *cache_dev_bvec_cache;
+static struct kmem_cache *cache_dev_meta_stage_cache;
 
 void cache_dev_req_end(struct pcache_cache_dev_req *req)
 {
@@ -295,6 +296,82 @@ void cache_dev_bdev_flush(struct pcache_cache_dev *cache_dev)
 	blkdev_issue_flush(cache_dev->dm_dev->bdev);
 }
 
+/*
+ * meta_stage_fn - drain staged metadata writes to the cache device.
+ *
+ * Runs in workqueue (sleepable) context. A single work_struct is never run
+ * concurrently with itself, so the queue is drained FIFO by exactly one
+ * worker — preserving the order metadata was staged in and avoiding RMW
+ * races for sub-LBA writes that share a logical block.
+ */
+static void meta_stage_fn(struct work_struct *work)
+{
+	struct pcache_cache_dev_req_ctx *ctx = container_of(work,
+			struct pcache_cache_dev_req_ctx, meta_stage_work);
+	struct pcache_cache_dev *cache_dev = container_of(ctx,
+			struct pcache_cache_dev, req_ctx);
+	struct pcache_meta_stage *st;
+	LIST_HEAD(tmp_list);
+
+	spin_lock(&ctx->meta_stage_lock);
+	list_splice_init(&ctx->meta_stage_list, &tmp_list);
+	spin_unlock(&ctx->meta_stage_lock);
+
+	while (!list_empty(&tmp_list)) {
+		st = list_first_entry(&tmp_list, struct pcache_meta_stage, node);
+		list_del_init(&st->node);
+
+		cache_dev_sync_kmem_io(cache_dev, st->buf, st->off, st->len,
+				       REQ_OP_WRITE);
+
+		mempool_free(st, &ctx->meta_stage_pool);
+		atomic64_inc(&ctx->nr_meta_completed);
+		wake_up(&ctx->meta_drain_wq);
+	}
+}
+
+void cache_dev_meta_stage_write(struct pcache_cache_dev *cache_dev, u64 off,
+				const void *src, u32 len)
+{
+	struct pcache_cache_dev_req_ctx *ctx = &cache_dev->req_ctx;
+	struct dm_pcache *pcache = CACHE_DEV_TO_PCACHE(cache_dev);
+	struct pcache_meta_stage *st;
+
+	if (WARN_ON_ONCE(len > PCACHE_META_STAGE_BUF_SIZE))
+		return;
+
+	st = mempool_alloc(&ctx->meta_stage_pool, GFP_ATOMIC);
+	if (WARN_ONCE(!st, "pcache: metadata staging pool exhausted, write dropped\n"))
+		return;
+
+	memcpy(st->buf, src, len);
+	st->off = off;
+	st->len = len;
+
+	/* Count before publishing so a drain that observes the item also waits on it. */
+	atomic64_inc(&ctx->nr_meta_submitted);
+
+	spin_lock(&ctx->meta_stage_lock);
+	list_add_tail(&st->node, &ctx->meta_stage_list);
+	queue_work(pcache->task_wq, &ctx->meta_stage_work);
+	spin_unlock(&ctx->meta_stage_lock);
+}
+
+void cache_dev_meta_drain(struct pcache_cache_dev *cache_dev)
+{
+	struct pcache_cache_dev_req_ctx *ctx = &cache_dev->req_ctx;
+	u64 target;
+
+	/*
+	 * Snapshot the staged-write count and wait for completions to catch
+	 * up. Mirrors cache_dev_data_drain: writes staged after the snapshot
+	 * belong to a later epoch and do not delay this drain.
+	 */
+	target = atomic64_read(&ctx->nr_meta_submitted);
+	wait_event(ctx->meta_drain_wq,
+		   atomic64_read(&ctx->nr_meta_completed) >= target);
+}
+
 void cache_dev_data_drain(struct pcache_cache_dev *cache_dev)
 {
 	struct pcache_cache_dev_req_ctx *ctx = &cache_dev->req_ctx;
@@ -432,6 +509,10 @@ int cache_dev_req_ctx_init(struct pcache_cache_dev *cache_dev)
 	if (ret)
 		goto req_pool_exit;
 
+	ret = mempool_init_slab_pool(&ctx->meta_stage_pool, 64, cache_dev_meta_stage_cache);
+	if (ret)
+		goto bvec_pool_exit;
+
 	INIT_LIST_HEAD(&ctx->submit_list);
 	INIT_LIST_HEAD(&ctx->complete_list);
 	spin_lock_init(&ctx->submit_lock);
@@ -445,8 +526,17 @@ int cache_dev_req_ctx_init(struct pcache_cache_dev *cache_dev)
 	atomic64_set(&ctx->nr_data_completed, 0);
 	init_waitqueue_head(&ctx->data_drain_wq);
 
+	INIT_LIST_HEAD(&ctx->meta_stage_list);
+	spin_lock_init(&ctx->meta_stage_lock);
+	INIT_WORK(&ctx->meta_stage_work, meta_stage_fn);
+	atomic64_set(&ctx->nr_meta_submitted, 0);
+	atomic64_set(&ctx->nr_meta_completed, 0);
+	init_waitqueue_head(&ctx->meta_drain_wq);
+
 	return 0;
 
+bvec_pool_exit:
+	mempool_exit(&ctx->bvec_pool);
 req_pool_exit:
 	mempool_exit(&ctx->req_pool);
 	return ret;
@@ -458,9 +548,14 @@ void cache_dev_req_ctx_exit(struct pcache_cache_dev *cache_dev)
 
 	wait_event(ctx->inflight_wq, atomic_read(&ctx->inflight_reqs) == 0);
 
+	/* Flush any metadata staged but not yet written before tearing down. */
+	cache_dev_meta_drain(cache_dev);
+	flush_work(&ctx->meta_stage_work);
+
 	flush_work(&ctx->req_submit_work);
 	flush_work(&ctx->req_complete_work);
 
+	mempool_exit(&ctx->meta_stage_pool);
 	mempool_exit(&ctx->bvec_pool);
 	mempool_exit(&ctx->req_pool);
 }
@@ -484,7 +579,15 @@ int pcache_cache_dev_req_init(void)
 		goto destroy_req_cache;
 	}
 
+	cache_dev_meta_stage_cache = KMEM_CACHE(pcache_meta_stage, 0);
+	if (!cache_dev_meta_stage_cache) {
+		ret = -ENOMEM;
+		goto destroy_bvec_cache;
+	}
+
 	return 0;
+destroy_bvec_cache:
+	kmem_cache_destroy(cache_dev_bvec_cache);
 destroy_req_cache:
 	kmem_cache_destroy(cache_dev_req_cache);
 err:
@@ -493,6 +596,7 @@ err:
 
 void pcache_cache_dev_req_exit(void)
 {
+	kmem_cache_destroy(cache_dev_meta_stage_cache);
 	kmem_cache_destroy(cache_dev_bvec_cache);
 	kmem_cache_destroy(cache_dev_req_cache);
 }

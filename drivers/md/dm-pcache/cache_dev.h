@@ -255,9 +255,47 @@ static inline void cmedium_zero(struct pcache_cache_dev *cache_dev, u64 off,
 	dax_flush(cache_dev->dm_dev->dax_dev, addr, len);
 }
 
+/*
+ * cmedium_stage_write - metadata write that is safe under a spinlock.
+ *
+ * PMEM: identical to cmedium_write (a non-sleeping cache-line copy).
+ * NVMe: the synchronous bio of cmedium_write would sleep, so stage the
+ *       bytes and let the metadata worker write them outside any lock.
+ *
+ * Callers must reach a cmedium_flush (which drains staged metadata) before
+ * relying on the bytes being durable.
+ */
+static inline void cmedium_stage_write(struct pcache_cache_dev *cache_dev, u64 off,
+				       const void *src, size_t len)
+{
+	if (cache_dev->backend == PCACHE_CACHE_DEV_NVME) {
+		cache_dev_meta_stage_write(cache_dev, off, src, len);
+		return;
+	}
+	memcpy_flushcache(cmedium_addr(cache_dev, off), src, len);
+}
+
+/*
+ * cmedium_stage_barrier - ordering point for staged metadata, usable under a
+ * spinlock.
+ *
+ * PMEM: pmem_wmb, the same store barrier cmedium_flush issues. NVMe: a no-op
+ * — staged metadata is ordered by the FIFO worker and made durable at the
+ * next cmedium_flush (the upper FLUSH boundary), so there is nothing to do
+ * here and, crucially, nothing that sleeps.
+ */
+static inline void cmedium_stage_barrier(struct pcache_cache_dev *cache_dev)
+{
+	if (cache_dev->backend == PCACHE_CACHE_DEV_NVME)
+		return;
+	pmem_wmb();
+}
+
 static inline void cmedium_flush(struct pcache_cache_dev *cache_dev)
 {
 	if (cache_dev->backend == PCACHE_CACHE_DEV_NVME) {
+		/* Make sure staged metadata has reached the device first. */
+		cache_dev_meta_drain(cache_dev);
 		cache_dev_bdev_flush(cache_dev);
 		return;
 	}

@@ -127,9 +127,15 @@ static void cache_seg_ctrl_write(struct pcache_cache_segment *cache_seg)
 
 	cache_seg->gen_index = (cache_seg->gen_index + 1) % PCACHE_META_INDEX_MAX;
 
-	cmedium_write(cache_dev, cmedium_off(cache_dev, get_cache_seg_gen_addr(cache_seg)),
-		      &cache_seg_gen, sizeof(struct pcache_cache_seg_gen));
-	cmedium_flush(cache_dev);
+	/*
+	 * Reached under cache_subtree->tree_lock via cache_seg_put() ->
+	 * cache_seg_invalidate(), so this must not sleep. Stage the write; it
+	 * is made durable at the next cmedium_flush (FLUSH boundary), before
+	 * any reuse of this segment's data can be acknowledged.
+	 */
+	cmedium_stage_write(cache_dev, cmedium_off(cache_dev, get_cache_seg_gen_addr(cache_seg)),
+			    &cache_seg_gen, sizeof(struct pcache_cache_seg_gen));
+	cmedium_stage_barrier(cache_dev);
 }
 
 static void cache_seg_ctrl_init(struct pcache_cache_segment *cache_seg)

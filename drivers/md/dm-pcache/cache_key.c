@@ -199,9 +199,9 @@ static void append_last_kset(struct pcache_cache *cache, u32 next_seg)
 	kset_onmedia.magic = PCACHE_KSET_MAGIC;
 	kset_onmedia.crc = cache_kset_crc(&kset_onmedia);
 
-	cmedium_write(cache_dev, cmedium_off(cache_dev, get_key_head_addr(cache)),
-		      &kset_onmedia, sizeof(struct pcache_cache_kset_onmedia));
-	cmedium_flush(cache_dev);
+	cmedium_stage_write(cache_dev, cmedium_off(cache_dev, get_key_head_addr(cache)),
+			    &kset_onmedia, sizeof(struct pcache_cache_kset_onmedia));
+	cmedium_stage_barrier(cache_dev);
 	cache_pos_advance(&cache->key_head, sizeof(struct pcache_cache_kset_onmedia));
 }
 
@@ -232,8 +232,8 @@ again:
 		}
 
 		/* clear outdated kset in next seg */
-		cmedium_write(cache_dev, cmedium_off(cache_dev, next_seg->segment.data),
-			      &pcache_empty_kset, sizeof(struct pcache_cache_kset_onmedia));
+		cmedium_stage_write(cache_dev, cmedium_off(cache_dev, next_seg->segment.data),
+				    &pcache_empty_kset, sizeof(struct pcache_cache_kset_onmedia));
 		append_last_kset(cache, next_seg->cache_seg_id);
 		cache->key_head.cache_seg = next_seg;
 		cache->key_head.seg_off = 0;
@@ -243,14 +243,14 @@ again:
 	kset_onmedia->magic = PCACHE_KSET_MAGIC;
 	kset_onmedia->crc = cache_kset_crc(kset_onmedia);
 
-	/* clear outdated kset after current kset */
-	cmedium_write(cache_dev,
-		      cmedium_off(cache_dev, get_key_head_addr(cache) + kset_onmedia_size),
-		      &pcache_empty_kset, sizeof(struct pcache_cache_kset_onmedia));
 	/* write current kset into segment */
-	cmedium_write(cache_dev, cmedium_off(cache_dev, get_key_head_addr(cache)),
-		      kset_onmedia, kset_onmedia_size);
-	cmedium_flush(cache_dev);
+	cmedium_stage_write(cache_dev, cmedium_off(cache_dev, get_key_head_addr(cache)),
+			    kset_onmedia, kset_onmedia_size);
+	/* clear outdated kset after current kset (ordered after the body above) */
+	cmedium_stage_write(cache_dev,
+			    cmedium_off(cache_dev, get_key_head_addr(cache) + kset_onmedia_size),
+			    &pcache_empty_kset, sizeof(struct pcache_cache_kset_onmedia));
+	cmedium_stage_barrier(cache_dev);
 
 	/* reset kset_onmedia */
 	memset(kset_onmedia, 0, sizeof(struct pcache_cache_kset_onmedia));

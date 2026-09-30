@@ -1356,15 +1356,17 @@ int pcache_net_write_to_cache(struct pcache_cache *cache, u64 sector,
  *      with the FLUSH belong to a later epoch and are not waited on here.
  *   2. cmedium_flush pushes the device's volatile write cache to media, so
  *      every byte of data referenced by a key in any kset is now durable.
- *   3. Each open kset is closed in turn — cache_kset_close itself uses
- *      cmedium_write + cmedium_flush, so its on-media record (which may
- *      reference any of the drained data writes) lands strictly after the
- *      data it references.
+ *   3. Each open kset is closed in turn. On NVMe cache_kset_close only
+ *      *stages* its on-media record (cmedium_stage_write); the second
+ *      cmedium_flush below drains those staged writes to the device and
+ *      issues a device cache flush, so the kset records (which may reference
+ *      any of the drained data writes) land strictly after the data they
+ *      reference.
  *
- * On the PMEM backend the drain is a no-op (data writes are synchronous and
- * complete before submit returns) and cmedium_flush is pmem_wmb, so this
- * sequence collapses to the prior behaviour. On NVMe the drain + device
- * flush is the new ordering point.
+ * On the PMEM backend both drains are no-ops (data and metadata writes are
+ * synchronous) and cmedium_flush is pmem_wmb, so this sequence collapses to
+ * the prior behaviour. On NVMe the drain + device flush is the new ordering
+ * point, applied once for data and once for metadata.
  */
 int pcache_cache_flush(struct pcache_cache *cache)
 {
@@ -1373,9 +1375,11 @@ int pcache_cache_flush(struct pcache_cache *cache)
 	int ret;
 	u32 i;
 
+	/* Phase 1: make the cached data durable on media. */
 	cache_dev_data_drain(cache_dev);
 	cmedium_flush(cache_dev);
 
+	/* Phase 2: write out the kset records that reference that data. */
 	for (i = 0; i < cache->n_ksets; i++) {
 		kset = get_kset(cache, i);
 
@@ -1386,6 +1390,9 @@ int pcache_cache_flush(struct pcache_cache *cache)
 		if (ret)
 			return ret;
 	}
+
+	/* Drain the staged kset writes and make them durable, after the data. */
+	cmedium_flush(cache_dev);
 
 	return 0;
 }
