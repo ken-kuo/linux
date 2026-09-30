@@ -159,7 +159,7 @@ void pcache_cache_gc_fn(struct work_struct *work)
 			key = &key_tmp;
 			cache_key_init(&cache->req_key_tree, key);
 
-			ret = cache_key_decode(cache, key_onmedia, key);
+			ret = cache_key_decode(cache, key_onmedia, key, true);
 			if (ret) {
 				/* return without re-arm gc work, and prevent future
 				 * gc, because we can't retry the partial-gc-ed kset

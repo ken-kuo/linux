@@ -354,7 +354,7 @@ static int cache_kset_insert_tree(struct pcache_cache *cache, struct pcache_cach
 		key_onmedia = &kset_onmedia->data[i];
 
 		key = cache_key_alloc(&cache->writeback_key_tree, GFP_NOIO);
-		ret = cache_key_decode(cache, key_onmedia, key);
+		ret = cache_key_decode(cache, key_onmedia, key, true);
 		if (ret) {
 			cache_key_put(key);
 			goto clear_tree;

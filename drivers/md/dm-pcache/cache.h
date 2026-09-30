@@ -270,7 +270,7 @@ int cache_key_append(struct pcache_cache *cache, struct pcache_cache_key *key, b
 void cache_key_insert(struct pcache_cache_tree *cache_tree, struct pcache_cache_key *key, bool fixup);
 int cache_key_decode(struct pcache_cache *cache,
 			struct pcache_cache_key_onmedia *key_onmedia,
-			struct pcache_cache_key *key);
+			struct pcache_cache_key *key, bool verify_data);
 void cache_pos_advance(struct pcache_cache_pos *pos, u32 len);
 
 #define PCACHE_KSET_FLAGS_LAST		BIT(0)

@@ -126,7 +126,7 @@ static int cache_key_compute_data_crc_from_medium(struct pcache_cache *cache,
 
 int cache_key_decode(struct pcache_cache *cache,
 			struct pcache_cache_key_onmedia *key_onmedia,
-			struct pcache_cache_key *key)
+			struct pcache_cache_key *key, bool verify_data)
 {
 	struct dm_pcache *pcache = CACHE_TO_PCACHE(cache);
 	u64 dev_bytes = (u64)cache->dev_size << SECTOR_SHIFT;
@@ -164,13 +164,15 @@ int cache_key_decode(struct pcache_cache *cache,
 	key->data_crc = key_onmedia->data_crc;
 
 	/*
-	 * Only verify data_crc for a key that is still current. A key whose
-	 * segment has since been recycled (seg_gen < the segment's current
-	 * gen) is stale — kset_replay will drop it below, and its bytes on the
-	 * medium now belong to a newer generation, so reading them back to
-	 * check the recorded crc would spuriously fail and abort replay.
+	 * Verify data_crc only when @verify_data is set and only for a key that
+	 * is still current. A key whose segment has since been recycled
+	 * (seg_gen < the segment's current gen) is stale — its bytes on the
+	 * medium now belong to a newer generation, so reading them back to check
+	 * the recorded crc would spuriously fail. A mismatch returns -EBADMSG so
+	 * the caller can tell "the referenced data did not land" apart from a
+	 * genuine I/O or memory error (see cache_replay).
 	 */
-	if (cache_data_crc_on(cache) &&
+	if (verify_data && cache_data_crc_on(cache) &&
 	    key->seg_gen >= key->cache_pos.cache_seg->gen) {
 		u32 actual_crc = 0;
 		int ret;
@@ -179,10 +181,10 @@ int cache_key_decode(struct pcache_cache *cache,
 		if (ret)
 			return ret;
 		if (actual_crc != key_onmedia->data_crc) {
-			pcache_dev_err(pcache, "key: %llu:%u seg %u:%u data_crc error: %x, expected: %x\n",
-					key->off, key->len, key->cache_pos.cache_seg->cache_seg_id,
-					key->cache_pos.seg_off, actual_crc, key_onmedia->data_crc);
-			return -EIO;
+			pcache_dev_debug(pcache, "key: %llu:%u seg %u:%u data_crc error: %x, expected: %x\n",
+					 key->off, key->len, key->cache_pos.cache_seg->cache_seg_id,
+					 key->cache_pos.seg_off, actual_crc, key_onmedia->data_crc);
+			return -EBADMSG;
 		}
 	}
 
@@ -812,14 +814,35 @@ static int kset_replay(struct pcache_cache *cache, struct pcache_cache_kset_onme
 	int ret;
 	int i;
 
+	/*
+	 * Pass 1: verify that every current key's data actually landed before
+	 * applying any of the kset. On the BIO backend a crash can leave a valid
+	 * (durable) kset that references a data write which never completed; such
+	 * a key is the torn end-of-log (see cache_replay) and must not be
+	 * applied. Verifying up front keeps a torn kset all-or-nothing, so replay
+	 * never leaves a half-applied kset in the tree.
+	 */
+	key = cache_key_alloc(&cache->req_key_tree, GFP_NOIO);
+	for (i = 0; i < kset_onmedia->key_num; i++) {
+		key_onmedia = &kset_onmedia->data[i];
+
+		ret = cache_key_decode(cache, key_onmedia, key, true);
+		if (ret) {
+			cache_key_put(key);
+			return ret;
+		}
+	}
+	cache_key_put(key);
+
+	/* Pass 2: all keys verified — apply them (data read already done above). */
 	for (i = 0; i < kset_onmedia->key_num; i++) {
 		key_onmedia = &kset_onmedia->data[i];
 
 		key = cache_key_alloc(&cache->req_key_tree, GFP_NOIO);
-		ret = cache_key_decode(cache, key_onmedia, key);
+		ret = cache_key_decode(cache, key_onmedia, key, false);
 		if (ret) {
 			cache_key_put(key);
-			goto err;
+			return ret;
 		}
 
 		/* Check if the segment generation is valid for insertion. */
@@ -837,8 +860,6 @@ static int kset_replay(struct pcache_cache *cache, struct pcache_cache_kset_onme
 	}
 
 	return 0;
-err:
-	return ret;
 }
 
 int cache_replay(struct pcache_cache *cache)
@@ -908,6 +929,34 @@ int cache_replay(struct pcache_cache *cache)
 		}
 
 		ret = kset_replay(cache, kset_onmedia);
+		if (ret == -EBADMSG) {
+			/*
+			 * A key in this kset references data that did not land.
+			 *
+			 * BIO backend: an auto-closed kset can be made durable by
+			 * an unrelated flush without first draining its data, so a
+			 * crash can tear the last in-flight write while its kset
+			 * survives. Treat this as the torn end-of-log (like a torn
+			 * kset above), recover the committed prefix, and discard
+			 * the un-flushed tail — which was never behind a completed
+			 * FLUSH and is legitimately lost.
+			 *
+			 * DAX backend: data is made durable synchronously before
+			 * its key is appended, so a mismatch is real media
+			 * corruption of committed data — fail loud.
+			 */
+			if (cache_dev_is_bio(cache->cache_dev)) {
+				pcache_dev_info(pcache,
+						"replay: data at %u:%u did not land before crash; discarding un-flushed torn tail and recovering committed prefix\n",
+						pos->cache_seg->cache_seg_id, pos->seg_off);
+				ret = 0;
+				break;
+			}
+			pcache_dev_err(pcache,
+				       "replay: data_crc mismatch at %u:%u on DAX cache indicates media corruption\n",
+				       pos->cache_seg->cache_seg_id, pos->seg_off);
+			goto out;
+		}
 		if (ret)
 			goto out;
 
