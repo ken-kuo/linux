@@ -4,6 +4,10 @@
 
 #include <linux/device.h>
 #include <linux/device-mapper.h>
+#include <linux/dax.h>
+#include <linux/libnvdimm.h>
+#include <linux/string.h>
+#include <linux/uio.h>
 
 #include "pcache_internal.h"
 
@@ -102,5 +106,76 @@ void cache_dev_stop(struct dm_pcache *pcache);
 void cache_dev_zero_range(struct pcache_cache_dev *cache_dev, void *pos, u32 size);
 
 int cache_dev_get_empty_segment_id(struct pcache_cache_dev *cache_dev, u32 *seg_id);
+
+/*
+ * cmedium_* — byte-offset access to the cache medium.
+ *
+ * dm-pcache reaches the cache device today by computing a virtual address
+ * inside the DAX whole-device kernel mapping and issuing pmem-aware
+ * primitives (memcpy_flushcache, copy_mc_to_kernel, dax_flush). To allow
+ * the same call sites to address a non-byte-addressable medium (e.g. an
+ * NVMe block device) without leaking the access model into callers,
+ * primitives below take a byte offset rather than a raw pointer.
+ *
+ * The current implementation is a thin wrapper over the existing pmem
+ * primitives. cmedium_write makes the bytes cache-line durable but does
+ * not issue a store barrier; cmedium_flush is the explicit ordering point
+ * (pmem_wmb / SFENCE on x86). cmedium_zero matches cache_dev_zero_range
+ * and is also unfenced — callers must follow with cmedium_flush if a
+ * dependent write requires the zeros to have landed first.
+ */
+static inline void *cmedium_addr(struct pcache_cache_dev *cache_dev, u64 off)
+{
+	return (char *)cache_dev->mapping + off;
+}
+
+static inline u64 cmedium_off(struct pcache_cache_dev *cache_dev, const void *addr)
+{
+	return (u64)((const char *)addr - (const char *)cache_dev->mapping);
+}
+
+static inline int cmedium_read(struct pcache_cache_dev *cache_dev, void *dst,
+			       u64 off, size_t len)
+{
+	if (copy_mc_to_kernel(dst, cmedium_addr(cache_dev, off), len))
+		return -EIO;
+	return 0;
+}
+
+static inline int cmedium_read_iter(struct pcache_cache_dev *cache_dev, u64 off,
+				    size_t len, struct iov_iter *iter)
+{
+	if (_copy_mc_to_iter(cmedium_addr(cache_dev, off), len, iter) != len)
+		return -EIO;
+	return 0;
+}
+
+static inline void cmedium_write(struct pcache_cache_dev *cache_dev, u64 off,
+				 const void *src, size_t len)
+{
+	memcpy_flushcache(cmedium_addr(cache_dev, off), src, len);
+}
+
+static inline int cmedium_write_iter(struct pcache_cache_dev *cache_dev, u64 off,
+				     size_t len, struct iov_iter *iter)
+{
+	if (_copy_from_iter_flushcache(cmedium_addr(cache_dev, off), len, iter) != len)
+		return -EIO;
+	return 0;
+}
+
+static inline void cmedium_zero(struct pcache_cache_dev *cache_dev, u64 off,
+				size_t len)
+{
+	void *addr = cmedium_addr(cache_dev, off);
+
+	memset(addr, 0, len);
+	dax_flush(cache_dev->dm_dev->dax_dev, addr, len);
+}
+
+static inline void cmedium_flush(struct pcache_cache_dev *cache_dev)
+{
+	pmem_wmb();
+}
 
 #endif /* _PCACHE_CACHE_DEV_H */
