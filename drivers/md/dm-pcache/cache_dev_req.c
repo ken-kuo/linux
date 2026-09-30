@@ -362,6 +362,10 @@ void cache_dev_meta_drain(struct pcache_cache_dev *cache_dev)
 	struct pcache_cache_dev_req_ctx *ctx = &cache_dev->req_ctx;
 	u64 target;
 
+	/* Metadata is only staged on the NVMe backend. */
+	if (cache_dev->backend != PCACHE_CACHE_DEV_NVME)
+		return;
+
 	/*
 	 * Snapshot the staged-write count and wait for completions to catch
 	 * up. Mirrors cache_dev_data_drain: writes staged after the snapshot
@@ -376,6 +380,10 @@ void cache_dev_data_drain(struct pcache_cache_dev *cache_dev)
 {
 	struct pcache_cache_dev_req_ctx *ctx = &cache_dev->req_ctx;
 	u64 target;
+
+	/* Data writes are only asynchronous (and thus drained) on NVMe. */
+	if (cache_dev->backend != PCACHE_CACHE_DEV_NVME)
+		return;
 
 	/*
 	 * Snapshot the number of data writes that have been submitted up
@@ -501,6 +509,17 @@ int cache_dev_req_ctx_init(struct pcache_cache_dev *cache_dev)
 	struct pcache_cache_dev_req_ctx *ctx = &cache_dev->req_ctx;
 	int ret;
 
+	/*
+	 * The cache_dev_req machinery (request/bvec/meta-stage mempools and
+	 * the submit/complete/meta workqueues) backs bio I/O to the cache
+	 * medium, which only the NVMe backend performs. PMEM reaches the
+	 * medium through its DAX mapping (memcpy/dax_flush) and never touches
+	 * req_ctx, so skip the setup — and the multi-MiB mempool reserves —
+	 * entirely on PMEM.
+	 */
+	if (cache_dev->backend != PCACHE_CACHE_DEV_NVME)
+		return 0;
+
 	ret = mempool_init_slab_pool(&ctx->req_pool, 128, cache_dev_req_cache);
 	if (ret)
 		return ret;
@@ -545,6 +564,10 @@ req_pool_exit:
 void cache_dev_req_ctx_exit(struct pcache_cache_dev *cache_dev)
 {
 	struct pcache_cache_dev_req_ctx *ctx = &cache_dev->req_ctx;
+
+	/* Nothing was initialised on PMEM (see cache_dev_req_ctx_init). */
+	if (cache_dev->backend != PCACHE_CACHE_DEV_NVME)
+		return;
 
 	wait_event(ctx->inflight_wq, atomic_read(&ctx->inflight_reqs) == 0);
 
