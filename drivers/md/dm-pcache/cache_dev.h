@@ -174,24 +174,15 @@ static inline int cmedium_read(struct pcache_cache_dev *cache_dev, void *dst,
 static inline int cmedium_read_iter(struct pcache_cache_dev *cache_dev, u64 off,
 				    size_t len, struct iov_iter *iter)
 {
-	if (cache_dev->backend == PCACHE_CACHE_DEV_NVME) {
-		/*
-		 * Bounce-buffered read: pull the bytes off the cache device
-		 * into a kernel buffer, then copy into the caller's iter.
-		 * Two copies; acceptable for the current sync data path on
-		 * NVMe and replaced by zero-copy bio plumbing later.
-		 */
-		void *buf = kvmalloc(len, GFP_NOIO);
-		int ret;
-
-		if (!buf)
-			return -ENOMEM;
-		ret = cache_dev_sync_kmem_io(cache_dev, buf, off, len, REQ_OP_READ);
-		if (!ret && copy_to_iter(buf, len, iter) != len)
-			ret = -EIO;
-		kvfree(buf);
-		return ret;
-	}
+	/*
+	 * Per-bio data copies are issued as asynchronous bios on the NVMe
+	 * backend (cache_hit_read_submit / cache_data_write_submit submit a
+	 * CACHE_DEV_REQ_TYPE_REQ directly), so this byte-copy helper is only
+	 * reached on PMEM. Flag — rather than silently bounce — any future
+	 * caller that routes an NVMe data copy through here.
+	 */
+	if (WARN_ON_ONCE(cache_dev->backend == PCACHE_CACHE_DEV_NVME))
+		return -EOPNOTSUPP;
 
 	if (_copy_mc_to_iter(cmedium_addr(cache_dev, off), len, iter) != len)
 		return -EIO;
@@ -215,26 +206,9 @@ static inline void cmedium_write(struct pcache_cache_dev *cache_dev, u64 off,
 static inline int cmedium_write_iter(struct pcache_cache_dev *cache_dev, u64 off,
 				     size_t len, struct iov_iter *iter)
 {
-	if (cache_dev->backend == PCACHE_CACHE_DEV_NVME) {
-		/*
-		 * Bounce-buffered write: copy from the caller's iter into a
-		 * kernel buffer, then push to the cache device. Used by the
-		 * promote-on-miss path; replaced by a zero-copy TYPE_REQ
-		 * submit later.
-		 */
-		void *buf = kvmalloc(len, GFP_NOIO);
-		int ret;
-
-		if (!buf)
-			return -ENOMEM;
-		if (copy_from_iter(buf, len, iter) != len) {
-			kvfree(buf);
-			return -EIO;
-		}
-		ret = cache_dev_sync_kmem_io(cache_dev, buf, off, len, REQ_OP_WRITE);
-		kvfree(buf);
-		return ret;
-	}
+	/* PMEM-only, like cmedium_read_iter; the NVMe data path is async. */
+	if (WARN_ON_ONCE(cache_dev->backend == PCACHE_CACHE_DEV_NVME))
+		return -EOPNOTSUPP;
 
 	if (_copy_from_iter_flushcache(cmedium_addr(cache_dev, off), len, iter) != len)
 		return -EIO;
