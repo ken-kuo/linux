@@ -782,15 +782,21 @@ static int dm_pcache_map_bio(struct dm_target *ti, struct bio *bio)
 	 * guard; its per-subtree/per-kset/per-segment locks and the per-CPU
 	 * data head make concurrent execution safe.
 	 *
-	 * Two cases must not run here and are deferred to the workqueue:
+	 * Cases that must not run here and are deferred to the workqueue:
 	 *  - REQ_PREFLUSH: pcache_cache_flush() drains in-flight writes and
 	 *    issues a device flush, i.e. it *waits* on inner bios, which would
 	 *    deadlock under the submit recursion.
+	 *  - a FUA write on the BIO backend: it is completed with a flush (see
+	 *    pcache_cache_handle_req) so its data and kset mapping are on media
+	 *    before ack, and that flush waits. DAX writes are durable on
+	 *    completion, so FUA needs no deferral there.
 	 *  - -EBUSY: the request can make no progress yet (cache full awaiting
 	 *    GC/writeback, or a read that hit a WRITING key); it is retried when
 	 *    pcache_defer_reqs_kick() wakes the deferred list.
 	 */
-	if (bio->bi_opf & REQ_PREFLUSH) {
+	if ((bio->bi_opf & REQ_PREFLUSH) ||
+	    ((bio->bi_opf & REQ_FUA) && bio_data_dir(bio) == WRITE &&
+	     cache_dev_is_bio(&pcache->cache_dev))) {
 		defer_req(pcache_req);
 		return DM_MAPIO_SUBMITTED;
 	}

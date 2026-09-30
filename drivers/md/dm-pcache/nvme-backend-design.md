@@ -225,6 +225,22 @@ Because data streams continuously (§6.2), step 3 drains only the last handful o
 the durability-frontier metadata with FUA → flush) precedes `dirty_tail` advance
 (writeback) and `key_tail` advance (GC).
 
+#### FUA writes
+
+A `REQ_FUA` write must be crash-recoverable the moment it is acked — both its cached data
+**and** the kset entry mapping its logical range to the cache location must be on media
+before completion. On **DAX** this is automatic: the data copy and the force-closed kset
+are made durable synchronously (`memcpy_flushcache` + `pmem_wmb`).
+
+On **BIO** the data alone would be durable — `cache_data_write_submit` clones the upper
+bio, so the cache-device write inherits `REQ_FUA` and the device flushes it before
+completing — but the kset mapping is only *staged*. So a FUA write on BIO is deferred to
+the workqueue (like `REQ_PREFLUSH`; it must wait, so it can't run in the submitter
+context), and after `cache_write`, `pcache_cache_handle_req` runs `pcache_cache_flush()`
+to drain + device-flush the data and the staged kset before the upper bio is acked.
+Without this, a crash right after the ack would lose the mapping and replay would serve
+stale data from the backing device.
+
 ### 6.6 Promote-on-miss (`miss_read_end_req`)
 
 On **DAX** the backing-read completion synchronously copies the data into the cache (an inline
@@ -387,18 +403,3 @@ it are explicitly **not** implemented.
 
 - Whether to submit kset bios eagerly on close (warm the device) or hold until the flush
   boundary (fewer small writes); tunable.
-
-- **FUA durability of the kset mapping on BIO.** A `REQ_FUA` write must be crash-recoverable the
-  moment it is acked. On BIO the *data* is fine — `cache_data_write_submit` clones the upper bio,
-  so the cache-device write inherits `REQ_FUA` and the device flushes it to media before
-  completing. The *kset mapping* is not: `cache_write` passes `fua` to `cache_key_append` as
-  `force_close`, but on BIO `cache_kset_close` only *stages* the kset write (async, no device
-  flush), and the FUA bio is acked when the data write completes — before the kset is written and
-  flushed. A crash just after the ack loses the mapping; replay can't find the cached extent, so
-  reads fall through to the stale backing device and the acked write is effectively invisible.
-  DAX is unaffected (its `force_close` does a synchronous `cmedium_flush`/`pmem_wmb`). This
-  predates the submitter-context work — it came in with the async BIO write path.
-
-  Fix direction: on a FUA write (BIO), before completing the upper bio, drain + device-flush the
-  data write *and* drain + flush the staged kset that references it — a write-scoped equivalent of
-  the REQ_PREFLUSH phase-1/phase-2 ordering, or route FUA writes through the deferred flush path.

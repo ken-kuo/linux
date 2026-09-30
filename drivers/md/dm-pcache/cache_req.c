@@ -1553,6 +1553,7 @@ int pcache_cache_flush(struct pcache_cache *cache)
 int pcache_cache_handle_req(struct pcache_cache *cache, struct pcache_request *pcache_req)
 {
 	struct bio *bio = pcache_req->bio;
+	int ret;
 
 	if (unlikely(bio->bi_opf & REQ_PREFLUSH))
 		return pcache_cache_flush(cache);
@@ -1560,5 +1561,18 @@ int pcache_cache_handle_req(struct pcache_cache *cache, struct pcache_request *p
 	if (bio_data_dir(bio) == READ)
 		return cache_read(cache, pcache_req);
 
-	return cache_write(cache, pcache_req);
+	ret = cache_write(cache, pcache_req);
+	/*
+	 * FUA on the BIO backend: the cached data reaches media (the
+	 * cache-device write clone inherits REQ_FUA), but the key that maps
+	 * the logical range to that cache location is only staged by
+	 * cache_kset_close. Flush so the mapping is on media too before the
+	 * write is acked; without it a crash right after the ack loses the
+	 * mapping, and replay would serve stale data from the backing device.
+	 * On DAX the write and its force-closed kset are already durable on
+	 * completion (synchronous copy + pmem_wmb), so no flush is needed.
+	 */
+	if (!ret && (bio->bi_opf & REQ_FUA) && cache_dev_is_bio(cache->cache_dev))
+		ret = pcache_cache_flush(cache);
+	return ret;
 }
