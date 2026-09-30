@@ -79,10 +79,49 @@ static void cache_key_encode(struct pcache_cache *cache,
 	key_onmedia->cache_seg_off = key->cache_pos.seg_off;
 
 	key_onmedia->seg_gen = key->seg_gen;
-	key_onmedia->flags = key->flags;
+	/*
+	 * WRITING is an in-memory marker for a cache-device data write that is
+	 * still in flight. On the async (NVMe) path the key is appended to the
+	 * kset while its data write is outstanding, so the flag may still be
+	 * set here; it must never be persisted. By the time a kset is made
+	 * durable the referenced data write has completed (FLUSH drains data
+	 * before writing ksets), so the on-media key is a valid extent. A
+	 * persisted WRITING flag would make replay treat the key as a write in
+	 * progress forever, deferring every read that hits it (-EBUSY).
+	 */
+	key_onmedia->flags = key->flags & ~PCACHE_CACHE_KEY_FLAGS_WRITING;
 
 	if (cache_data_crc_on(cache))
 		key_onmedia->data_crc = cache_key_data_crc(key);
+}
+
+/*
+ * Read the key's cached bytes off the medium and compute crc32c. Used
+ * at replay time (cache_key_decode) where the in-memory key->data_crc
+ * has not been populated yet and we must verify against the on-media
+ * value by actually fetching the data. Works on both backends because
+ * cmedium_read routes through the appropriate medium ops.
+ */
+static int cache_key_compute_data_crc_from_medium(struct pcache_cache *cache,
+						  struct pcache_cache_key *key,
+						  u32 *crc_out)
+{
+	struct pcache_cache_dev *cache_dev = cache->cache_dev;
+	struct pcache_segment *segment = &key->cache_pos.cache_seg->segment;
+	u64 cdev_off;
+	void *buf;
+	int ret;
+
+	buf = kvmalloc(key->len, GFP_NOIO);
+	if (!buf)
+		return -ENOMEM;
+
+	cdev_off = cmedium_off(cache_dev, segment->data) + key->cache_pos.seg_off;
+	ret = cmedium_read(cache_dev, buf, cdev_off, key->len);
+	if (!ret)
+		*crc_out = crc32c(PCACHE_CRC_SEED, buf, key->len);
+	kvfree(buf);
+	return ret;
 }
 
 int cache_key_decode(struct pcache_cache *cache,
@@ -122,13 +161,29 @@ int cache_key_decode(struct pcache_cache *cache,
 
 	key->seg_gen = key_onmedia->seg_gen;
 	key->flags = key_onmedia->flags;
+	key->data_crc = key_onmedia->data_crc;
 
+	/*
+	 * Only verify data_crc for a key that is still current. A key whose
+	 * segment has since been recycled (seg_gen < the segment's current
+	 * gen) is stale — kset_replay will drop it below, and its bytes on the
+	 * medium now belong to a newer generation, so reading them back to
+	 * check the recorded crc would spuriously fail and abort replay.
+	 */
 	if (cache_data_crc_on(cache) &&
-			key_onmedia->data_crc != cache_key_data_crc(key)) {
-		pcache_dev_err(pcache, "key: %llu:%u seg %u:%u data_crc error: %x, expected: %x\n",
-				key->off, key->len, key->cache_pos.cache_seg->cache_seg_id,
-				key->cache_pos.seg_off, cache_key_data_crc(key), key_onmedia->data_crc);
-		return -EIO;
+	    key->seg_gen >= key->cache_pos.cache_seg->gen) {
+		u32 actual_crc = 0;
+		int ret;
+
+		ret = cache_key_compute_data_crc_from_medium(cache, key, &actual_crc);
+		if (ret)
+			return ret;
+		if (actual_crc != key_onmedia->data_crc) {
+			pcache_dev_err(pcache, "key: %llu:%u seg %u:%u data_crc error: %x, expected: %x\n",
+					key->off, key->len, key->cache_pos.cache_seg->cache_seg_id,
+					key->cache_pos.seg_off, actual_crc, key_onmedia->data_crc);
+			return -EIO;
+		}
 	}
 
 	return 0;

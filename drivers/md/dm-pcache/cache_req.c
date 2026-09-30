@@ -13,6 +13,38 @@ static int cache_copy_from_req_bio(struct pcache_cache *cache,
 				   struct pcache_request *pcache_req, u32 bio_off);
 
 /*
+ * crc32c over a byte range [@off, @off+@len) of @bio's data, computed
+ * by walking the bvec list with kmap_local_page. Used at write-submit
+ * time to precompute key->data_crc from the upper bio's bytes, so that
+ * cache_key_encode does not need to dereference the cache medium
+ * (which is only memory-mapped on the PMEM backend).
+ */
+static u32 pcache_bio_range_crc32c(struct bio *bio, u32 off, u32 len)
+{
+	struct bvec_iter iter = bio->bi_iter;
+	struct bio_vec bv;
+	u32 crc = PCACHE_CRC_SEED;
+
+	/*
+	 * Skip to @off. bvec_iter_advance walks across bio_vec boundaries;
+	 * bio_advance_iter_single must not be used here because it only
+	 * advances within the current segment, so any @off spanning more than
+	 * one bvec (i.e. all but the smallest writes) would leave the iter
+	 * pointing at the wrong bytes and miscompute the crc.
+	 */
+	bvec_iter_advance(bio->bi_io_vec, &iter, off);
+	iter.bi_size = len;
+
+	__bio_for_each_segment(bv, bio, iter, iter) {
+		void *p = kmap_local_page(bv.bv_page);
+
+		crc = crc32c(crc, p + bv.bv_offset, bv.bv_len);
+		kunmap_local(p);
+	}
+	return crc;
+}
+
+/*
  * Per-sub-key context held across an in-flight cache-device data write.
  * Lives in cache_data_write_ctx_cache; freed by cache_data_write_done.
  *
@@ -99,6 +131,15 @@ static int cache_data_write_submit(struct pcache_cache *cache,
 	ctx->pcache_req = pcache_req;
 	cache_key_get(key);
 	pcache_req_get(pcache_req);
+
+	/*
+	 * Precompute data_crc from the upper bio's bytes while they are
+	 * still trivially accessible. cache_key_encode pulls this value
+	 * out of the key when serializing into the on-media kset.
+	 */
+	if (cache_data_crc_on(cache))
+		key->data_crc = pcache_bio_range_crc32c(pcache_req->bio,
+							io_done, key->len);
 
 	if (cache_dev->backend == PCACHE_CACHE_DEV_NVME) {
 		struct pcache_segment *segment = &key->cache_pos.cache_seg->segment;
@@ -300,6 +341,10 @@ static void miss_read_end_req(struct pcache_backing_dev_req *backing_req, int re
 				cache_key_delete(key);
 				goto unlock;
 			}
+			if (cache_data_crc_on(cache))
+				key->data_crc = pcache_bio_range_crc32c(pcache_req->bio,
+									backing_req->req.bio_off,
+									key->len);
 			key->flags &= ~PCACHE_CACHE_KEY_FLAGS_EMPTY;
 			key->flags |= PCACHE_CACHE_KEY_FLAGS_CLEAN;
 

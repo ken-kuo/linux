@@ -116,6 +116,12 @@ struct pcache_cache_key {
 	u64				off;
 	u32				len;
 	u32				flags;
+	/*
+	 * CRC32C of the cached data, computed at write submission from
+	 * the upper bio's bytes. Valid only when data_crc is enabled on
+	 * the cache; the on-media key_onmedia.data_crc is set from this.
+	 */
+	u32				data_crc;
 	struct pcache_cache_pos		cache_pos;
 	u64				seg_gen;
 };
@@ -530,18 +536,17 @@ static inline void cache_mode_set(struct pcache_cache *cache, u32 cache_mode)
 }
 
 /**
- * cache_key_data_crc - Calculates CRC for data in a cache key.
+ * cache_key_data_crc - Returns the precomputed CRC for the key's data.
  * @key: Pointer to the pcache_cache_key structure.
  *
- * Returns the CRC-32 checksum of the data within the cache key's position.
+ * The CRC is computed once over the upper bio's bytes at write-submission
+ * time (cache_data_write_submit) and stored on the in-memory key. This
+ * avoids dereferencing cache_pos_addr() at encode time, which is unsafe
+ * on the NVMe backend where cache_dev->mapping is NULL.
  */
 static inline u32 cache_key_data_crc(struct pcache_cache_key *key)
 {
-	void *data;
-
-	data = cache_pos_addr(&key->cache_pos);
-
-	return crc32c(PCACHE_CRC_SEED, data, key->len);
+	return key->data_crc;
 }
 
 /**
