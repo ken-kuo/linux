@@ -300,7 +300,7 @@ struct pcache_cache_subtree_walk_ctx {
 	struct pcache_backing_dev_req	*pre_alloc_req;
 	/*
 	 * Pre-allocated cache-device request for serving a read hit on the
-	 * NVMe backend, where the cache-medium read is an async bio rather
+	 * BIO backend, where the cache-medium read is an async bio rather
 	 * than an inline memcpy. Replenished outside the subtree lock on
 	 * SUBTREE_WALK_RET_NEED_REQ, mirroring pre_alloc_req.
 	 */
@@ -549,7 +549,7 @@ static inline void cache_mode_set(struct pcache_cache *cache, u32 cache_mode)
  * The CRC is computed once over the upper bio's bytes at write-submission
  * time (cache_data_write_submit) and stored on the in-memory key. This
  * avoids dereferencing cache_pos_addr() at encode time, which is unsafe
- * on the NVMe backend where cache_dev->mapping is NULL.
+ * on the BIO backend where cache_dev->mapping is NULL.
  */
 static inline u32 cache_key_data_crc(struct pcache_cache_key *key)
 {

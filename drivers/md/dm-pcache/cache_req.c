@@ -17,7 +17,7 @@ static int cache_copy_from_req_bio(struct pcache_cache *cache,
  * by walking the bvec list with kmap_local_page. Used at write-submit
  * time to precompute key->data_crc from the upper bio's bytes, so that
  * cache_key_encode does not need to dereference the cache medium
- * (which is only memory-mapped on the PMEM backend).
+ * (which is only memory-mapped on the DAX backend).
  */
 static u32 pcache_bio_range_crc32c(struct bio *bio, u32 off, u32 len)
 {
@@ -54,7 +54,7 @@ static u32 pcache_bio_range_crc32c(struct bio *bio, u32 off, u32 len)
  *                case the tree drops its reference (e.g. via overwrite
  *                fixup) while the data write is still in flight.
  *   pcache_req:  cache_data_write_submit takes one ref via pcache_req_get;
- *                cache_data_write_done drops it. On NVMe this rides
+ *                cache_data_write_done drops it. On BIO this rides
  *                alongside the ref cache_dev_req takes internally — both
  *                are dropped before end_req runs.
  */
@@ -102,9 +102,9 @@ static void cache_data_write_done_cb(struct pcache_cache_dev_req *req, int ret)
 /*
  * cache_data_write_submit - issue the cache-device write for @key's data.
  *
- * PMEM: synchronously copies from the upper bio into the mapped pmem and
+ * DAX: synchronously copies from the upper bio into the mapped medium and
  *       invokes cache_data_write_done inline.
- * NVMe: builds a CACHE_DEV_REQ_TYPE_REQ bio (zero-copy of the upper bio
+ * BIO: builds a CACHE_DEV_REQ_TYPE_REQ bio (zero-copy of the upper bio
  *       pages) and submits it; cache_data_write_done fires from the bio
  *       completion path.
  *
@@ -141,7 +141,7 @@ static int cache_data_write_submit(struct pcache_cache *cache,
 		key->data_crc = pcache_bio_range_crc32c(pcache_req->bio,
 							io_done, key->len);
 
-	if (cache_dev->backend == PCACHE_CACHE_DEV_NVME) {
+	if (cache_dev_is_bio(cache_dev)) {
 		struct pcache_segment *segment = &key->cache_pos.cache_seg->segment;
 		struct pcache_cache_dev_req_opts opts = { 0 };
 		struct pcache_cache_dev_req *req;
@@ -169,7 +169,7 @@ static int cache_data_write_submit(struct pcache_cache *cache,
 		return 0;
 	}
 
-	/* PMEM: synchronous copy + inline completion */
+	/* DAX: synchronous copy + inline completion */
 	ret = cache_copy_from_req_bio(cache, key, pcache_req, io_done);
 	if (ret) {
 		cache_key_put(key);
@@ -291,7 +291,7 @@ static int cache_copy_to_req_bio(struct pcache_cache *cache, struct pcache_reque
 }
 
 /*
- * cache_hit_read_done - completion for an async cache-medium read hit (NVMe).
+ * cache_hit_read_done - completion for an async cache-medium read hit (BIO).
  *
  * Drops the segment reference taken in cache_hit_read_submit that pinned the
  * cached data against GC for the duration of the bio. cache_dev_req_end then
@@ -337,14 +337,14 @@ get_pre_alloc_cdev_req(struct pcache_cache_subtree_walk_ctx *ctx)
 /*
  * cache_hit_read_submit - serve a read hit by reading the cache medium.
  *
- * On the PMEM backend the cached bytes are memory-mapped, so copy them into
- * the upper bio inline. On the NVMe backend the cache medium is not
+ * On the DAX backend the cached bytes are memory-mapped, so copy them into
+ * the upper bio inline. On the BIO backend the cache medium is not
  * byte-addressable: issue an asynchronous bio that DMAs the cached data
  * directly into the upper bio's pages (zero-copy), refcounting the upper
  * request so it completes when this and all sibling sub-requests finish.
  *
  * The inline memcpy in cache_copy_to_req_bio runs under the subtree spinlock,
- * which is fine for a memory copy but must never sleep — so the NVMe bio is
+ * which is fine for a memory copy but must never sleep — so the cache-device bio is
  * only queued here (cache_dev_req_submit with direct=false) and submitted from
  * the workqueue outside any lock. A segment reference pins the cached data
  * for the lifetime of the bio.
@@ -364,7 +364,7 @@ static int cache_hit_read_submit(struct pcache_cache *cache,
 	struct pcache_cache_dev_req_opts opts = { 0 };
 	struct pcache_cache_dev_req *req;
 
-	if (cache_dev->backend != PCACHE_CACHE_DEV_NVME)
+	if (!cache_dev_is_bio(cache_dev))
 		return cache_copy_to_req_bio(cache, ctx->pcache_req, bio_off, len,
 					     pos, key_gen);
 
@@ -441,7 +441,7 @@ static void miss_read_end_req(struct pcache_backing_dev_req *backing_req, int re
 			}
 
 			/*
-			 * Promote-on-miss is currently PMEM-only. On the NVMe
+			 * Promote-on-miss is currently DAX-only. On the BIO
 			 * backend the synchronous data copy below would sleep
 			 * (cache_dev_sync_kmem_io waits for the bio) while
 			 * holding cache_subtree->tree_lock, which is a spinlock.
@@ -451,7 +451,7 @@ static void miss_read_end_req(struct pcache_backing_dev_req *backing_req, int re
 			 * promote that drops the lock around the copy is
 			 * follow-on work (see design doc, Phase 3e).
 			 */
-			if (cache->cache_dev->backend == PCACHE_CACHE_DEV_NVME) {
+			if (cache_dev_is_bio(cache->cache_dev)) {
 				cache_key_delete(key);
 				goto unlock;
 			}
@@ -1043,7 +1043,7 @@ search:
 
 	if (ret == SUBTREE_WALK_RET_NEED_REQ) {
 		/*
-		 * A read miss needs a backing_dev_req; a read hit on the NVMe
+		 * A read miss needs a backing_dev_req; a read hit on the BIO
 		 * backend needs a cache_dev_req for the async cache-medium read.
 		 * The walk does not report which, so replenish whichever slot is
 		 * empty with a blocking allocation. Any leftover is released in
@@ -1053,7 +1053,7 @@ search:
 			walk_ctx.pre_alloc_req = cache_miss_req_alloc(cache, pcache_req, GFP_NOIO);
 			pcache_dev_debug(CACHE_TO_PCACHE(cache), "allocate pre_alloc_req with GFP_NOIO");
 		}
-		if (cache->cache_dev->backend == PCACHE_CACHE_DEV_NVME &&
+		if (cache_dev_is_bio(cache->cache_dev) &&
 		    !walk_ctx.pre_alloc_cdev_req) {
 			struct pcache_cache_dev_req_opts opts = { 0 };
 
@@ -1163,9 +1163,9 @@ int pcache_cache_write_commit(struct pcache_cache *cache,
 		cache_subtree = get_subtree(&cache->req_key_tree, key->off);
 
 		/*
-		 * Mark WRITING before submit so that on the async (NVMe) path
+		 * Mark WRITING before submit so that on the async (BIO) path
 		 * the flag is set on the key by the time the completion
-		 * callback could fire. On the sync (PMEM) path the callback
+		 * callback could fire. On the sync (DAX) path the callback
 		 * fires inline inside cache_data_write_submit and clears the
 		 * flag before we proceed to insert into the tree.
 		 */
@@ -1349,24 +1349,25 @@ int pcache_net_write_to_cache(struct pcache_cache *cache, u64 sector,
  * pcache_cache_flush - Honour an upper-layer REQ_PREFLUSH on the cache device.
  * @cache: Pointer to the cache structure.
  *
- * Enforces the data-before-kset durability invariant at the FLUSH boundary:
+ * On the BIO backend this enforces the data-before-kset durability invariant
+ * at the FLUSH boundary:
  *
  *   1. cache_dev_data_drain waits for every cache-device data write that was
  *      submitted before this FLUSH to complete. Writes submitted concurrently
  *      with the FLUSH belong to a later epoch and are not waited on here.
- *   2. cmedium_flush pushes the device's volatile write cache to media, so
- *      every byte of data referenced by a key in any kset is now durable.
- *   3. Each open kset is closed in turn. On NVMe cache_kset_close only
- *      *stages* its on-media record (cmedium_stage_write); the second
- *      cmedium_flush below drains those staged writes to the device and
- *      issues a device cache flush, so the kset records (which may reference
- *      any of the drained data writes) land strictly after the data they
- *      reference.
+ *   2. cmedium_flush drains staged metadata and pushes the device's volatile
+ *      write cache to media, so every byte of data referenced by a key in any
+ *      kset is now durable.
+ *   3. Each open kset is closed in turn — cache_kset_close only *stages* its
+ *      on-media record (cmedium_stage_write); the second cmedium_flush below
+ *      drains those staged writes and flushes the device, so the kset records
+ *      (which may reference any of the drained data writes) land strictly
+ *      after the data they reference.
  *
- * On the PMEM backend both drains are no-ops (data and metadata writes are
- * synchronous) and cmedium_flush is pmem_wmb, so this sequence collapses to
- * the prior behaviour. On NVMe the drain + device flush is the new ordering
- * point, applied once for data and once for metadata.
+ * On the DAX backend a write is durable on completion (each self-fences via
+ * cmedium_flush / cmedium_stage_barrier), so a REQ_PREFLUSH has nothing to do
+ * beyond closing the open ksets — the drain + device flush is a BIO-only
+ * ordering point, guarded accordingly.
  */
 int pcache_cache_flush(struct pcache_cache *cache)
 {
@@ -1375,9 +1376,10 @@ int pcache_cache_flush(struct pcache_cache *cache)
 	int ret;
 	u32 i;
 
-	/* Phase 1: make the cached data durable on media. */
+	/* Phase 1: make the cached data durable on media (BIO ordering point). */
 	cache_dev_data_drain(cache_dev);
-	cmedium_flush(cache_dev);
+	if (cache_dev_is_bio(cache_dev))
+		cmedium_flush(cache_dev);
 
 	/* Phase 2: write out the kset records that reference that data. */
 	for (i = 0; i < cache->n_ksets; i++) {
@@ -1392,7 +1394,8 @@ int pcache_cache_flush(struct pcache_cache *cache)
 	}
 
 	/* Drain the staged kset writes and make them durable, after the data. */
-	cmedium_flush(cache_dev);
+	if (cache_dev_is_bio(cache_dev))
+		cmedium_flush(cache_dev);
 
 	return 0;
 }

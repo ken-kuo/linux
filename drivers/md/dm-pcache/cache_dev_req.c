@@ -362,8 +362,8 @@ void cache_dev_meta_drain(struct pcache_cache_dev *cache_dev)
 	struct pcache_cache_dev_req_ctx *ctx = &cache_dev->req_ctx;
 	u64 target;
 
-	/* Metadata is only staged on the NVMe backend. */
-	if (cache_dev->backend != PCACHE_CACHE_DEV_NVME)
+	/* Metadata is only staged on the BIO backend. */
+	if (!cache_dev_is_bio(cache_dev))
 		return;
 
 	/*
@@ -381,8 +381,8 @@ void cache_dev_data_drain(struct pcache_cache_dev *cache_dev)
 	struct pcache_cache_dev_req_ctx *ctx = &cache_dev->req_ctx;
 	u64 target;
 
-	/* Data writes are only asynchronous (and thus drained) on NVMe. */
-	if (cache_dev->backend != PCACHE_CACHE_DEV_NVME)
+	/* Data writes are only asynchronous (and thus drained) on BIO. */
+	if (!cache_dev_is_bio(cache_dev))
 		return;
 
 	/*
@@ -512,12 +512,11 @@ int cache_dev_req_ctx_init(struct pcache_cache_dev *cache_dev)
 	/*
 	 * The cache_dev_req machinery (request/bvec/meta-stage mempools and
 	 * the submit/complete/meta workqueues) backs bio I/O to the cache
-	 * medium, which only the NVMe backend performs. PMEM reaches the
-	 * medium through its DAX mapping (memcpy/dax_flush) and never touches
-	 * req_ctx, so skip the setup — and the multi-MiB mempool reserves —
-	 * entirely on PMEM.
+	 * medium, which only the BIO backend performs. A DAX medium is reached
+	 * through its mapping (memcpy/dax_flush) and never touches req_ctx, so
+	 * skip the setup — and the multi-MiB mempool reserves — entirely on DAX.
 	 */
-	if (cache_dev->backend != PCACHE_CACHE_DEV_NVME)
+	if (!cache_dev_is_bio(cache_dev))
 		return 0;
 
 	ret = mempool_init_slab_pool(&ctx->req_pool, 128, cache_dev_req_cache);
@@ -565,8 +564,8 @@ void cache_dev_req_ctx_exit(struct pcache_cache_dev *cache_dev)
 {
 	struct pcache_cache_dev_req_ctx *ctx = &cache_dev->req_ctx;
 
-	/* Nothing was initialised on PMEM (see cache_dev_req_ctx_init). */
-	if (cache_dev->backend != PCACHE_CACHE_DEV_NVME)
+	/* Nothing was initialised on DAX (see cache_dev_req_ctx_init). */
+	if (!cache_dev_is_bio(cache_dev))
 		return;
 
 	wait_event(ctx->inflight_wq, atomic_read(&ctx->inflight_reqs) == 0);

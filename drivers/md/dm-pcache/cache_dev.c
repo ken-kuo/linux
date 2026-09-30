@@ -203,8 +203,8 @@ static int sb_init(struct pcache_cache_dev *cache_dev, struct pcache_sb *sb)
 	sb->magic = cpu_to_le64(PCACHE_MAGIC);
 	sb->seg_num = cpu_to_le32(nr_segs);
 	sb->block_size = cpu_to_le32(block_size_sectors);
-	sb->cache_type = cpu_to_le32(cache_dev->backend == PCACHE_CACHE_DEV_PMEM ?
-				     PCACHE_CACHE_TYPE_PMEM : PCACHE_CACHE_TYPE_NVME);
+	sb->cache_type = cpu_to_le32(cache_dev_is_dax(cache_dev) ?
+				     PCACHE_CACHE_TYPE_DAX : PCACHE_CACHE_TYPE_BIO);
 	sb->crc = cpu_to_le32(crc32c(PCACHE_CRC_SEED, (void *)(sb) + 4, sizeof(struct pcache_sb) - 4));
 
 	cmedium_zero(cache_dev, PCACHE_CACHE_INFO_OFF,
@@ -251,25 +251,25 @@ static int sb_validate(struct pcache_cache_dev *cache_dev, struct pcache_sb *sb)
 
 	cache_type = le32_to_cpu(sb->cache_type);
 	switch (cache_type) {
-	case PCACHE_CACHE_TYPE_PMEM:
-		if (cache_dev->backend != PCACHE_CACHE_DEV_PMEM) {
-			pcache_dev_err(pcache, "cache_dev was formatted as PMEM but device lacks DAX support\n");
+	case PCACHE_CACHE_TYPE_DAX:
+		if (!cache_dev_is_dax(cache_dev)) {
+			pcache_dev_err(pcache, "cache_dev was formatted for DAX access but device is not DAX-capable\n");
 			return -EINVAL;
 		}
 		break;
-	case PCACHE_CACHE_TYPE_NVME:
-		if (cache_dev->backend != PCACHE_CACHE_DEV_NVME) {
-			pcache_dev_err(pcache, "cache_dev was formatted as NVMe but device exposes DAX; reformat or use a non-DAX device\n");
+	case PCACHE_CACHE_TYPE_BIO:
+		if (!cache_dev_is_bio(cache_dev)) {
+			pcache_dev_err(pcache, "cache_dev was formatted for BIO access but device is DAX-capable (attached as DAX); reformat or use a non-DAX device\n");
 			return -EINVAL;
 		}
 
 		/*
-		 * block_size constraints, NVMe only: the cache medium is
+		 * block_size constraints, BIO only: the cache medium is
 		 * reached through LBA-aligned bios, so the formatted block
 		 * size must be a power of two, no smaller than the device's
-		 * logical block size, and no larger than a host page. PMEM is
-		 * byte-addressable (memcpy/DAX) and has no such constraint, so
-		 * block_size carries no meaning there.
+		 * logical block size, and no larger than a host page. A DAX
+		 * medium is byte-addressable (memcpy/dax_flush) and has no such
+		 * constraint, so block_size carries no meaning there.
 		 */
 		block_size_sectors = le32_to_cpu(sb->block_size);
 		bdev_lba = bdev_logical_block_size(bdev);
@@ -333,16 +333,15 @@ int cache_dev_start(struct dm_pcache *pcache)
 	mutex_init(&cache_dev->seg_lock);
 
 	/*
-	 * Auto-detect backend from the device's DAX capability. A
-	 * DAX-capable device is registered with the PMEM backend
-	 * (byte-addressable mapping); a plain block device uses the NVMe
-	 * backend (bio I/O via cache_dev_req). sb_validate later checks
-	 * that the on-media cache_type matches this detection.
+	 * Pick the access model from the device's DAX capability: a
+	 * DAX-capable device gets byte-addressable access (memcpy/dax_flush);
+	 * a plain block device gets bio I/O via cache_dev_req. sb_validate
+	 * later checks that the on-media cache_type matches this.
 	 */
-	cache_dev->backend = cache_dev->dm_dev->dax_dev ?
-				PCACHE_CACHE_DEV_PMEM : PCACHE_CACHE_DEV_NVME;
+	cache_dev->type = cache_dev->dm_dev->dax_dev ?
+				PCACHE_CACHE_DEV_DAX : PCACHE_CACHE_DEV_BIO;
 
-	if (cache_dev->backend == PCACHE_CACHE_DEV_PMEM) {
+	if (cache_dev_is_dax(cache_dev)) {
 		ret = cache_dev_dax_init(cache_dev);
 		if (ret) {
 			pcache_dev_err(pcache, "failed to init cache_dev %s via dax way: %d.",

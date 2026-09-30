@@ -171,8 +171,8 @@ err:
 }
 
 /*
- * Tracks an NVMe-mode writeback chunk that owns a transient cache->backing
- * staging buffer. cache_key_writeback_nvme allocates @buf, fills it via
+ * Tracks an BIO-mode writeback chunk that owns a transient cache->backing
+ * staging buffer. cache_key_writeback_bio allocates @buf, fills it via
  * cmedium_read, hands the buffer to backing_dev_req_create, and registers
  * writeback_kmem_buf_end so the buffer is freed when the backing write
  * completes.
@@ -195,7 +195,7 @@ static void writeback_kmem_buf_end(struct pcache_backing_dev_req *backing_req, i
 	mutex_unlock(&cache->writeback_lock);
 }
 
-static void cache_key_writeback_pmem(struct pcache_cache *cache,
+static void cache_key_writeback_dax(struct pcache_cache *cache,
 				     struct pcache_cache_key *key)
 {
 	struct pcache_backing_dev_req *writeback_req;
@@ -228,7 +228,7 @@ next_req:
 		goto next_req;
 }
 
-static void cache_key_writeback_nvme(struct pcache_cache *cache,
+static void cache_key_writeback_bio(struct pcache_cache *cache,
 				     struct pcache_cache_key *key)
 {
 	struct pcache_cache_dev *cache_dev = cache->cache_dev;
@@ -308,10 +308,10 @@ static void cache_key_writeback(struct pcache_cache *cache, struct pcache_cache_
 		return;
 	}
 
-	if (cache->cache_dev->backend == PCACHE_CACHE_DEV_NVME)
-		cache_key_writeback_nvme(cache, key);
+	if (cache_dev_is_bio(cache->cache_dev))
+		cache_key_writeback_bio(cache, key);
 	else
-		cache_key_writeback_pmem(cache, key);
+		cache_key_writeback_dax(cache, key);
 }
 
 static void cache_wb_tree_writeback(struct pcache_cache *cache, u32 advance)

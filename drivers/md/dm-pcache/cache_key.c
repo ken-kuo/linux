@@ -81,7 +81,7 @@ static void cache_key_encode(struct pcache_cache *cache,
 	key_onmedia->seg_gen = key->seg_gen;
 	/*
 	 * WRITING is an in-memory marker for a cache-device data write that is
-	 * still in flight. On the async (NVMe) path the key is appended to the
+	 * still in flight. On the async (BIO) path the key is appended to the
 	 * kset while its data write is outstanding, so the flag may still be
 	 * set here; it must never be persisted. By the time a kset is made
 	 * durable the referenced data write has completed (FLUSH drains data

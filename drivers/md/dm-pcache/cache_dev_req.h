@@ -83,11 +83,11 @@ struct pcache_cache_dev_req_ctx {
 	wait_queue_head_t		data_drain_wq;
 
 	/*
-	 * DRAM-staged metadata writes (NVMe backend only).
+	 * DRAM-staged metadata writes (BIO backend only).
 	 *
 	 * Several metadata writers (cache_kset_close, cache_seg_ctrl_write)
 	 * run with a spinlock held, where the synchronous bio of
-	 * cache_dev_sync_kmem_io would sleep. On NVMe those writers instead
+	 * cache_dev_sync_kmem_io would sleep. On BIO those writers instead
 	 * copy their bytes into a staging object under the lock (a non-
 	 * sleeping memcpy) and enqueue it here; meta_stage_work drains the
 	 * queue with real device I/O outside any lock. Durability is enforced
@@ -151,7 +151,7 @@ void cache_dev_req_end(struct pcache_cache_dev_req *req);
 void cache_dev_bdev_flush(struct pcache_cache_dev *cache_dev);
 
 /*
- * Stage a metadata write for the NVMe backend. Copies @len bytes from @src
+ * Stage a metadata write for the BIO backend. Copies @len bytes from @src
  * into a staging object and queues it; the actual device write happens
  * asynchronously in meta_stage_work. Safe to call with a spinlock held (no
  * sleeping). @len must not exceed PCACHE_META_STAGE_BUF_SIZE.
@@ -176,7 +176,7 @@ void cache_dev_data_drain(struct pcache_cache_dev *cache_dev);
 
 /*
  * Synchronous helpers built on the bio request lifecycle. Block the
- * caller until the bio completes. Intended for the NVMe-backed
+ * caller until the bio completes. Intended for the BIO-backed
  * cmedium dispatch where metadata I/O is rare and small.
  */
 int cache_dev_sync_kmem_io(struct pcache_cache_dev *cache_dev, void *data,

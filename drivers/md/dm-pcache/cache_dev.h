@@ -85,8 +85,8 @@
  * pcache_sb.cache_type — the access model the on-media layout assumes.
  * Recorded at format time, validated against the device on attach.
  */
-#define PCACHE_CACHE_TYPE_PMEM			0
-#define PCACHE_CACHE_TYPE_NVME			1
+#define PCACHE_CACHE_TYPE_DAX			0
+#define PCACHE_CACHE_TYPE_BIO			1
 
 struct pcache_sb {
 	__le32 crc;
@@ -95,12 +95,18 @@ struct pcache_sb {
 
 	__le32 seg_num;
 	__le32 block_size;	/* sector count; >= cache LBA, <= PAGE_SECTORS, power of 2 */
-	__le32 cache_type;	/* PCACHE_CACHE_TYPE_PMEM | _NVME */
+	__le32 cache_type;	/* PCACHE_CACHE_TYPE_DAX | _BIO */
 };
 
-enum pcache_cache_dev_backend {
-	PCACHE_CACHE_DEV_PMEM = 0,	/* byte-addressable DAX (default) */
-	PCACHE_CACHE_DEV_NVME = 1,	/* block device via bio (cache_dev_req) */
+/*
+ * The access model of the cache medium, decided per cache_dev at attach
+ * from the device's DAX capability. This — not the underlying device
+ * technology (pmem vs nvme vs anything else) — is what the cmedium_* layer
+ * and the data/metadata paths branch on.
+ */
+enum pcache_cache_dev_type {
+	PCACHE_CACHE_DEV_DAX = 0,	/* byte-addressable, memcpy/dax_flush */
+	PCACHE_CACHE_DEV_BIO = 1,	/* block device, bio I/O via cache_dev_req */
 };
 
 struct pcache_cache_dev {
@@ -108,7 +114,7 @@ struct pcache_cache_dev {
 	u32				seg_num;
 	void				*mapping;
 	bool				use_vmap;
-	enum pcache_cache_dev_backend	backend;
+	enum pcache_cache_dev_type	type;
 
 	struct dm_dev			*dm_dev;
 
@@ -117,6 +123,20 @@ struct pcache_cache_dev {
 
 	struct pcache_cache_dev_req_ctx	req_ctx;
 };
+
+/*
+ * Access-model predicates. Everything below (and the data/metadata paths)
+ * keys off these rather than the specific device the cache lives on.
+ */
+static inline bool cache_dev_is_dax(struct pcache_cache_dev *cache_dev)
+{
+	return cache_dev->type == PCACHE_CACHE_DEV_DAX;
+}
+
+static inline bool cache_dev_is_bio(struct pcache_cache_dev *cache_dev)
+{
+	return cache_dev->type == PCACHE_CACHE_DEV_BIO;
+}
 
 struct dm_pcache;
 int cache_dev_start(struct dm_pcache *pcache);
@@ -127,28 +147,25 @@ int cache_dev_get_empty_segment_id(struct pcache_cache_dev *cache_dev, u32 *seg_
 /*
  * cmedium_* — byte-offset access to the cache medium.
  *
- * dm-pcache reaches the cache device today by computing a virtual address
- * inside the DAX whole-device kernel mapping and issuing pmem-aware
- * primitives (memcpy_flushcache, copy_mc_to_kernel, dax_flush). To allow
- * the same call sites to address a non-byte-addressable medium (an NVMe
- * block device) without leaking the access model into callers, primitives
- * below take a byte offset rather than a raw pointer and dispatch on
- * cache_dev->backend.
+ * These primitives take a byte offset into the cache medium (rather than a
+ * raw pointer) and dispatch on the cache_dev's access model, so callers do
+ * not need to know how the medium is reached.
  *
- * The PMEM backend is the existing path: cmedium_write makes the bytes
- * cache-line durable but does not issue a store barrier, cmedium_flush is
- * the explicit ordering point (pmem_wmb / SFENCE on x86), and cmedium_zero
- * is also unfenced — callers must follow with cmedium_flush if a
- * dependent write requires the zeros to have landed first.
+ * DAX (byte-addressable): a virtual address inside the whole-device DAX
+ * mapping is computed and pmem-aware primitives are issued
+ * (memcpy_flushcache, copy_mc_to_kernel, dax_flush). cmedium_write makes the
+ * bytes cache-line durable but issues no store barrier; cmedium_flush is the
+ * explicit ordering point (pmem_wmb / SFENCE on x86); cmedium_zero is also
+ * unfenced — follow with cmedium_flush if a dependent write needs the zeros
+ * to have landed first.
  *
- * The NVME backend routes each call through cache_dev_req. For now it
- * issues each metadata write synchronously and silently swallows I/O
- * errors at the cmedium_write level; later patches replace metadata
- * writes with a DRAM-staged path that batches device I/O at flush
- * boundaries. cmedium_read_iter and cmedium_write_iter (the per-bio data
- * copies) intentionally stay pmem-only here and return -EOPNOTSUPP on
- * NVMe; the async data path that supersedes them comes in the next
- * patches.
+ * BIO (block device): each call is routed through cache_dev_req as a bio.
+ * Metadata writes issued under a lock are DRAM-staged and drained at the
+ * flush boundary (cmedium_stage_write); cmedium_flush drains staged metadata
+ * and issues a device cache flush. The per-bio data copies cmedium_read_iter
+ * and cmedium_write_iter are DAX-only — the BIO data path is the async,
+ * zero-copy cache_dev_req in cache_req.c, so those iters WARN + return
+ * -EOPNOTSUPP if ever reached on BIO.
  */
 static inline void *cmedium_addr(struct pcache_cache_dev *cache_dev, u64 off)
 {
@@ -163,7 +180,7 @@ static inline u64 cmedium_off(struct pcache_cache_dev *cache_dev, const void *ad
 static inline int cmedium_read(struct pcache_cache_dev *cache_dev, void *dst,
 			       u64 off, size_t len)
 {
-	if (cache_dev->backend == PCACHE_CACHE_DEV_NVME)
+	if (cache_dev_is_bio(cache_dev))
 		return cache_dev_sync_kmem_io(cache_dev, dst, off, len, REQ_OP_READ);
 
 	if (copy_mc_to_kernel(dst, cmedium_addr(cache_dev, off), len))
@@ -175,13 +192,13 @@ static inline int cmedium_read_iter(struct pcache_cache_dev *cache_dev, u64 off,
 				    size_t len, struct iov_iter *iter)
 {
 	/*
-	 * Per-bio data copies are issued as asynchronous bios on the NVMe
-	 * backend (cache_hit_read_submit / cache_data_write_submit submit a
+	 * On BIO, per-bio data copies are issued as asynchronous bios
+	 * (cache_hit_read_submit / cache_data_write_submit submit a
 	 * CACHE_DEV_REQ_TYPE_REQ directly), so this byte-copy helper is only
-	 * reached on PMEM. Flag — rather than silently bounce — any future
-	 * caller that routes an NVMe data copy through here.
+	 * reached on DAX. Flag — rather than silently bounce — any future
+	 * caller that routes a BIO data copy through here.
 	 */
-	if (WARN_ON_ONCE(cache_dev->backend == PCACHE_CACHE_DEV_NVME))
+	if (WARN_ON_ONCE(cache_dev_is_bio(cache_dev)))
 		return -EOPNOTSUPP;
 
 	if (_copy_mc_to_iter(cmedium_addr(cache_dev, off), len, iter) != len)
@@ -192,7 +209,7 @@ static inline int cmedium_read_iter(struct pcache_cache_dev *cache_dev, u64 off,
 static inline void cmedium_write(struct pcache_cache_dev *cache_dev, u64 off,
 				 const void *src, size_t len)
 {
-	if (cache_dev->backend == PCACHE_CACHE_DEV_NVME) {
+	if (cache_dev_is_bio(cache_dev)) {
 		/*
 		 * Cast away const: cache_dev_sync_kmem_io builds a bio over
 		 * the buffer and does not modify it for REQ_OP_WRITE.
@@ -206,8 +223,8 @@ static inline void cmedium_write(struct pcache_cache_dev *cache_dev, u64 off,
 static inline int cmedium_write_iter(struct pcache_cache_dev *cache_dev, u64 off,
 				     size_t len, struct iov_iter *iter)
 {
-	/* PMEM-only, like cmedium_read_iter; the NVMe data path is async. */
-	if (WARN_ON_ONCE(cache_dev->backend == PCACHE_CACHE_DEV_NVME))
+	/* DAX-only, like cmedium_read_iter; the BIO data path is async. */
+	if (WARN_ON_ONCE(cache_dev_is_bio(cache_dev)))
 		return -EOPNOTSUPP;
 
 	if (_copy_from_iter_flushcache(cmedium_addr(cache_dev, off), len, iter) != len)
@@ -220,7 +237,7 @@ static inline void cmedium_zero(struct pcache_cache_dev *cache_dev, u64 off,
 {
 	void *addr;
 
-	if (cache_dev->backend == PCACHE_CACHE_DEV_NVME) {
+	if (cache_dev_is_bio(cache_dev)) {
 		cache_dev_zeroout(cache_dev, off, len);
 		return;
 	}
@@ -232,9 +249,9 @@ static inline void cmedium_zero(struct pcache_cache_dev *cache_dev, u64 off,
 /*
  * cmedium_stage_write - metadata write that is safe under a spinlock.
  *
- * PMEM: identical to cmedium_write (a non-sleeping cache-line copy).
- * NVMe: the synchronous bio of cmedium_write would sleep, so stage the
- *       bytes and let the metadata worker write them outside any lock.
+ * DAX: identical to cmedium_write (a non-sleeping cache-line copy).
+ * BIO: the synchronous bio of cmedium_write would sleep, so stage the
+ *      bytes and let the metadata worker write them outside any lock.
  *
  * Callers must reach a cmedium_flush (which drains staged metadata) before
  * relying on the bytes being durable.
@@ -242,7 +259,7 @@ static inline void cmedium_zero(struct pcache_cache_dev *cache_dev, u64 off,
 static inline void cmedium_stage_write(struct pcache_cache_dev *cache_dev, u64 off,
 				       const void *src, size_t len)
 {
-	if (cache_dev->backend == PCACHE_CACHE_DEV_NVME) {
+	if (cache_dev_is_bio(cache_dev)) {
 		cache_dev_meta_stage_write(cache_dev, off, src, len);
 		return;
 	}
@@ -253,21 +270,21 @@ static inline void cmedium_stage_write(struct pcache_cache_dev *cache_dev, u64 o
  * cmedium_stage_barrier - ordering point for staged metadata, usable under a
  * spinlock.
  *
- * PMEM: pmem_wmb, the same store barrier cmedium_flush issues. NVMe: a no-op
+ * DAX: pmem_wmb, the same store barrier cmedium_flush issues. BIO: a no-op
  * — staged metadata is ordered by the FIFO worker and made durable at the
  * next cmedium_flush (the upper FLUSH boundary), so there is nothing to do
  * here and, crucially, nothing that sleeps.
  */
 static inline void cmedium_stage_barrier(struct pcache_cache_dev *cache_dev)
 {
-	if (cache_dev->backend == PCACHE_CACHE_DEV_NVME)
+	if (cache_dev_is_bio(cache_dev))
 		return;
 	pmem_wmb();
 }
 
 static inline void cmedium_flush(struct pcache_cache_dev *cache_dev)
 {
-	if (cache_dev->backend == PCACHE_CACHE_DEV_NVME) {
+	if (cache_dev_is_bio(cache_dev)) {
 		/* Make sure staged metadata has reached the device first. */
 		cache_dev_meta_drain(cache_dev);
 		cache_dev_bdev_flush(cache_dev);

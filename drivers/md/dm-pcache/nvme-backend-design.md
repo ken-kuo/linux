@@ -392,38 +392,8 @@ it are explicitly **not** implemented.
   doing `cache_data_alloc()` + key insertion without sleeping under `tree_lock` (drop/retake, or
   move that work to the completion). Best-effort: a dropped promote just means a future miss.
 
-- **Recast the backend as an access *category* (DAX vs BIO).** The code branches on the device
-  technology (`PCACHE_CACHE_DEV_PMEM` / `_NVME`) when what actually matters is the *access model*:
-  byte-addressable DAX (`memcpy`/`dax_flush`, synchronous, no LBA constraint) versus block/BIO
-  (bios, LBA-aligned + RMW, async data path, device flush for durability). The current names are
-  already misleading — the test suite runs on loop devices labelled "NVMe." Categorize each
-  cache_dev as DAX or BIO and drive behaviour off that:
-  - `enum pcache_cache_dev_type { PCACHE_CACHE_DEV_DAX, PCACHE_CACHE_DEV_BIO }`, detected once
-    (`dax_dev ? DAX : BIO`); add `cache_dev_is_dax()` / `cache_dev_is_bio()` predicates and
-    convert every `== _NVME` / `== _PMEM` guard to them.
-  - `cmedium_*` is the primary consumer; the genuine control-flow forks (async hit read, async
-    write, promote skip, writeback split, `req_ctx` confinement) still branch but read as
-    "is this a BIO device?".
-  - On-media `pcache_sb.cache_type` records `DAX`/`BIO`; reframe `sb_validate` messages; the
-    `block_size` checks stay under the BIO arm. (On-media value change — folds into the same
-    format/compat work.)
-  - Behaviour-preserving today (DAX≡PMEM, BIO≡NVME), so low risk and BIO-path testable; the DAX
-    path is rename-only. Also enables a future "force BIO access on a DAX-capable device" toggle,
-    since access model would no longer be hard-coupled to device capability.
-  - Open policy: keep the strict 1:1 (DAX-formatted cache requires a DAX device and vice-versa),
-    or allow forcing BIO access on a DAX device? Leaning strict for now.
 - Whether to submit kset bios eagerly on close (warm the device) or hold until the flush
   boundary (fewer small writes); tunable.
-
-- **Skip the redundant `cmedium_flush` in `pcache_cache_flush` on DAX.** The two
-  `cmedium_flush()` calls there (phase-1 after the data drain, phase-2 after closing the ksets)
-  exist for BIO, where they are the real drain + `blkdev_issue_flush`. On DAX `cmedium_flush ==
-  pmem_wmb()`, and both are redundant: PMEM data writes already self-fence in
-  `segment_copy_from_bio()` and each `cache_kset_close()` already issues `cmedium_stage_barrier()`
-  (a `pmem_wmb`), so by FLUSH time everything is fenced — a `REQ_PREFLUSH` on DAX has nothing to
-  do. The original (pre-NVMe) `pcache_cache_flush` had no flush at all. Negligible cost (one
-  `SFENCE` each), but the calls should become BIO-only (`if (cache_dev_is_bio(...))`) — naturally
-  handled by the DAX/BIO category refactor above.
 
 - **Stop funnelling every request through the single task workqueue (scalability).**
   `dm_pcache_map_bio()` currently defers *every* request to `pcache->task_wq` via `defer_req()`.
