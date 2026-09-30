@@ -414,3 +414,13 @@ it are explicitly **not** implemented.
     or allow forcing BIO access on a DAX device? Leaning strict for now.
 - Whether to submit kset bios eagerly on close (warm the device) or hold until the flush
   boundary (fewer small writes); tunable.
+
+- **Skip the redundant `cmedium_flush` in `pcache_cache_flush` on DAX.** The two
+  `cmedium_flush()` calls there (phase-1 after the data drain, phase-2 after closing the ksets)
+  exist for BIO, where they are the real drain + `blkdev_issue_flush`. On DAX `cmedium_flush ==
+  pmem_wmb()`, and both are redundant: PMEM data writes already self-fence in
+  `segment_copy_from_bio()` and each `cache_kset_close()` already issues `cmedium_stage_barrier()`
+  (a `pmem_wmb`), so by FLUSH time everything is fenced — a `REQ_PREFLUSH` on DAX has nothing to
+  do. The original (pre-NVMe) `pcache_cache_flush` had no flush at all. Negligible cost (one
+  `SFENCE` each), but the calls should become BIO-only (`if (cache_dev_is_bio(...))`) — naturally
+  handled by the DAX/BIO category refactor above.
