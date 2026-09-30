@@ -5,7 +5,140 @@
 #include "cache.h"
 #include "backing_dev.h"
 #include "cache_dev.h"
+#include "cache_dev_req.h"
 #include "dm_pcache.h"
+
+static int cache_copy_from_req_bio(struct pcache_cache *cache,
+				   struct pcache_cache_key *key,
+				   struct pcache_request *pcache_req, u32 bio_off);
+
+/*
+ * Per-sub-key context held across an in-flight cache-device data write.
+ * Lives in cache_data_write_ctx_cache; freed by cache_data_write_done.
+ *
+ * Ref accounting (uniform across backends):
+ *   key:         cache_data_write_submit takes one ref via cache_key_get;
+ *                cache_data_write_done drops it. Keeps the key alive in
+ *                case the tree drops its reference (e.g. via overwrite
+ *                fixup) while the data write is still in flight.
+ *   pcache_req:  cache_data_write_submit takes one ref via pcache_req_get;
+ *                cache_data_write_done drops it. On NVMe this rides
+ *                alongside the ref cache_dev_req takes internally — both
+ *                are dropped before end_req runs.
+ */
+struct cache_data_write_ctx {
+	struct pcache_cache		*cache;
+	struct pcache_cache_key		*key;
+	struct pcache_cache_subtree	*cache_subtree;
+	struct pcache_request		*pcache_req;
+};
+
+static struct kmem_cache *cache_data_write_ctx_cache;
+
+int cache_req_init(void)
+{
+	cache_data_write_ctx_cache = KMEM_CACHE(cache_data_write_ctx, 0);
+	if (!cache_data_write_ctx_cache)
+		return -ENOMEM;
+	return 0;
+}
+
+void cache_req_exit(void)
+{
+	kmem_cache_destroy(cache_data_write_ctx_cache);
+}
+
+static void cache_data_write_done(struct cache_data_write_ctx *ctx, int ret)
+{
+	struct pcache_cache *cache = ctx->cache;
+
+	spin_lock(&ctx->cache_subtree->tree_lock);
+	ctx->key->flags &= ~PCACHE_CACHE_KEY_FLAGS_WRITING;
+	spin_unlock(&ctx->cache_subtree->tree_lock);
+
+	pcache_defer_reqs_kick(CACHE_TO_PCACHE(cache));
+	cache_key_put(ctx->key);
+	pcache_req_put(ctx->pcache_req, ret);
+	kmem_cache_free(cache_data_write_ctx_cache, ctx);
+}
+
+static void cache_data_write_done_cb(struct pcache_cache_dev_req *req, int ret)
+{
+	cache_data_write_done(req->priv_data, ret);
+}
+
+/*
+ * cache_data_write_submit - issue the cache-device write for @key's data.
+ *
+ * PMEM: synchronously copies from the upper bio into the mapped pmem and
+ *       invokes cache_data_write_done inline.
+ * NVMe: builds a CACHE_DEV_REQ_TYPE_REQ bio (zero-copy of the upper bio
+ *       pages) and submits it; cache_data_write_done fires from the bio
+ *       completion path.
+ *
+ * On success the caller must not touch the key's WRITING flag — it is
+ * owned by the completion path until cleared.
+ */
+static int cache_data_write_submit(struct pcache_cache *cache,
+				   struct pcache_cache_key *key,
+				   struct pcache_cache_subtree *cache_subtree,
+				   struct pcache_request *pcache_req,
+				   u32 io_done)
+{
+	struct pcache_cache_dev *cache_dev = cache->cache_dev;
+	struct cache_data_write_ctx *ctx;
+	int ret;
+
+	ctx = kmem_cache_alloc(cache_data_write_ctx_cache, GFP_NOIO);
+	if (!ctx)
+		return -ENOMEM;
+
+	ctx->cache = cache;
+	ctx->key = key;
+	ctx->cache_subtree = cache_subtree;
+	ctx->pcache_req = pcache_req;
+	cache_key_get(key);
+	pcache_req_get(pcache_req);
+
+	if (cache_dev->backend == PCACHE_CACHE_DEV_NVME) {
+		struct pcache_segment *segment = &key->cache_pos.cache_seg->segment;
+		struct pcache_cache_dev_req_opts opts = { 0 };
+		struct pcache_cache_dev_req *req;
+		u64 cdev_off;
+
+		cdev_off = cmedium_off(cache_dev, segment->data) + key->cache_pos.seg_off;
+
+		opts.type = CACHE_DEV_REQ_TYPE_REQ;
+		opts.cdev_off = cdev_off;
+		opts.req.upper_req = pcache_req;
+		opts.req.req_off = io_done;
+		opts.req.len = key->len;
+		opts.end_fn = cache_data_write_done_cb;
+		opts.priv_data = ctx;
+		opts.gfp_mask = GFP_NOIO;
+
+		req = cache_dev_req_create(cache_dev, &opts);
+		if (!req) {
+			cache_key_put(key);
+			pcache_req_put(pcache_req, -ENOMEM);
+			kmem_cache_free(cache_data_write_ctx_cache, ctx);
+			return -ENOMEM;
+		}
+		cache_dev_req_submit(req, false);
+		return 0;
+	}
+
+	/* PMEM: synchronous copy + inline completion */
+	ret = cache_copy_from_req_bio(cache, key, pcache_req, io_done);
+	if (ret) {
+		cache_key_put(key);
+		pcache_req_put(pcache_req, ret);
+		kmem_cache_free(cache_data_write_ctx_cache, ctx);
+		return ret;
+	}
+	cache_data_write_done(ctx, 0);
+	return 0;
+}
 
 static int cache_data_head_init(struct pcache_cache *cache)
 {
@@ -790,10 +923,10 @@ int pcache_cache_write_reserve(struct pcache_cache *cache,
 /**
  * pcache_cache_write_commit - Phase 2 of a write: copy data and publish keys.
  *
- * For each key reserved by pcache_cache_write_reserve(), copy the bio data into
- * the reserved PMEM segment and insert/append the key into the cache tree. May
+ * For each key reserved by pcache_cache_write_reserve(), submit the bio data to
+ * the reserved cache segment and insert/append the key into the cache tree. May
  * run concurrently with the network sender (both only read the bio via private
- * iterators). Returns -EIO only (the segment was already reserved in phase 1).
+ * iterators). Never returns -EBUSY (the segment was already reserved in phase 1).
  */
 int pcache_cache_write_commit(struct pcache_cache *cache,
 			      struct pcache_request *pcache_req,
@@ -801,6 +934,7 @@ int pcache_cache_write_commit(struct pcache_cache *cache,
 {
 	struct pcache_cache_subtree *cache_subtree;
 	struct pcache_cache_key *key, *tmp;
+	bool fua = pcache_req->bio->bi_opf & REQ_FUA;
 	u32 bio_off;
 	int ret;
 
@@ -808,17 +942,28 @@ int pcache_cache_write_commit(struct pcache_cache *cache,
 		list_del_init(&key->list_node);
 
 		bio_off = key->off - pcache_req->off;
-		ret = cache_copy_from_req_bio(cache, key, pcache_req, bio_off);
+		cache_subtree = get_subtree(&cache->req_key_tree, key->off);
+
+		/*
+		 * Mark WRITING before submit so that on the async (NVMe) path
+		 * the flag is set on the key by the time the completion
+		 * callback could fire. On the sync (PMEM) path the callback
+		 * fires inline inside cache_data_write_submit and clears the
+		 * flag before we proceed to insert into the tree.
+		 */
+		key->flags |= PCACHE_CACHE_KEY_FLAGS_WRITING;
+
+		ret = cache_data_write_submit(cache, key, cache_subtree,
+					      pcache_req, bio_off);
 		if (ret) {
 			cache_seg_put(key->cache_pos.cache_seg);
 			cache_key_put(key);
 			goto err;
 		}
 
-		cache_subtree = get_subtree(&cache->req_key_tree, key->off);
 		spin_lock(&cache_subtree->tree_lock);
 		cache_key_insert(&cache->req_key_tree, key, true);
-		ret = cache_key_append(cache, key, pcache_req->bio->bi_opf & REQ_FUA);
+		ret = cache_key_append(cache, key, fua);
 		if (ret) {
 			cache_seg_put(key->cache_pos.cache_seg);
 			cache_key_delete(key);

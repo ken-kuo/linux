@@ -986,11 +986,17 @@ static int __init dm_pcache_init(void)
 	if (ret)
 		goto backing_exit;
 
-	ret = dm_register_target(&dm_pcache_target);
+	ret = cache_req_init();
 	if (ret)
 		goto cache_exit;
+
+	ret = dm_register_target(&dm_pcache_target);
+	if (ret)
+		goto cache_req_exit;
 	return 0;
 
+cache_req_exit:
+	cache_req_exit();
 cache_exit:
 	pcache_cache_exit();
 backing_exit:
@@ -1005,6 +1011,7 @@ module_init(dm_pcache_init);
 static void __exit dm_pcache_exit(void)
 {
 	dm_unregister_target(&dm_pcache_target);
+	cache_req_exit();
 	pcache_cache_exit();
 	pcache_backing_exit();
 	pcache_cache_dev_req_exit();

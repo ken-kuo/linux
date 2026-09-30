@@ -122,6 +122,12 @@ struct pcache_cache_key {
 
 #define PCACHE_CACHE_KEY_FLAGS_EMPTY		BIT(0)
 #define PCACHE_CACHE_KEY_FLAGS_CLEAN		BIT(1)
+/*
+ * Key is in the tree but its data write to the cache medium has not
+ * yet completed. Reads that hit a WRITING key must defer until the
+ * flag is cleared by the write's completion path.
+ */
+#define PCACHE_CACHE_KEY_FLAGS_WRITING		BIT(2)
 
 struct pcache_cache_key_onmedia {
 	__u64 off;
@@ -367,6 +373,8 @@ int pcache_cache_write_commit(struct pcache_cache *cache,
 			      struct list_head *keys);
 int pcache_net_write_to_cache(struct pcache_cache *cache, u64 sector,
 			      void *data, u32 size, bool fua);
+int cache_req_init(void);
+void cache_req_exit(void);
 
 /* gc */
 void pcache_cache_gc_fn(struct work_struct *work);
