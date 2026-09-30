@@ -2,6 +2,7 @@
 
 #include <linux/blkdev.h>
 #include <linux/dax.h>
+#include <linux/log2.h>
 #include <linux/vmalloc.h>
 #include <linux/parser.h>
 
@@ -174,23 +175,26 @@ static void sb_write(struct pcache_cache_dev *cache_dev, struct pcache_sb *sb)
 static int sb_init(struct pcache_cache_dev *cache_dev, struct pcache_sb *sb)
 {
 	struct dm_pcache *pcache = CACHE_DEV_TO_PCACHE(cache_dev);
+	struct block_device *bdev = file_bdev(cache_dev->dm_dev->bdev_file);
 	u64 nr_segs;
 	u64 cache_dev_size;
 	u64 magic;
 	u32 flags = 0;
+	u32 block_size_sectors;
 
 	magic = le64_to_cpu(sb->magic);
 	if (magic)
 		return -EEXIST;
 
-	cache_dev_size = bdev_nr_bytes(file_bdev(cache_dev->dm_dev->bdev_file));
+	cache_dev_size = bdev_nr_bytes(bdev);
 	if (cache_dev_size < PCACHE_CACHE_DEV_SIZE_MIN) {
-		pcache_dev_err(pcache, "dax device is too small, required at least %llu",
+		pcache_dev_err(pcache, "cache device is too small, required at least %llu",
 				PCACHE_CACHE_DEV_SIZE_MIN);
 		return -ENOSPC;
 	}
 
 	nr_segs = (cache_dev_size - PCACHE_SEGMENTS_OFF) / ((PCACHE_SEG_SIZE));
+	block_size_sectors = max_t(u32, bdev_logical_block_size(bdev) >> SECTOR_SHIFT, 1);
 
 #if defined(__BYTE_ORDER) ? (__BIG_ENDIAN == __BYTE_ORDER) : defined(__BIG_ENDIAN)
 	flags |= PCACHE_SB_F_BIGENDIAN;
@@ -198,6 +202,9 @@ static int sb_init(struct pcache_cache_dev *cache_dev, struct pcache_sb *sb)
 	sb->flags = cpu_to_le32(flags);
 	sb->magic = cpu_to_le64(PCACHE_MAGIC);
 	sb->seg_num = cpu_to_le32(nr_segs);
+	sb->block_size = cpu_to_le32(block_size_sectors);
+	sb->cache_type = cpu_to_le32(cache_dev->backend == PCACHE_CACHE_DEV_PMEM ?
+				     PCACHE_CACHE_TYPE_PMEM : PCACHE_CACHE_TYPE_NVME);
 	sb->crc = cpu_to_le32(crc32c(PCACHE_CRC_SEED, (void *)(sb) + 4, sizeof(struct pcache_sb) - 4));
 
 	cmedium_zero(cache_dev, PCACHE_CACHE_INFO_OFF,
@@ -210,6 +217,10 @@ static int sb_init(struct pcache_cache_dev *cache_dev, struct pcache_sb *sb)
 static int sb_validate(struct pcache_cache_dev *cache_dev, struct pcache_sb *sb)
 {
 	struct dm_pcache *pcache = CACHE_DEV_TO_PCACHE(cache_dev);
+	struct block_device *bdev = file_bdev(cache_dev->dm_dev->bdev_file);
+	u32 block_size_sectors;
+	u32 bdev_lba;
+	u32 cache_type;
 	u32 flags;
 	u32 crc;
 
@@ -237,6 +248,52 @@ static int sb_validate(struct pcache_cache_dev *cache_dev, struct pcache_sb *sb)
 		return -EINVAL;
 	}
 #endif
+
+	cache_type = le32_to_cpu(sb->cache_type);
+	switch (cache_type) {
+	case PCACHE_CACHE_TYPE_PMEM:
+		if (cache_dev->backend != PCACHE_CACHE_DEV_PMEM) {
+			pcache_dev_err(pcache, "cache_dev was formatted as PMEM but device lacks DAX support\n");
+			return -EINVAL;
+		}
+		break;
+	case PCACHE_CACHE_TYPE_NVME:
+		if (cache_dev->backend != PCACHE_CACHE_DEV_NVME) {
+			pcache_dev_err(pcache, "cache_dev was formatted as NVMe but device exposes DAX; reformat or use a non-DAX device\n");
+			return -EINVAL;
+		}
+
+		/*
+		 * block_size constraints, NVMe only: the cache medium is
+		 * reached through LBA-aligned bios, so the formatted block
+		 * size must be a power of two, no smaller than the device's
+		 * logical block size, and no larger than a host page. PMEM is
+		 * byte-addressable (memcpy/DAX) and has no such constraint, so
+		 * block_size carries no meaning there.
+		 */
+		block_size_sectors = le32_to_cpu(sb->block_size);
+		bdev_lba = bdev_logical_block_size(bdev);
+		if (!is_power_of_2(block_size_sectors)) {
+			pcache_dev_err(pcache, "block_size %u sectors is not a power of two\n",
+					block_size_sectors);
+			return -EINVAL;
+		}
+		if (block_size_sectors > PAGE_SECTORS) {
+			pcache_dev_err(pcache, "block_size %u sectors exceeds page size %u sectors\n",
+					block_size_sectors, (unsigned int)PAGE_SECTORS);
+			return -EINVAL;
+		}
+		if ((u64)block_size_sectors << SECTOR_SHIFT < bdev_lba) {
+			pcache_dev_err(pcache, "block_size %u sectors is smaller than cache device LBA %u bytes\n",
+					block_size_sectors, bdev_lba);
+			return -EINVAL;
+		}
+		break;
+	default:
+		pcache_dev_err(pcache, "unknown cache_type: %u\n", cache_type);
+		return -EINVAL;
+	}
+
 	return 0;
 }
 
@@ -275,13 +332,23 @@ int cache_dev_start(struct dm_pcache *pcache)
 
 	mutex_init(&cache_dev->seg_lock);
 
-	cache_dev->backend = PCACHE_CACHE_DEV_PMEM;
+	/*
+	 * Auto-detect backend from the device's DAX capability. A
+	 * DAX-capable device is registered with the PMEM backend
+	 * (byte-addressable mapping); a plain block device uses the NVMe
+	 * backend (bio I/O via cache_dev_req). sb_validate later checks
+	 * that the on-media cache_type matches this detection.
+	 */
+	cache_dev->backend = cache_dev->dm_dev->dax_dev ?
+				PCACHE_CACHE_DEV_PMEM : PCACHE_CACHE_DEV_NVME;
 
-	ret = cache_dev_dax_init(cache_dev);
-	if (ret) {
-		pcache_dev_err(pcache, "failed to init cache_dev %s via dax way: %d.",
-			       cache_dev->dm_dev->name, ret);
-		goto err;
+	if (cache_dev->backend == PCACHE_CACHE_DEV_PMEM) {
+		ret = cache_dev_dax_init(cache_dev);
+		if (ret) {
+			pcache_dev_err(pcache, "failed to init cache_dev %s via dax way: %d.",
+				       cache_dev->dm_dev->name, ret);
+			goto err;
+		}
 	}
 
 	ret = cache_dev_req_ctx_init(cache_dev);

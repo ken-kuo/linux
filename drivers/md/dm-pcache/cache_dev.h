@@ -81,12 +81,21 @@
  */
 #define PCACHE_SB_F_BIGENDIAN			BIT(0)
 
+/*
+ * pcache_sb.cache_type — the access model the on-media layout assumes.
+ * Recorded at format time, validated against the device on attach.
+ */
+#define PCACHE_CACHE_TYPE_PMEM			0
+#define PCACHE_CACHE_TYPE_NVME			1
+
 struct pcache_sb {
 	__le32 crc;
 	__le32 flags;
 	__le64 magic;
 
 	__le32 seg_num;
+	__le32 block_size;	/* sector count; >= cache LBA, <= PAGE_SECTORS, power of 2 */
+	__le32 cache_type;	/* PCACHE_CACHE_TYPE_PMEM | _NVME */
 };
 
 enum pcache_cache_dev_backend {
