@@ -403,7 +403,40 @@ int pcache_cache_start(struct dm_pcache *pcache)
 	struct pcache_backing_dev *backing_dev = &pcache->backing_dev;
 	struct pcache_cache *cache = &pcache->cache;
 	struct pcache_cache_options *opts = &pcache->opts;
+	u32 nr_segs = pcache->cache_dev.seg_num;
+	u32 min_segs;
 	int ret;
+
+	/*
+	 * Reject a cache that has too few segments for this host's CPU count.
+	 *
+	 * Data heads are per-CPU (cache->data_heads is allocated for every
+	 * possible CPU). Each data head pins its current segment with a base
+	 * reference taken in cache_data_head_init(); that reference is only
+	 * dropped once the segment fills and the head advances to the next one.
+	 * Garbage collection drops only the per-key references as it walks the
+	 * kset log - it never releases a data head's base reference. So up to
+	 * num_possible_cpus() segments can be pinned indefinitely by parked,
+	 * partially-filled data heads.
+	 *
+	 * If the cache has no more segments than that, a concurrent write+flush
+	 * workload can pin every segment at once: GC then has nothing to
+	 * reclaim, cache_full never clears, the open kset can never be closed
+	 * (closing a kset needs a free segment), and any in-flight FLUSH/fsync
+	 * blocks forever in D state with the target no longer removable. Require
+	 * enough segments that parked data heads can never consume the whole
+	 * cache, leaving headroom for the kset log and for GC to make forward
+	 * progress. This is independent of the cache medium: DAX and BIO share
+	 * the per-CPU data head and the segment allocator.
+	 */
+	min_segs = num_possible_cpus() * 2;
+	if (nr_segs < min_segs) {
+		pcache_dev_err(pcache,
+			       "cache device too small: %u segments for %u CPUs; need at least %u segments (a cache of >= %llu MiB). Use a larger cache device.",
+			       nr_segs, num_possible_cpus(), min_segs,
+			       ((u64)min_segs * PCACHE_SEG_SIZE) >> 20);
+		return -EINVAL;
+	}
 
 	ret = cache_init(pcache);
 	if (ret)
