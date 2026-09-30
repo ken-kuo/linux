@@ -7,6 +7,7 @@
 
 #include "../dm-core.h"
 #include "cache_dev.h"
+#include "cache_dev_req.h"
 #include "backing_dev.h"
 #include "cache.h"
 #include "dm_pcache.h"
@@ -973,9 +974,13 @@ static int __init dm_pcache_init(void)
 {
 	int ret;
 
-	ret = pcache_backing_init();
+	ret = pcache_cache_dev_req_init();
 	if (ret)
 		goto err;
+
+	ret = pcache_backing_init();
+	if (ret)
+		goto cache_dev_req_exit;
 
 	ret = pcache_cache_init();
 	if (ret)
@@ -990,6 +995,8 @@ cache_exit:
 	pcache_cache_exit();
 backing_exit:
 	pcache_backing_exit();
+cache_dev_req_exit:
+	pcache_cache_dev_req_exit();
 err:
 	return ret;
 }
@@ -1000,6 +1007,7 @@ static void __exit dm_pcache_exit(void)
 	dm_unregister_target(&dm_pcache_target);
 	pcache_cache_exit();
 	pcache_backing_exit();
+	pcache_cache_dev_req_exit();
 }
 module_exit(dm_pcache_exit);
 

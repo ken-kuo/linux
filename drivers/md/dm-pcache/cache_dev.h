@@ -9,6 +9,7 @@
 #include <linux/string.h>
 #include <linux/uio.h>
 
+#include "cache_dev_req.h"
 #include "pcache_internal.h"
 
 #define PCACHE_MAGIC				0x65B05EFA96C596EFULL
@@ -98,6 +99,8 @@ struct pcache_cache_dev {
 
 	struct mutex			seg_lock;
 	unsigned long			*seg_bitmap;
+
+	struct pcache_cache_dev_req_ctx	req_ctx;
 };
 
 struct dm_pcache;
