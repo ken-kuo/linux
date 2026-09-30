@@ -45,6 +45,29 @@ static u32 pcache_bio_range_crc32c(struct bio *bio, u32 off, u32 len)
 }
 
 /*
+ * Copy the byte range [@off, @off+@len) of @bio's data into @dst. Mirrors
+ * pcache_bio_range_crc32c's bvec walk; used by the read-miss promote to
+ * snapshot the just-read data into a bounce buffer before writing it to the
+ * cache medium.
+ */
+static void pcache_bio_range_copy(struct bio *bio, u32 off, u32 len, void *dst)
+{
+	struct bvec_iter iter = bio->bi_iter;
+	struct bio_vec bv;
+
+	bvec_iter_advance(bio->bi_io_vec, &iter, off);
+	iter.bi_size = len;
+
+	__bio_for_each_segment(bv, bio, iter, iter) {
+		void *p = kmap_local_page(bv.bv_page);
+
+		memcpy(dst, p + bv.bv_offset, bv.bv_len);
+		kunmap_local(p);
+		dst += bv.bv_len;
+	}
+}
+
+/*
  * Per-sub-key context held across an in-flight cache-device data write.
  * Lives in cache_data_write_ctx_cache; freed by cache_data_write_done.
  *
@@ -402,6 +425,86 @@ static int cache_hit_read_submit(struct pcache_cache *cache,
 	return 0;
 }
 
+/*
+ * Async promote-on-miss (BIO backend). After a read miss is served from the
+ * backing device, the just-read bytes are snapshotted into a bounce buffer
+ * and written to the cache medium asynchronously, so the range is cached for
+ * future reads. Best-effort: any allocation failure just skips the promote.
+ */
+struct cache_promote_ctx {
+	struct pcache_cache		*cache;
+	struct pcache_cache_key		*key;
+	struct pcache_cache_subtree	*cache_subtree;
+	void				*buf;
+};
+
+static void cache_promote_write_done(struct pcache_cache_dev_req *req, int ret)
+{
+	struct cache_promote_ctx *pctx = req->priv_data;
+	struct pcache_cache *cache = pctx->cache;
+
+	spin_lock(&pctx->cache_subtree->tree_lock);
+	pctx->key->flags &= ~PCACHE_CACHE_KEY_FLAGS_WRITING;
+	spin_unlock(&pctx->cache_subtree->tree_lock);
+
+	kvfree(pctx->buf);
+	pcache_defer_reqs_kick(CACHE_TO_PCACHE(cache));
+	cache_key_put(pctx->key);
+	kfree(pctx);
+}
+
+/*
+ * Submit the async cache-medium write for a promote. Called with the key's
+ * cache_subtree->tree_lock held; @buf holds the data (a bounce copy of the
+ * upper bio, independent of it, so the upper read may complete immediately).
+ * On success @buf ownership passes to the request (freed on completion) and
+ * the key is kept alive by a reference dropped in cache_promote_write_done.
+ * Returns 0 on success, -ENOMEM if a request/context could not be obtained
+ * (caller frees @buf and drops the placeholder).
+ */
+static int cache_promote_submit(struct pcache_cache *cache,
+				struct pcache_cache_key *key,
+				struct pcache_cache_subtree *cache_subtree,
+				void *buf)
+{
+	struct pcache_cache_dev *cache_dev = cache->cache_dev;
+	struct pcache_segment *segment = &key->cache_pos.cache_seg->segment;
+	struct pcache_cache_dev_req_opts opts = { 0 };
+	struct pcache_cache_dev_req *req;
+	struct cache_promote_ctx *pctx;
+
+	pctx = kmalloc_obj(*pctx, GFP_NOWAIT);
+	if (!pctx)
+		return -ENOMEM;
+
+	pctx->cache = cache;
+	pctx->key = key;
+	pctx->cache_subtree = cache_subtree;
+	pctx->buf = buf;
+
+	cache_key_get(key);
+
+	opts.type = CACHE_DEV_REQ_TYPE_KMEM;
+	opts.cdev_off = cmedium_off(cache_dev, segment->data) + key->cache_pos.seg_off;
+	opts.kmem.data = buf;
+	opts.kmem.opf = REQ_OP_WRITE;
+	opts.kmem.len = key->len;
+	opts.count_data = true;		/* FLUSH must drain this before its kset */
+	opts.gfp_mask = GFP_NOWAIT;
+	opts.end_fn = cache_promote_write_done;
+	opts.priv_data = pctx;
+
+	req = cache_dev_req_create(cache_dev, &opts);
+	if (!req) {
+		cache_key_put(key);
+		kfree(pctx);
+		return -ENOMEM;
+	}
+
+	cache_dev_req_submit(req, false);
+	return 0;
+}
+
 /**
  * miss_read_end_req - Handle the end of a miss read request.
  * @backing_req: Pointer to the request structure.
@@ -425,9 +528,19 @@ static void miss_read_end_req(struct pcache_backing_dev_req *backing_req, int re
 	if (priv_data) {
 		struct pcache_cache_key *key;
 		struct pcache_cache_subtree *cache_subtree;
+		void *promo_buf = NULL;
 
 		key = (struct pcache_cache_key *)priv_data;
 		cache_subtree = key->cache_subtree;
+
+		/*
+		 * Pre-allocate the promote bounce buffer outside the lock (BIO
+		 * backend only, where the medium write is an async bio). key->len
+		 * is the miss length and is stable until we promote under the
+		 * lock; a NULL here simply skips the (best-effort) promote.
+		 */
+		if (!read_ret && cache_dev_is_bio(cache->cache_dev))
+			promo_buf = kvmalloc(key->len, GFP_NOIO);
 
 		/* if this key was deleted from cache_subtree by a write, key->flags should be cleared,
 		 * so if cache_key_empty() return true, this key is still in cache_subtree
@@ -440,19 +553,54 @@ static void miss_read_end_req(struct pcache_backing_dev_req *backing_req, int re
 				goto unlock;
 			}
 
-			/*
-			 * Promote-on-miss is currently DAX-only. On the BIO
-			 * backend the synchronous data copy below would sleep
-			 * (cache_dev_sync_kmem_io waits for the bio) while
-			 * holding cache_subtree->tree_lock, which is a spinlock.
-			 * Skip the promote — the upper read has already
-			 * received the data from the backing device, so the
-			 * only effect is that this range is not cached. Async
-			 * promote that drops the lock around the copy is
-			 * follow-on work (see design doc, Phase 3e).
-			 */
 			if (cache_dev_is_bio(cache->cache_dev)) {
-				cache_key_delete(key);
+				/*
+				 * BIO backend: promote asynchronously. The medium
+				 * write can't be done inline under this spinlock,
+				 * so snapshot the just-read bytes into the bounce
+				 * buffer and issue an async cache-device write.
+				 * Best-effort — if the buffer or request can't be
+				 * obtained, just drop the placeholder (the range
+				 * stays uncached; a future read re-misses).
+				 */
+				if (!promo_buf) {
+					cache_key_delete(key);
+					goto unlock;
+				}
+
+				ret = cache_data_alloc(cache, key);
+				if (ret) {
+					cache_key_delete(key);
+					goto unlock;
+				}
+
+				/* key->len may have shrunk to segment space; <= buffer size */
+				pcache_bio_range_copy(pcache_req->bio, backing_req->req.bio_off,
+						      key->len, promo_buf);
+				if (cache_data_crc_on(cache))
+					key->data_crc = crc32c(PCACHE_CRC_SEED,
+							       promo_buf, key->len);
+
+				key->flags &= ~PCACHE_CACHE_KEY_FLAGS_EMPTY;
+				key->flags |= PCACHE_CACHE_KEY_FLAGS_CLEAN |
+					      PCACHE_CACHE_KEY_FLAGS_WRITING;
+
+				ret = cache_promote_submit(cache, key, cache_subtree, promo_buf);
+				if (ret) {
+					key->flags &= ~PCACHE_CACHE_KEY_FLAGS_WRITING;
+					cache_seg_put(key->cache_pos.cache_seg);
+					cache_key_delete(key);
+					goto unlock;
+				}
+				promo_buf = NULL;	/* now owned by the async request */
+
+				/* Journal the key; WRITING is masked out by cache_key_encode. */
+				ret = cache_key_append(cache, key, false);
+				if (ret) {
+					cache_seg_put(key->cache_pos.cache_seg);
+					cache_key_delete(key);
+					goto unlock;
+				}
 				goto unlock;
 			}
 
@@ -487,6 +635,8 @@ static void miss_read_end_req(struct pcache_backing_dev_req *backing_req, int re
 unlock:
 		spin_unlock(&cache_subtree->tree_lock);
 		cache_key_put(key);
+		if (promo_buf)		/* promote skipped or failed: buffer unused */
+			kvfree(promo_buf);
 	}
 }
 

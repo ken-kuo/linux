@@ -26,9 +26,6 @@ void cache_dev_req_end(struct pcache_cache_dev_req *req)
 	case CACHE_DEV_REQ_TYPE_REQ:
 		if (req->req.upper_req)
 			pcache_req_put(req->req.upper_req, req->ret);
-		/* Account this data write for cache_dev_data_drain. */
-		atomic64_inc(&ctx->nr_data_completed);
-		wake_up(&ctx->data_drain_wq);
 		break;
 	case CACHE_DEV_REQ_TYPE_KMEM:
 		if (req->kmem.bvecs != req->kmem.inline_bvecs)
@@ -36,6 +33,12 @@ void cache_dev_req_end(struct pcache_cache_dev_req *req)
 		break;
 	default:
 		BUG();
+	}
+
+	/* Complete the cache_dev_data_drain accounting (see ->count_data). */
+	if (req->count_data) {
+		atomic64_inc(&ctx->nr_data_completed);
+		wake_up(&ctx->data_drain_wq);
 	}
 
 	mempool_free(req, &ctx->req_pool);
@@ -158,12 +161,13 @@ req_type_req_alloc(struct pcache_cache_dev *cache_dev,
 
 	req->type = CACHE_DEV_REQ_TYPE_REQ;
 	req->cache_dev = cache_dev;
+	req->count_data = true;		/* a clone of an upper bio is always data-path */
 	atomic_inc(&ctx->inflight_reqs);
 	/*
-	 * Account this data write for cache_dev_data_drain. Increment at
-	 * alloc (not at submit) so a req that is allocated but ends up
-	 * failed before submission also contributes to the matching
-	 * nr_data_completed bump in cache_dev_req_end.
+	 * Account this data I/O for cache_dev_data_drain. Increment at alloc
+	 * (not at submit) so a req that is allocated but ends up failed before
+	 * submission also contributes to the matching nr_data_completed bump
+	 * in cache_dev_req_end.
 	 */
 	atomic64_inc(&ctx->nr_data_submitted);
 
@@ -195,7 +199,10 @@ kmem_type_req_alloc(struct pcache_cache_dev *cache_dev,
 	req->kmem.n_vecs = n_vecs;
 	req->type = CACHE_DEV_REQ_TYPE_KMEM;
 	req->cache_dev = cache_dev;
+	req->count_data = opts->count_data;	/* opt-in: e.g. promote write */
 	atomic_inc(&ctx->inflight_reqs);
+	if (req->count_data)
+		atomic64_inc(&ctx->nr_data_submitted);
 
 	return req;
 

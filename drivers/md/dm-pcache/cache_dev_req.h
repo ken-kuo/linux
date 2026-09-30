@@ -33,6 +33,15 @@ typedef void (*cache_dev_req_end_fn_t)(struct pcache_cache_dev_req *req, int ret
  */
 struct pcache_cache_dev_req {
 	u8				type;
+	/*
+	 * Drain class, orthogonal to @type (which only describes the buffer
+	 * shape: TYPE_REQ = clone of an upper bio, TYPE_KMEM = a kernel
+	 * buffer). When set, this request is a cache-device data-path I/O that
+	 * a FLUSH must wait for via cache_dev_data_drain(). Always true for
+	 * TYPE_REQ; opt-in for TYPE_KMEM (e.g. the read-miss promote write,
+	 * as opposed to metadata I/O which is not data-drained).
+	 */
+	bool				count_data;
 	struct bio			bio;
 	struct pcache_cache_dev		*cache_dev;
 	int				ret;
@@ -72,11 +81,12 @@ struct pcache_cache_dev_req_ctx {
 	wait_queue_head_t		inflight_wq;
 
 	/*
-	 * Monotonic counters for cache-device DATA writes (TYPE_REQ). Used
-	 * by cache_dev_data_drain at the FLUSH boundary to wait for writes
-	 * submitted before the FLUSH to complete, without blocking writes
-	 * submitted after it. nr_data_submitted is incremented when the
-	 * bio is allocated; nr_data_completed when the bio completes.
+	 * Monotonic counters for cache-device data-path I/O (any request with
+	 * ->count_data set: all TYPE_REQ, plus the promote TYPE_KMEM write).
+	 * Used by cache_dev_data_drain at the FLUSH boundary to wait for I/O
+	 * submitted before the FLUSH to complete, without blocking I/O
+	 * submitted after it. nr_data_submitted is incremented when the bio is
+	 * allocated; nr_data_completed when the bio completes.
 	 */
 	atomic64_t			nr_data_submitted;
 	atomic64_t			nr_data_completed;
@@ -129,6 +139,12 @@ struct pcache_cache_dev_req_opts {
 	};
 
 	gfp_t				gfp_mask;
+	/*
+	 * Mark a TYPE_KMEM request as a cache-device data write so it is
+	 * accounted in cache_dev_data_drain (used by the read-miss promote).
+	 * Ignored for TYPE_REQ, which is always data-drained.
+	 */
+	bool				count_data;
 	cache_dev_req_end_fn_t		end_fn;
 	void				*priv_data;
 };

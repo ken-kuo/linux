@@ -227,22 +227,26 @@ the durability-frontier metadata with FUA → flush) precedes `dirty_tail` advan
 
 ### 6.6 Promote-on-miss (`miss_read_end_req`)
 
-On **PMEM** the backing-read completion synchronously copies the data into the cache (an inline
-memcpy under the subtree lock).
+On **DAX** the backing-read completion synchronously copies the data into the cache (an inline
+memcpy into the mapped medium, under the subtree lock) and appends the key.
 
-On **NVMe** that inline copy is **currently skipped** — `miss_read_end_req` deletes the
-placeholder key and returns. The copy path (`cache_copy_from_req_bio` → `segment_copy_from_bio`
-→ `cmedium_write_iter`) would submit a bio and wait, i.e. sleep under `cache_subtree->tree_lock`.
-A read miss is therefore served from the backing device but **not** populated into the cache, so
-re-reading an unwritten block keeps hitting backing. Correct, but read-promote is unrealized on
-NVMe. **Not yet implemented — see §14 (TODO).**
+On **BIO** the medium write can't be done inline under `cache_subtree->tree_lock` (it would sleep
+on a bio), so the promote is **asynchronous**:
 
-Async form (planned): once the backing read completes the data is already in the upper read bio,
-so **complete the read immediately** (read latency = backing read only) and do the cache-promote
-write in the background — mirroring `cache_hit_read_submit`: allocate cache space, submit a
-`CACHE_DEV_REQ_TYPE_REQ` write of the upper-bio bytes into the cache medium, and from its
-completion clear `EMPTY` / set `CLEAN`, compute `data_crc`, and `cache_key_append()`. Promote is
-best-effort; a dropped promote just means a future miss.
+  1. Before taking the lock, `miss_read_end_req` pre-allocates a bounce buffer sized to the miss
+     length (`GFP_NOIO`, reliable at any size). A `NULL` here just skips the (best-effort) promote.
+  2. Under the lock: `cache_data_alloc()`; snapshot the just-read bytes from the upper bio into
+     the buffer (`pcache_bio_range_copy`); compute `data_crc` over the buffer; clear `EMPTY`, set
+     `CLEAN | WRITING`; submit an async `CACHE_DEV_REQ_TYPE_KMEM` write of the buffer to the medium
+     (`count_data = true`, so a FLUSH drains it before the referencing kset); `cache_key_append()`.
+  3. The completion (`cache_promote_write_done`) frees the buffer, clears `WRITING`, and drops the
+     key reference.
+
+The write reads from the *independent buffer*, not the upper bio, so the upper read completes
+immediately — no `pcache_req` reference is held across the promote. A fresh KMEM bio is used
+rather than re-issuing the upper read bio as a write (no bio-direction aliasing). Promote is
+best-effort; if the buffer or request can't be obtained, the placeholder is dropped and the range
+simply re-misses later.
 
 ### 6.7 Metadata persistence (DRAM-staged, RMW-free)
 
@@ -380,17 +384,6 @@ it are explicitly **not** implemented.
 - GC bandwidth budgeting / throttling policy on NVMe.
 
 ## 14. TODO / deferred work
-
-- **Async promote-on-miss (NVMe).** Read misses are currently served from the backing device
-  but not populated into the cache: `miss_read_end_req` skips the promote on NVMe because the
-  synchronous copy would sleep under `cache_subtree->tree_lock` (see §6.6). So repeated reads of
-  an unwritten block always go to backing; only the write path populates the cache today.
-  Implement the async form by mirroring `cache_hit_read_submit`: allocate cache space, submit a
-  `CACHE_DEV_REQ_TYPE_REQ` write of the just-read upper-bio bytes into the cache medium, and
-  finalize the key from the bio completion (clear `EMPTY` / set `CLEAN`, compute `data_crc`,
-  `cache_key_append()`), refcounting the upper request across the write. The fiddly parts are
-  doing `cache_data_alloc()` + key insertion without sleeping under `tree_lock` (drop/retake, or
-  move that work to the completion). Best-effort: a dropped promote just means a future miss.
 
 - Whether to submit kset bios eagerly on close (warm the device) or hold until the flush
   boundary (fewer small writes); tunable.
