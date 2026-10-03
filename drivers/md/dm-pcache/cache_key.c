@@ -1001,11 +1001,11 @@ int cache_verify_dirty_tail(struct pcache_cache *cache)
 
 	while (true) {
 		to_copy = min(PCACHE_KSET_ONMEDIA_SIZE_MAX, cache_seg_remain(&pos));
-		ret = copy_mc_to_kernel(kset_onmedia, cache_pos_addr(&pos), to_copy);
-		if (ret) {
-			ret = -EIO;
+		ret = cmedium_read(cache->cache_dev, kset_onmedia,
+				   cmedium_off(cache->cache_dev, cache_pos_addr(&pos)),
+				   to_copy);
+		if (ret)
 			goto out;
-		}
 
 		/* A missing, short or corrupt kset is the normal end of the chain. */
 		if (!kset_onmedia_valid(kset_onmedia) ||
