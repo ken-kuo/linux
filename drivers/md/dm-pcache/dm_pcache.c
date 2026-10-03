@@ -607,13 +607,28 @@ static int dm_pcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	if (ret)
 		goto destroy_args;
 
-	/* Phase 3: peer registry sits on PMEM and must outlive bitmap teardown
-	 * (slot indices reference into the same address space). Init it right
-	 * after cache_dev is up, regardless of single-host vs distributed mode. */
-	ret = pcache_registry_init(pcache);
-	if (ret) {
-		ti->error = "Failed to initialize peer registry";
-		goto stop_cache;
+	/*
+	 * Replication -- the peer registry, the per-peer bitmaps and the
+	 * secondary's receive path -- reaches the cache device through its DAX
+	 * mapping only. A BIO cache device therefore runs standalone: no
+	 * registry, and a table line that configures replication is refused.
+	 */
+	if (cache_dev_is_bio(&pcache->cache_dev)) {
+		if (net_argc) {
+			ti->error = "Replication requires a DAX cache device";
+			ret = -EOPNOTSUPP;
+			goto stop_cache;
+		}
+	} else {
+		/* Phase 3: peer registry sits on PMEM and must outlive bitmap
+		 * teardown (slot indices reference into the same address
+		 * space). Init it right after cache_dev is up, regardless of
+		 * single-host vs distributed mode. */
+		ret = pcache_registry_init(pcache);
+		if (ret) {
+			ti->error = "Failed to initialize peer registry";
+			goto stop_cache;
+		}
 	}
 
 	/* Phase 3.5 — no device-level bitmap; each peer owns its bm. */
