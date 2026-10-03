@@ -261,7 +261,7 @@ pcache_bm_header_load(struct pcache_bitmap *bm,
 	struct pcache_cache_dev *cdev = &bm->pcache->cache_dev;
 	int latest;
 
-	latest = pcache_meta_find_latest(cdev, cmedium_off(cdev, bm->pmem_base),
+	latest = pcache_meta_find_latest(cdev, bm->base_off,
 					 sizeof(*out),
 					 PCACHE_BITMAP_SLOT_HDR_SIZE, out);
 	if (latest < 0)
@@ -271,11 +271,22 @@ pcache_bm_header_load(struct pcache_bitmap *bm,
 	return out;
 }
 
-/* Write the current in-memory header state to the next (round-robin) PMEM slot. */
+/*
+ * Write the current in-memory header state to the next (round-robin) slot.
+ *
+ * Context: any. The write is staged (cmedium_stage_write), because the
+ * generation bump in __pcache_bm_set_range() reaches here from the map
+ * path, where a synchronous bio on a BIO cache device would deadlock
+ * under submit_bio_noacct()'s recursion guard. On DAX it is durable on
+ * return, as before; on BIO it is durable at the next cmedium_flush(),
+ * like the dirty bits themselves.
+ */
 static void pcache_bm_header_flush(struct pcache_bitmap *bm)
 {
+	struct pcache_cache_dev *cdev = &bm->pcache->cache_dev;
 	struct pcache_bm_header_onmedia hdr = {0};
-	void *dst;
+
+	BUILD_BUG_ON(sizeof(hdr) > PCACHE_META_STAGE_BUF_SIZE);
 
 	hdr.header.seq     = ++bm->meta_seq;
 	hdr.header.version = 0;
@@ -289,9 +300,10 @@ static void pcache_bm_header_flush(struct pcache_bitmap *bm)
 	hdr.header.crc     = pcache_meta_crc(&hdr.header, sizeof(hdr));
 
 	bm->meta_index = (bm->meta_index + 1) % PCACHE_META_INDEX_MAX;
-	dst = bm->pmem_base + bm->meta_index * PCACHE_BITMAP_SLOT_HDR_SIZE;
-	memcpy_flushcache(dst, &hdr, sizeof(hdr));
-	pmem_wmb();
+	cmedium_stage_write(cdev, bm->base_off +
+			    bm->meta_index * PCACHE_BITMAP_SLOT_HDR_SIZE,
+			    &hdr, sizeof(hdr));
+	cmedium_stage_barrier(cdev);
 }
 
 /*
@@ -346,45 +358,61 @@ void pcache_bm_mark_synced(struct pcache_bitmap *bm, u64 peer_gen)
 
 int pcache_bm_flush_sync(struct pcache_bitmap *bm)
 {
+	struct pcache_cache_dev *cdev;
+	unsigned long *pages;
 	u32 page_idx;
-	size_t page_bytes = PCACHE_BM_BLOCK_SIZE;
-	u64 cache_bytes;
+	int ret = 0, err;
 
 	if (!bm)
 		return 0;
+	cdev = &bm->pcache->cache_dev;
 
-	cache_bytes = bm->nr_words * sizeof(unsigned long);
+	pages = bitmap_zalloc(bm->nr_pages, GFP_NOIO);
+	if (!pages)
+		return -ENOMEM;
 
+	/*
+	 * Snapshot and clear the dirty-page set under the lock, write the
+	 * pages outside it: a write sleeps on a BIO cache device. A bit set
+	 * or cleared after the snapshot marks its page dirty again, so it
+	 * goes out with this pass or the next one.
+	 */
 	spin_lock(&bm->lock);
-	for_each_set_bit(page_idx, bm->dirty_pages, bm->nr_pages) {
-		size_t off = (size_t)page_idx << PCACHE_BM_BLOCK_SHIFT;
-		size_t n   = page_bytes;
-
-		if (off >= cache_bytes)
-			break;
-		if (off + n > cache_bytes)
-			n = (size_t)(cache_bytes - off);
-
-		memcpy_flushcache((u8 *)bm->pmem_data + off,
-				  (u8 *)bm->cache + off, n);
-		/* Zero any tail bytes within the PMEM page that aren't covered
-		 * by RAM cache (only matters on the last page). */
-		if (n < page_bytes)
-			memset_io((u8 *)bm->pmem_data + off + n, 0,
-				  page_bytes - n);
-	}
+	bitmap_copy(pages, bm->dirty_pages, bm->nr_pages);
 	bitmap_zero(bm->dirty_pages, bm->nr_pages);
 	spin_unlock(&bm->lock);
 
-	pmem_wmb();
+	/* bm->cache is whole pages; the tail past nr_bits stays zero. */
+	for_each_set_bit(page_idx, pages, bm->nr_pages) {
+		u64 off = (u64)page_idx << PCACHE_BM_BLOCK_SHIFT;
+
+		err = cmedium_write_sync(cdev, bm->data_off + off,
+					 (u8 *)bm->cache + off,
+					 PCACHE_BM_BLOCK_SIZE);
+		if (err) {
+			spin_lock(&bm->lock);
+			__set_bit(page_idx, bm->dirty_pages);	/* retry next time */
+			spin_unlock(&bm->lock);
+			if (!ret)
+				ret = err;
+		}
+	}
+
+	/* The pages must be durable before the header that describes them. */
+	cmedium_flush(cdev);
 	pcache_bm_header_flush(bm);
-	return 0;
+	cmedium_flush(cdev);
+
+	bitmap_free(pages);
+	if (ret)
+		pcache_dev_err(bm->pcache, "bitmap: flushing pages failed: %d\n", ret);
+	return ret;
 }
 
 /*
  * Phase 3.5 — Allocate this peer's bitmap on its registry-assigned PMEM
  * slot. Slot index comes from peer->bm->slot_idx which the caller (Add 4 in
- * pcache_add_peer) sets before invoking us; we read pmem_base from the
+ * pcache_add_peer) sets before invoking us; we locate the slot in the
  * cache_dev region for that slot.
  *
  * Loads existing on-disk state if present, else creates a fresh bitmap
@@ -421,7 +449,8 @@ int pcache_peer_bitmap_init(struct pcache_peer *peer, u64 backing_sectors,
 	nr_bits     = DIV_ROUND_UP_ULL(backing_sectors, PCACHE_BM_SECTORS_PER_BIT);
 	nr_words    = DIV_ROUND_UP_ULL(nr_bits, BITS_PER_LONG);
 	cache_bytes = nr_words * sizeof(unsigned long);
-	cache_alloc = (size_t)cache_bytes;
+	/* Whole pages: on-media I/O is per page, LBA-aligned on BIO. */
+	cache_alloc = round_up((size_t)cache_bytes, PCACHE_BM_BLOCK_SIZE);
 	nr_pages    = (u32)DIV_ROUND_UP_ULL(cache_bytes, PCACHE_BM_BLOCK_SIZE);
 
 	if (cache_bytes > PCACHE_BITMAP_SLOT_DATA_SIZE) {
@@ -446,8 +475,8 @@ int pcache_peer_bitmap_init(struct pcache_peer *peer, u64 backing_sectors,
 	bm->nr_bits   = nr_bits;
 	bm->nr_words  = nr_words;
 	bm->nr_pages  = nr_pages;
-	bm->pmem_base = CACHE_DEV_BITMAP_SLOT(cdev, slot);
-	bm->pmem_data = (u8 *)bm->pmem_base + PCACHE_BITMAP_SLOT_DATA_OFF;
+	bm->base_off  = PCACHE_BITMAP_SLOT_OFF(slot);
+	bm->data_off  = bm->base_off + PCACHE_BITMAP_SLOT_DATA_OFF;
 	spin_lock_init(&bm->lock);
 	atomic64_set(&bm->dirty_count, 0);
 
@@ -467,9 +496,9 @@ int pcache_peer_bitmap_init(struct pcache_peer *peer, u64 backing_sectors,
 	    le32_to_cpu(hdr_buf.bm_block_shift) == PCACHE_BM_BLOCK_SHIFT) {
 		u64 cnt, load_gen;
 
-		if (copy_mc_to_kernel(bm->cache, bm->pmem_data, cache_bytes)) {
+		if (cmedium_read(cdev, bm->cache, bm->data_off, cache_alloc)) {
 			pcache_dev_err(pcache,
-				"bitmap: hardware memory error reading PMEM\n");
+				"bitmap: error reading the slot from the cache device\n");
 			goto err_free_dirty;
 		}
 		load_gen             = le64_to_cpu(hdr_buf.generation);
@@ -520,9 +549,9 @@ int pcache_peer_bitmap_init(struct pcache_peer *peer, u64 backing_sectors,
 	peer->bm = bm;
 
 	if (fresh) {
-		cmedium_zero(cdev, cmedium_off(cdev, bm->pmem_data),
-			     PCACHE_BITMAP_SLOT_DATA_SIZE);
+		cmedium_zero(cdev, bm->data_off, PCACHE_BITMAP_SLOT_DATA_SIZE);
 		pcache_bm_header_flush(bm);
+		cmedium_flush(cdev);	/* the staged header, on BIO */
 	}
 	return 0;
 

@@ -48,7 +48,7 @@ struct pcache_peer_entry {
 
 struct pcache_peer_registry {
 	struct dm_pcache	*pcache;
-	void			*pmem_base;	/* CACHE_DEV_PEER_REGISTRY(...) */
+	u64			base_off;	/* PCACHE_PEER_REGISTRY_OFF on the cache device */
 	struct mutex		lock;		/* serialise add/remove/flush */
 	u32			my_node_id;
 	u8			meta_seq;

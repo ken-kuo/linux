@@ -46,7 +46,7 @@ struct pcache_bm_header_onmedia {
  * single shared bitmap on pcache->bitmap.
  *
  * Per-peer PMEM persistence: bm->slot_idx is the registry slot index
- * (0..PCACHE_BM_MAX_PEERS-1), and pmem_base/pmem_data point at this
+ * (0..PCACHE_BM_MAX_PEERS-1), and base_off/data_off locate this
  * slot's reserved region on PMEM.
  */
 struct pcache_bitmap {
@@ -60,9 +60,9 @@ struct pcache_bitmap {
 
 	/* PMEM mapping — slot decided by registry slot index */
 	int			slot_idx;
-	void			*pmem_base;	/* CACHE_DEV_BITMAP_SLOT(cdev, slot_idx) */
-	void			*pmem_data;	/* pmem_base + DATA_OFF */
-	u32			nr_pages;	/* number of 4 KiB pages in pmem_data */
+	u64			base_off;	/* PCACHE_BITMAP_SLOT_OFF(slot_idx) on the cache device */
+	u64			data_off;	/* base_off + PCACHE_BITMAP_SLOT_DATA_OFF */
+	u32			nr_pages;	/* number of 4 KiB pages at data_off */
 
 	/* Dirty-page tracking for hinted writeback */
 	unsigned long		*dirty_pages;	/* bit i = RAM page i differs from PMEM */

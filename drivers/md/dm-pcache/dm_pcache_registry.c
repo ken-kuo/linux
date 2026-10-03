@@ -24,14 +24,19 @@ static void zero_entry(struct pcache_peer_entry *e)
 }
 
 /*
- * Persist the current in-memory state to the next (round-robin) PMEM copy.
- * Caller holds reg->lock. The on-media struct is ~3 KiB so we heap-allocate
- * rather than blow the kernel stack.
+ * Persist the current in-memory state to the next (round-robin) on-media
+ * copy. Caller holds reg->lock. The on-media struct is ~3 KiB so we
+ * heap-allocate rather than blow the kernel stack.
+ *
+ * Context: sleeps (a synchronous bio and a device flush on a BIO cache
+ * device). Every caller is a control-plane path: ctr, add-peer,
+ * remove-peer, network init.
  */
 static void pcache_reg_flush_locked(struct pcache_peer_registry *reg)
 {
+	struct pcache_cache_dev *cdev = &reg->pcache->cache_dev;
 	struct pcache_peer_registry_onmedia *hdr;
-	void *dst;
+	int ret;
 	u32 i;
 
 	hdr = kzalloc(sizeof(*hdr), GFP_KERNEL);
@@ -61,9 +66,14 @@ static void pcache_reg_flush_locked(struct pcache_peer_registry *reg)
 	hdr->header.crc = pcache_meta_crc(&hdr->header, sizeof(*hdr));
 
 	reg->meta_index = (reg->meta_index + 1) % PCACHE_META_INDEX_MAX;
-	dst = (u8 *)reg->pmem_base + reg->meta_index * PCACHE_PEER_REGISTRY_HDR_SIZE;
-	memcpy_flushcache(dst, hdr, sizeof(*hdr));
-	pmem_wmb();
+	ret = cmedium_write_sync(cdev, reg->base_off +
+				 reg->meta_index * PCACHE_PEER_REGISTRY_HDR_SIZE,
+				 hdr, sizeof(*hdr));
+	if (ret)
+		pcache_dev_err(reg->pcache,
+			"registry: persisting copy %u failed: %d\n",
+			reg->meta_index, ret);
+	cmedium_flush(cdev);
 
 	kfree(hdr);
 }
@@ -80,7 +90,7 @@ static int pcache_reg_load(struct pcache_peer_registry *reg)
 	if (!buf)
 		return -ENOMEM;
 
-	latest = pcache_meta_find_latest(cdev, cmedium_off(cdev, reg->pmem_base),
+	latest = pcache_meta_find_latest(cdev, reg->base_off,
 					 sizeof(*buf),
 					 PCACHE_PEER_REGISTRY_HDR_SIZE, buf);
 	if (latest < 0) {
@@ -130,7 +140,7 @@ int pcache_registry_init(struct dm_pcache *pcache)
 		return -ENOMEM;
 
 	reg->pcache    = pcache;
-	reg->pmem_base = CACHE_DEV_PEER_REGISTRY(cdev);
+	reg->base_off  = PCACHE_PEER_REGISTRY_OFF;
 	reg->my_node_id = PCACHE_NODE_ID_INVALID;
 	mutex_init(&reg->lock);
 	for (i = 0; i < PCACHE_BM_MAX_PEERS; i++)
@@ -156,7 +166,7 @@ int pcache_registry_init(struct dm_pcache *pcache)
 		/* Zero both copies so any residual data from an earlier on-disk
 		 * layout (e.g. Phase 2 bitmap region overlapping this offset)
 		 * cannot accidentally pass CRC validation on future loads. */
-		cmedium_zero(cdev, cmedium_off(cdev, reg->pmem_base),
+		cmedium_zero(cdev, reg->base_off,
 			     PCACHE_PEER_REGISTRY_REGION_SIZE);
 		mutex_lock(&reg->lock);
 		pcache_reg_flush_locked(reg);

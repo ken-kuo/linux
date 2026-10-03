@@ -58,8 +58,7 @@
 #define PCACHE_SEGMENTS_OFF			(PCACHE_BITMAP_OFF + PCACHE_BITMAP_REGION_SIZE)
 #define PCACHE_SEG_INFO_SIZE			(4 * PCACHE_KB)
 
-#define CACHE_DEV_BITMAP_SLOT(cache_dev, slot)	\
-	((void *)cache_dev->mapping + PCACHE_BITMAP_OFF + (slot) * PCACHE_BITMAP_SLOT_SIZE)
+#define PCACHE_BITMAP_SLOT_OFF(slot)		(PCACHE_BITMAP_OFF + (u64)(slot) * PCACHE_BITMAP_SLOT_SIZE)
 
 #define PCACHE_CACHE_DEV_SIZE_MIN		(512 * PCACHE_MB)	/* 512 MB */
 #define PCACHE_SEG_SIZE				(16 * PCACHE_MB)	/* Size of each PCACHE segment (16 MB) */
@@ -67,7 +66,6 @@
 #define CACHE_DEV_SB(cache_dev)			((struct pcache_sb *)(cache_dev->mapping + PCACHE_SB_OFF))
 #define CACHE_DEV_CACHE_INFO(cache_dev)		((void *)cache_dev->mapping + PCACHE_CACHE_INFO_OFF)
 #define CACHE_DEV_CACHE_CTRL(cache_dev)		((void *)cache_dev->mapping + PCACHE_CACHE_CTRL_OFF)
-#define CACHE_DEV_PEER_REGISTRY(cache_dev)	((void *)cache_dev->mapping + PCACHE_PEER_REGISTRY_OFF)
 #define CACHE_DEV_SEGMENTS(cache_dev)		((void *)cache_dev->mapping + PCACHE_SEGMENTS_OFF)
 #define CACHE_DEV_SEGMENT(cache_dev, id)	((void *)CACHE_DEV_SEGMENTS(cache_dev) + (u64)id * PCACHE_SEG_SIZE)
 #define CACHE_DEV_SEGMENT_OFF(id)		(PCACHE_SEGMENTS_OFF + (u64)(id) * PCACHE_SEG_SIZE)
@@ -218,6 +216,25 @@ static inline void cmedium_write(struct pcache_cache_dev *cache_dev, u64 off,
 		return;
 	}
 	memcpy_flushcache(cmedium_addr(cache_dev, off), src, len);
+}
+
+/*
+ * cmedium_write_sync - cmedium_write() that reports the I/O result.
+ *
+ * Same data path as cmedium_write(): unfenced on DAX (memcpy_flushcache,
+ * pair with cmedium_flush), a synchronous bio on BIO. Use it where the
+ * caller must know the bytes reached the device, e.g. replication
+ * metadata. May sleep on BIO, so never from the map path or under a
+ * spinlock -- use cmedium_stage_write() there.
+ */
+static inline int cmedium_write_sync(struct pcache_cache_dev *cache_dev, u64 off,
+				     const void *src, size_t len)
+{
+	if (cache_dev_is_bio(cache_dev))
+		return cache_dev_sync_kmem_io(cache_dev, (void *)src, off, len,
+					      REQ_OP_WRITE);
+	memcpy_flushcache(cmedium_addr(cache_dev, off), src, len);
+	return 0;
 }
 
 static inline int cmedium_write_iter(struct pcache_cache_dev *cache_dev, u64 off,
