@@ -5,6 +5,7 @@
 #include "cache.h"
 #include "backing_dev.h"
 #include "cache_dev.h"
+#include "cache_dev_req.h"
 #include "dm_pcache.h"
 
 static void writeback_ctx_end(struct pcache_cache *cache, int ret)
@@ -119,6 +120,19 @@ int pcache_cache_writeback_all(struct pcache_cache *cache, unsigned int timeout_
 	for (;;) {
 		if (pcache_is_stopping(pcache))
 			return -EIO;
+
+		/*
+		 * On BIO a closed kset reaches the medium through the metadata
+		 * staging queue, some time after key_head has moved past it.
+		 * is_cache_clean() reads the medium and takes an invalid kset
+		 * as the end of the log, so in that window it would call the
+		 * cache clean while closed ksets -- and their dirty data -- are
+		 * still ahead of dirty_tail, and the caller would then read
+		 * stale blocks from backing. Drain the staging queue first:
+		 * an invalid kset then means the still-open one, as on DAX.
+		 */
+		if (cache_dev_is_bio(cache->cache_dev))
+			cache_dev_meta_drain(cache->cache_dev);
 
 		/*
 		 * is_cache_clean() parses into cache->wb_kset_onmedia_buf, which
