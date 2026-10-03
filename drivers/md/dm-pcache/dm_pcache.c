@@ -795,7 +795,15 @@ static int dm_pcache_map_bio(struct dm_target *ti, struct bio *bio)
 		return DM_MAPIO_SUBMITTED;
 	}
 
-	ret = pcache_cache_handle_req(&pcache->cache, pcache_req);
+	/*
+	 * Go through the shared primary-aware path, as defered_req_fn does:
+	 * calling pcache_cache_handle_req() directly would skip replication,
+	 * overlap admission and the dirty-bitmap marking for every write that
+	 * is not deferred.
+	 */
+	ret = pcache_submit_req(pcache, pcache_req);
+	if (ret == PCACHE_REQ_PARKED)
+		return DM_MAPIO_SUBMITTED;
 	if (ret == -EBUSY)
 		defer_req(pcache_req);
 	else
