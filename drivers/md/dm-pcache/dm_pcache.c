@@ -1097,6 +1097,30 @@ static int dm_pcache_iterate_devices(struct dm_target *ti,
 	return r;
 }
 
+/*
+ * Require stable pages from the writers above us, as DRBD does
+ * (drbd_nl.c): a page must not change while its write is in flight.
+ *
+ * - Replication reads the same bio pages twice, for the local cache write
+ *   and for the network send; a page changed in between leaves the two
+ *   replicas with different data.
+ * - On a BIO cache device data_crc is computed from the bio when the write
+ *   is submitted, while the cache-device bio DMAs from the same pages
+ *   later. A page changed in between gives a crc that never matches the
+ *   medium, writeback then refuses that kset for good, and once the cache
+ *   fills nothing can be reclaimed.
+ *
+ * A standalone DAX cache copies synchronously and needs neither.
+ */
+static void dm_pcache_io_hints(struct dm_target *ti, struct queue_limits *limits)
+{
+	struct dm_pcache *pcache = ti->private;
+
+	if (pcache->net ||
+	    (cache_dev_is_bio(&pcache->cache_dev) && cache_data_crc_on(&pcache->cache)))
+		limits->features |= BLK_FEAT_STABLE_WRITES;
+}
+
 static struct target_type dm_pcache_target = {
 	.name		= "pcache-dist",
 	.version	= {0, 1, 0},
@@ -1108,6 +1132,7 @@ static struct target_type dm_pcache_target = {
 	.status		= dm_pcache_status,
 	.message	= dm_pcache_message,
 	.iterate_devices = dm_pcache_iterate_devices,
+	.io_hints	= dm_pcache_io_hints,
 };
 
 static int __init dm_pcache_init(void)
