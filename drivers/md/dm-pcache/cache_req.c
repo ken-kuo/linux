@@ -1381,7 +1381,9 @@ static int pcache_wait_seg(struct pcache_cache *cache,
 	int ret;
 
 	while ((ret = cache_data_alloc(cache, key)) == -EBUSY) {
-		if (pcache_is_stopping(pcache))
+		/* writeback stopped on an error: no segment will be freed */
+		if (pcache_is_stopping(pcache) ||
+		    atomic_read(&cache->writeback_errors))
 			return -EIO;
 		wait_event_interruptible_timeout(
 			cache->seg_wait_wq,
@@ -1499,7 +1501,8 @@ int pcache_net_write_to_cache(struct pcache_cache *cache, u64 sector,
 			 * this chunk. io_done is untouched, and the undo above
 			 * already released the key and its reservation.
 			 */
-			if (pcache_is_stopping(CACHE_TO_PCACHE(cache)))
+			if (pcache_is_stopping(CACHE_TO_PCACHE(cache)) ||
+			    atomic_read(&cache->writeback_errors))
 				return -EIO;
 			wait_event_interruptible_timeout(
 				cache->seg_wait_wq,

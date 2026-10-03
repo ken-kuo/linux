@@ -301,6 +301,23 @@ static int pcache_submit_req(struct dm_pcache *pcache,
 	return 0;
 }
 
+/*
+ * -EBUSY means "no cache space yet, retry once writeback and GC free some".
+ * After writeback has stopped on an error (cache_writeback_halt()) a full
+ * cache never frees space again, so a deferred request would wait forever.
+ * Fail it instead: DRBD likewise turns a local I/O error into a disk-state
+ * change and returns errors rather than queueing I/O that has no path left
+ * (drbd_req.c, local-io-error).
+ */
+static int pcache_busy_ret(struct dm_pcache *pcache)
+{
+	struct pcache_cache *cache = &pcache->cache;
+
+	if (atomic_read(&cache->writeback_errors) && cache->cache_full)
+		return -EIO;
+	return -EBUSY;
+}
+
 static void defered_req_fn(struct work_struct *work)
 {
 	struct dm_pcache *pcache = container_of(work, struct dm_pcache, defered_req_work);
@@ -324,6 +341,8 @@ static void defered_req_fn(struct work_struct *work)
 		if (ret == PCACHE_REQ_PARKED)
 			continue;
 		if (ret == -EBUSY)
+			ret = pcache_busy_ret(pcache);
+		if (ret == -EBUSY)
 			defer_req(pcache_req);
 		else
 			pcache_req_put(pcache_req, ret);
@@ -342,6 +361,8 @@ static void end_req(struct kref *ref)
 	struct bio *bio = pcache_req->bio;
 	int ret = pcache_req->ret;
 
+	if (ret == -EBUSY)
+		ret = pcache_busy_ret(pcache);
 	if (ret == -EBUSY) {
 		pcache_req_get(pcache_req);
 		defer_req(pcache_req);
@@ -623,6 +644,7 @@ static int pcache_stats_show(struct seq_file *m, void *v)
 	/* GC / writeback progress cursors (seg:off) and GC health. */
 	seq_printf(m, "gc_percent: %u\n", pcache_cache_get_gc_percent(cache));
 	seq_printf(m, "gc_errors: %d\n", atomic_read(&cache->gc_errors));
+	seq_printf(m, "writeback_errors: %d\n", atomic_read(&cache->writeback_errors));
 	seq_printf(m, "key_head: %u:%u\n",
 		   cache->key_head.cache_seg->cache_seg_id, cache->key_head.seg_off);
 	seq_printf(m, "dirty_tail: %u:%u\n",
@@ -884,6 +906,8 @@ static int dm_pcache_map_bio(struct dm_target *ti, struct bio *bio)
 	ret = pcache_submit_req(pcache, pcache_req);
 	if (ret == PCACHE_REQ_PARKED)
 		return DM_MAPIO_SUBMITTED;
+	if (ret == -EBUSY)
+		ret = pcache_busy_ret(pcache);
 	if (ret == -EBUSY)
 		defer_req(pcache_req);
 	else

@@ -410,6 +410,26 @@ static int last_kset_writeback(struct pcache_cache *cache,
 	return 0;
 }
 
+/*
+ * Stop writeback after an error it cannot get past (a kset or key that
+ * fails validation, a broken last-kset link). Writing on would put data of
+ * unknown integrity on backing, so writeback stays stopped -- and from then
+ * on the cache can only fill. Say so once, and wake everything that waits
+ * for cache space so it can fail instead of waiting forever (see
+ * pcache_busy_ret()).
+ */
+static void cache_writeback_halt(struct pcache_cache *cache, const char *why)
+{
+	struct dm_pcache *pcache = CACHE_TO_PCACHE(cache);
+
+	if (atomic_inc_return(&cache->writeback_errors) == 1)
+		pcache_dev_err(pcache,
+			"writeback stopped: %s; once the cache is full, requests that need cache space fail with -EIO\n",
+			why);
+	pcache_defer_reqs_kick(pcache);
+	wake_up_all(&cache->seg_wait_wq);
+}
+
 void cache_writeback_fn(struct work_struct *work)
 {
 	struct pcache_cache *cache = container_of(work, struct pcache_cache, writeback_work.work);
@@ -460,7 +480,7 @@ void cache_writeback_fn(struct work_struct *work)
 	if (kset_onmedia->flags & PCACHE_KSET_FLAGS_LAST) {
 		ret = last_kset_writeback(cache, kset_onmedia);
 		if (ret) {
-			atomic_inc(&cache->writeback_errors);
+			cache_writeback_halt(cache, "invalid last kset");
 			goto unlock;
 		}
 		delay = 0;
@@ -468,13 +488,15 @@ void cache_writeback_fn(struct work_struct *work)
 	}
 
 	if (get_kset_onmedia_size(kset_onmedia) > cache_seg_remain(&dirty_tail)) {
-		atomic_inc(&cache->writeback_errors);
+		cache_writeback_halt(cache, "kset overruns its segment");
 		goto unlock;
 	}
 
 	ret = cache_kset_insert_tree(cache, kset_onmedia);
 	if (ret) {
-		atomic_inc(&cache->writeback_errors);
+		cache_writeback_halt(cache, ret == -EBADMSG ?
+				     "cached data does not match its data_crc" :
+				     "a key in the kset failed to decode");
 		goto unlock;
 	}
 
