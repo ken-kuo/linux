@@ -459,6 +459,8 @@ static int cache_dev_sync_kmem_io_raw(struct pcache_cache_dev *cache_dev,
  *
  * The metadata layout already places everything inside 4K-aligned
  * 4K-sized slots, so the bounce buffer is bounded (one or two LBAs).
+ * LBA-aligned accesses of any size are split into requests the bvec
+ * pool can map.
  */
 int cache_dev_sync_kmem_io(struct pcache_cache_dev *cache_dev, void *data,
 			   u64 cdev_off, u32 len, blk_opf_t opf)
@@ -471,9 +473,26 @@ int cache_dev_sync_kmem_io(struct pcache_cache_dev *cache_dev, void *data,
 	void *buf;
 	int ret;
 
-	if (!(cdev_off & lba_mask) && !(len & lba_mask))
-		return cache_dev_sync_kmem_io_raw(cache_dev, data,
-						  cdev_off, len, opf);
+	if (!(cdev_off & lba_mask) && !(len & lba_mask)) {
+		/*
+		 * One request maps at most PCACHE_CACHE_SUBTREE_SIZE bytes:
+		 * that is what the bvec pool is sized for (one extra vec for
+		 * a buffer that does not start on a page boundary). Larger
+		 * buffers, such as a whole peer bitmap, go out in chunks.
+		 */
+		while (len) {
+			u32 n = min_t(u32, len, PCACHE_CACHE_SUBTREE_SIZE);
+
+			ret = cache_dev_sync_kmem_io_raw(cache_dev, data,
+							 cdev_off, n, opf);
+			if (ret)
+				return ret;
+			data += n;
+			cdev_off += n;
+			len -= n;
+		}
+		return 0;
+	}
 
 	aligned_off = cdev_off & ~(u64)lba_mask;
 	head_skip = cdev_off - aligned_off;
