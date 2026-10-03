@@ -318,6 +318,7 @@ static void meta_stage_fn(struct work_struct *work)
 	struct pcache_cache_dev *cache_dev = container_of(ctx,
 			struct pcache_cache_dev, req_ctx);
 	struct pcache_meta_stage *st;
+	int ret;
 	LIST_HEAD(tmp_list);
 
 	spin_lock(&ctx->meta_stage_lock);
@@ -328,8 +329,12 @@ static void meta_stage_fn(struct work_struct *work)
 		st = list_first_entry(&tmp_list, struct pcache_meta_stage, node);
 		list_del_init(&st->node);
 
-		cache_dev_sync_kmem_io(cache_dev, st->buf, st->off, st->len,
-				       REQ_OP_WRITE);
+		ret = cache_dev_sync_kmem_io(cache_dev, st->buf, st->off,
+					     st->len, REQ_OP_WRITE);
+		if (ret)
+			pcache_dev_err(CACHE_DEV_TO_PCACHE(cache_dev),
+				       "staged metadata write failed: off=%llu len=%u: %d\n",
+				       st->off, st->len, ret);
 
 		mempool_free(st, &ctx->meta_stage_pool);
 		atomic64_inc(&ctx->nr_meta_completed);
@@ -465,7 +470,8 @@ static int cache_dev_sync_kmem_io_raw(struct pcache_cache_dev *cache_dev,
 int cache_dev_sync_kmem_io(struct pcache_cache_dev *cache_dev, void *data,
 			   u64 cdev_off, u32 len, blk_opf_t opf)
 {
-	u32 lba = bdev_logical_block_size(cache_dev->dm_dev->bdev);
+	struct block_device *bdev = cache_dev->dm_dev->bdev;
+	u32 lba = bdev_logical_block_size(bdev);
 	u32 lba_mask = lba - 1;
 	u64 aligned_off;
 	u32 head_skip;
@@ -483,8 +489,28 @@ int cache_dev_sync_kmem_io(struct pcache_cache_dev *cache_dev, void *data,
 		while (len) {
 			u32 n = min_t(u32, len, PCACHE_CACHE_SUBTREE_SIZE);
 
-			ret = cache_dev_sync_kmem_io_raw(cache_dev, data,
-							 cdev_off, n, opf);
+			/*
+			 * The block layer fails a bio whose bvec does not meet
+			 * the device's dma_alignment (bio_split_io_at() returns
+			 * -EINVAL). Callers pass buffers at arbitrary offsets --
+			 * a staged metadata buffer sits behind its list head --
+			 * so bounce those through an aligned allocation.
+			 */
+			if ((unsigned long)data & bdev_dma_alignment(bdev)) {
+				buf = kmalloc(n, GFP_NOIO);
+				if (!buf)
+					return -ENOMEM;
+				if (op_is_write(opf))
+					memcpy(buf, data, n);
+				ret = cache_dev_sync_kmem_io_raw(cache_dev, buf,
+								 cdev_off, n, opf);
+				if (!ret && !op_is_write(opf))
+					memcpy(data, buf, n);
+				kfree(buf);
+			} else {
+				ret = cache_dev_sync_kmem_io_raw(cache_dev, data,
+								 cdev_off, n, opf);
+			}
 			if (ret)
 				return ret;
 			data += n;
