@@ -1119,6 +1119,15 @@ int pcache_net_write_to_cache(struct pcache_cache *cache, u64 sector,
 		b = ktime_get_ns(); t_reserve += b - a; a = b;
 #endif
 		memcpy_flushcache(dst, data + io_done, key->len);
+		/*
+		 * The kset encoder persists key->data_crc as is; nothing else
+		 * computes it on this path, which does not go through
+		 * cache_data_write_submit(). key->len is final here (the
+		 * segment allocation above may have shrunk it).
+		 */
+		if (cache_data_crc_on(cache))
+			key->data_crc = crc32c(PCACHE_CRC_SEED, data + io_done,
+					       key->len);
 #if PCACHE_LAT_TRACE
 		b = ktime_get_ns(); t_copy += b - a; a = b;
 #endif
