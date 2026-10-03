@@ -1434,7 +1434,28 @@ int pcache_net_write_to_cache(struct pcache_cache *cache, u64 sector,
 #if PCACHE_LAT_TRACE
 		b = ktime_get_ns(); t_reserve += b - a; a = b;
 #endif
-		memcpy_flushcache(dst, data + io_done, key->len);
+		if (cache_dev_is_bio(cache->cache_dev)) {
+			/*
+			 * Write the data before the key is inserted, so no
+			 * reader can see the key ahead of its data and no
+			 * WRITING flag is needed. The caller ACKs after this
+			 * returns, i.e. once the device has completed the
+			 * write -- DRBD protocol C acks a peer write at the
+			 * same point. Durability against power loss comes
+			 * from FUA/flush, as for a local write.
+			 */
+			ret = cache_dev_sync_kmem_io(cache->cache_dev,
+					data + io_done,
+					cmedium_off(cache->cache_dev, dst),
+					key->len, REQ_OP_WRITE);
+			if (ret) {
+				cache_seg_put(pos->cache_seg);
+				cache_key_put(key);
+				return ret;
+			}
+		} else {
+			memcpy_flushcache(dst, data + io_done, key->len);
+		}
 		/*
 		 * The kset encoder persists key->data_crc as is; nothing else
 		 * computes it on this path, which does not go through
@@ -1497,6 +1518,13 @@ int pcache_net_write_to_cache(struct pcache_cache *cache, u64 sector,
 	trace_printk("Wcommit sz=%u reserve=%llu copy=%llu insert=%llu append=%llu\n",
 		     size, t_reserve, t_copy, t_insert, t_append);
 #endif
+	/*
+	 * On DAX a force-closed kset is durable once appended. On BIO the
+	 * kset close is only staged, so a FUA write needs the flush that
+	 * pcache_cache_handle_req() gives a local FUA write.
+	 */
+	if (fua && cache_dev_is_bio(cache->cache_dev))
+		return pcache_cache_flush(cache);
 	return 0;
 }
 
