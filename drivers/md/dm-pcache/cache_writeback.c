@@ -297,13 +297,14 @@ err:
 	 * (so dirty_tail is not advanced) without skewing the pending count.
 	 */
 	atomic_inc(&cache->writeback_ctx.pending);
-	mutex_lock(&cache->writeback_lock);
-	writeback_ctx_end(cache, -EIO);
-	mutex_unlock(&cache->writeback_lock);
+	writeback_ctx_end(cache, -EIO);	/* writeback_lock is held */
 }
 
+/* Context: cache_writeback_fn() via cache_wb_tree_writeback(), writeback_lock held. */
 static void cache_key_writeback(struct pcache_cache *cache, struct pcache_cache_key *key)
 {
+	lockdep_assert_held(&cache->writeback_lock);
+
 	if (cache_key_clean(key))
 		return;
 
@@ -316,9 +317,7 @@ static void cache_key_writeback(struct pcache_cache *cache, struct pcache_cache_
 	 */
 	if (WARN_ON_ONCE(cache_seg_remain(&key->cache_pos) < key->len)) {
 		atomic_inc(&cache->writeback_ctx.pending);
-		mutex_lock(&cache->writeback_lock);
-		writeback_ctx_end(cache, -EIO);
-		mutex_unlock(&cache->writeback_lock);
+		writeback_ctx_end(cache, -EIO);	/* writeback_lock is held */
 		return;
 	}
 
