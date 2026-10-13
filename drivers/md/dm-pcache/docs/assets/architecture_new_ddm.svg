@@ -1,0 +1,101 @@
+<svg viewBox="-50 0 850 550" width="850" height="550" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    .bg { fill: #1e1e1e; }
+    
+    .layer-label { fill: #666666; font-family: 'Segoe UI', Arial, sans-serif; font-size: 16px; font-weight: bold; font-style: italic; text-anchor: end; }
+    
+    .box-app { fill: #333333; stroke: #888888; stroke-width: 2; rx: 6; }
+    .box-ddm { fill: #1f3b39; stroke: #20b2aa; stroke-width: 3; rx: 12; }
+    .box-cache { fill: #264a2e; stroke: #4caf50; stroke-width: 2; rx: 6; }
+    .box-peer { fill: #2b3a42; stroke: #3d8fac; stroke-width: 2; stroke-dasharray: 4,4; rx: 6; }
+    .box-ceph { fill: #352a38; stroke: #a359af; stroke-width: 2; rx: 6; }
+
+    .text-title { fill: #ffffff; font-family: monospace; font-size: 15px; font-weight: bold; text-anchor: middle;}
+    .text-sub { fill: #aaaaaa; font-family: Arial, sans-serif; font-size: 13px; text-anchor: middle;}
+    .text-ddm { fill: #20b2aa; font-family: 'Segoe UI', Arial, sans-serif; font-size: 20px; font-weight: bold; text-anchor: middle;}
+    
+    .link { stroke: #cccccc; stroke-width: 3; fill: none; marker-end: url(#arrow-norm); }
+    .link-cache { stroke: #4caf50; stroke-width: 3; fill: none; marker-end: url(#arrow-cache); }
+    .link-net { stroke: #3d8fac; stroke-width: 3; stroke-dasharray: 6,4; fill: none; marker-end: url(#arrow-net); }
+    .link-ceph { stroke: #a359af; stroke-width: 3; stroke-dasharray: 6,4; fill: none; marker-end: url(#arrow-ceph); }
+    
+    .link-txt { fill: #dddddd; font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; text-anchor: middle; }
+    .link-txt-cache { fill: #4caf50; font-family: Arial, sans-serif; font-size: 13px; font-weight: bold; text-anchor: middle; }
+    .link-txt-net { fill: #3d8fac; font-family: Arial, sans-serif; font-size: 13px; font-weight: bold; text-anchor: middle; }
+    .link-txt-ceph { fill: #a359af; font-family: Arial, sans-serif; font-size: 13px; font-weight: bold; text-anchor: middle; }
+
+    .layer-line { stroke: #333333; stroke-width: 1; stroke-dasharray: 8,8; }
+  </style>
+
+  <defs>
+    <marker id="arrow-norm" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#cccccc" />
+    </marker>
+    <marker id="arrow-net" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3d8fac" />
+    </marker>
+    <marker id="arrow-cache" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4caf50" />
+    </marker>
+    <marker id="arrow-ceph" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#a359af" />
+    </marker>
+  </defs>
+
+  <rect width="850" height="550" class="bg" x="-50"/>
+  
+  <!-- Layer Lines -->
+  <line x1="-30" y1="100" x2="780" y2="100" class="layer-line"/>
+  <line x1="-30" y1="360" x2="780" y2="360" class="layer-line"/>
+
+  <!-- Layer Labels -->
+  <text x="110" y="60" class="layer-label">User Space Layer</text>
+  <text x="110" y="170" class="layer-label">Unified Kernel Layer</text>
+  <text x="110" y="400" class="layer-label">Physical Devices</text>
+
+  <!-- Node A: Application -->
+  <rect x="250" y="30" width="260" height="50" class="box-app" />
+  <text x="380" y="60" class="text-title">Application / User Space</text>
+
+  <!-- Arrow A -> DDM -->
+  <path d="M 380 80 L 380 145" class="link" />
+  <text x="430" y="125" class="link-txt">Native Block I/O</text>
+
+  <!-- Node DDM: Distributed dm-pcache -->
+  <!-- Mega Router Node replacing DRBD + Bcache layers -->
+  <rect x="150" y="150" width="460" height="150" class="box-ddm" />
+  <text x="380" y="200" class="text-ddm">Distributed dm-pcache Module</text>
+  <text x="380" y="230" class="text-sub">State Machine + RingBuffer + Cache Logic</text>
+  <text x="380" y="250" class="text-sub">(Single Kernel Interception Point)</text>
+
+  <!-- Paths branching out from Mega Node -->
+  
+  <!-- 1. Local Cache -->
+  <path d="M 230 300 L 230 400" class="link-cache" />
+  <text x="180" y="360" class="link-txt-cache">Cache Hit / Flush</text>
+
+  <!-- 2. Remote HA Sync -->
+  <path d="M 380 300 L 380 400" class="link-net" />
+  <text x="425" y="350" class="link-txt-net">Mirror Sync (Network)</text>
+
+  <!-- 3. Backend Eviction -->
+  <path d="M 530 300 L 530 400" class="link-ceph" />
+  <text x="600" y="360" class="link-txt-ceph">Backend Evict</text>
+
+  <!-- Physical / Terminating Nodes-->
+
+  <!-- Node Cache -->
+  <rect x="130" y="410" width="200" height="60" class="box-cache" />
+  <text x="230" y="440" class="text-title">NVMe Cache Device</text>
+  <text x="230" y="460" class="text-sub">Dirty/Clean Blocks</text>
+
+  <!-- Node Peer -->
+  <rect x="340" y="410" width="160" height="60" class="box-peer" />
+  <text x="420" y="440" class="text-title">Remote Meta Peer</text>
+  <text x="420" y="460" class="text-sub">TCP Socket</text>
+
+  <!-- Node Ceph/Backend -->
+  <rect x="520" y="410" width="210" height="60" class="box-ceph" />
+  <text x="625" y="440" class="text-title">Ceph / Remote Backend</text>
+  <text x="625" y="460" class="text-sub">Infinite Capacity</text>
+</svg>

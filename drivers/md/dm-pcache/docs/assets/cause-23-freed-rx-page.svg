@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 830" width="1300" height="830">
+<defs>
+  <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#1e293b"/>
+  </linearGradient>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/>
+  </marker>
+  <marker id="arrow-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#ef4444"/>
+  </marker>
+</defs>
+<style>
+  .t     { font-family: 'Segoe UI', Arial, sans-serif; }
+  .title { fill:#f1f5f9; font-size:25px; font-weight:bold; }
+  .sub   { fill:#94a3b8; font-size:14px; }
+  .step  { fill:#1e293b; stroke:#475569; stroke-width:2; rx:10; }
+  .bad   { fill:#3b1113; stroke:#ef4444; stroke-width:2.5; rx:10; }
+  .good  { fill:#0c2a33; stroke:#38bdf8; stroke-width:2; rx:10; }
+  .card  { fill:#172033; stroke:#64748b; stroke-width:1.5; rx:8; }
+  .h     { fill:#e2e8f0; font-size:16px; font-weight:bold; }
+  .hbad  { fill:#fca5a5; font-size:16px; font-weight:bold; }
+  .hok   { fill:#7dd3fc; font-size:16px; font-weight:bold; }
+  .code  { font-family:'Consolas', monospace; fill:#cbd5e1; font-size:12.5px; }
+  .codeb { font-family:'Consolas', monospace; fill:#fca5a5; font-size:12.5px; }
+  .codek { font-family:'Consolas', monospace; fill:#fbbf24; font-size:12.5px; font-weight:bold; }
+  .note  { fill:#94a3b8; font-size:13px; }
+  .noteb { fill:#fca5a5; font-size:13px; }
+  .key   { fill:#fbbf24; font-size:13px; font-weight:bold; }
+  .link  { stroke:#94a3b8; stroke-width:2.5; fill:none; marker-end:url(#arrow); }
+  .linkbad { stroke:#ef4444; stroke-width:3; fill:none; marker-end:url(#arrow-bad); }
+</style>
+
+<rect width="1300" height="830" fill="url(#bg)"/>
+<text class="t title" x="40" y="46">#23 — a virtio_net page_pool RX page is released twice</text>
+<text class="t sub" x="40" y="72">VM_BUG_ON_PAGE(page_ref_count(page) == 0) at skb_release_data+0x1a5, on the node that RECEIVES. No dm-pcache frame in either stack.</text>
+
+<!-- left: life of one RX page -->
+<rect class="step" x="40" y="100" width="600" height="118"/>
+<text class="t h" x="60" y="128">1 · allocated — virtio_net refills its RX ring from a page_pool</text>
+<text class="t code" x="60" y="152">try_fill_recv [virtio_net] → __page_pool_alloc_netmems_slow</text>
+<text class="t code" x="60" y="172">  → alloc_pages_bulk_noprof → get_page_from_freelist</text>
+<text class="t note" x="60" y="198">One buffer carries exactly one page reference.</text>
+
+<path class="link" d="M340,218 L340,246"/>
+
+<rect class="step" x="40" y="246" width="600" height="130"/>
+<text class="t h" x="60" y="274">2 · installed as an skb frag — inheriting that one reference</text>
+<text class="t code" x="60" y="298">receive_mergeable(): skb_add_rx_frag(skb, i, page, off, len, truesize)</text>
+<text class="t noteb" x="60" y="326">But the same page reaches a SECOND frag, with no second reference.</text>
+<text class="t note" x="60" y="348">Usually the two frags sit in different skbs — which is why the frag table</text>
+<text class="t note" x="60" y="366">of the crashing skb looks perfectly normal in two of the three captures.</text>
+
+<path class="link" d="M340,376 L340,404"/>
+
+<rect class="step" x="40" y="404" width="600" height="126"/>
+<text class="t h" x="60" y="432">3 · first release — the page goes back to the allocator</text>
+<text class="t code" x="60" y="456">skb_defer_free_flush → napi_consume_skb → skb_release_data</text>
+<text class="t code" x="60" y="476">  → napi_pp_put_page → __free_frozen_pages</text>
+<text class="t note" x="60" y="502">Entirely ordinary. The reference the buffer held is now spent, and the</text>
+<text class="t note" x="60" y="520">page is free — while a frag somewhere still points at it.</text>
+
+<path class="linkbad" d="M340,530 L340,558"/>
+<text class="t key" x="356" y="550">+9 ms</text>
+
+<rect class="bad" x="40" y="558" width="600" height="132"/>
+<text class="t hbad" x="60" y="586">4 · second release — same path, already-free page</text>
+<text class="t codeb" x="60" y="610">skb_defer_free_flush → napi_consume_skb → skb_release_data</text>
+<text class="t codeb" x="60" y="630">  → __skb_frag_unref → put_page_testzero</text>
+<text class="t codek" x="60" y="654">  → VM_BUG_ON_PAGE(page_ref_count(page) == 0)   ← node dies</text>
+<text class="t noteb" x="60" y="678">A double put of a page_pool RX buffer. Both puts come through the skb layer.</text>
+
+<!-- right: the evidence -->
+<rect class="good" x="664" y="100" width="596" height="240"/>
+<text class="t hok" x="684" y="128">How we know — page_owner=on, printed by dump_page() at the BUG</text>
+<text class="t note" x="684" y="152">page last allocated, ts 39011.18 s:</text>
+<text class="t code" x="694" y="174">__page_pool_alloc_netmems_slow</text>
+<text class="t code" x="694" y="192">try_fill_recv [virtio_net]</text>
+<text class="t code" x="694" y="210">virtnet_poll [virtio_net] / net_rx_action</text>
+<text class="t note" x="684" y="238">page last free, ts 39169.398 s (BUG at 39169.407 s):</text>
+<text class="t codeb" x="694" y="260">__free_frozen_pages</text>
+<text class="t codeb" x="694" y="278">napi_pp_put_page</text>
+<text class="t codeb" x="694" y="296">skb_release_data</text>
+<text class="t codeb" x="694" y="314">napi_consume_skb / skb_defer_free_flush</text>
+<text class="t key" x="684" y="334">The first put leaves no trace in the second skb — only page_owner shows it.</text>
+
+<rect class="card" x="664" y="356" width="596" height="140"/>
+<text class="t h" x="684" y="382">Three captures, one mechanism</text>
+<text class="t code" x="684" y="408">capture 1   frags 4 and 6 = same page   nr_frags 17</text>
+<text class="t code" x="684" y="428">capture 2   no duplicate                nr_frags 17</text>
+<text class="t code" x="684" y="448">capture 3   no duplicate                nr_frags 17</text>
+<text class="t note" x="684" y="476">09-11 was the case where both frags happened to land in one skb. The</text>
+<text class="t note" x="684" y="490">common fact is the double put, not the duplication.</text>
+
+<rect class="good" x="664" y="512" width="596" height="122"/>
+<text class="t hok" x="684" y="538">Why this is not dm-pcache</text>
+<text class="t note" x="684" y="562">· Neither the alloc nor the free stack contains a dm-pcache frame.</text>
+<text class="t note" x="684" y="584">· Its receive path copies with sock_recvmsg() into a kvec — no page refs.</text>
+<text class="t note" x="684" y="606">· Identical crash rate on the copy, MSG_SPLICE_PAGES and MSG_ZEROCOPY</text>
+<text class="t note" x="684" y="624">  builds; 5 standalone imitations, ~32 rounds, ~2.2 TiB never reproduced it.</text>
+
+<rect class="bad" x="664" y="650" width="596" height="98"/>
+<text class="t hbad" x="684" y="676">Still open</text>
+<text class="t noteb" x="684" y="700">Why the same page reaches two frags. try_fill_recv() handing a page to the</text>
+<text class="t noteb" x="684" y="718">virtqueue twice, or a buffer returned to the ring without re-taking its</text>
+<text class="t noteb" x="684" y="736">reference, both fit. Separating them needs probes inside the refill path.</text>
+
+<text class="t sub" x="40" y="782">Caught on the 5th full regression of a loop (5 h 10 min, ~29% of runs hit it). kdump; netconsole and serial capture both suppressed it.</text>
+<text class="t sub" x="40" y="804">Evidence: repro/evidence/20260916-page-owner/ (plus the 09-11 and 09-15 captures) · archive entry #23</text>
+</svg>

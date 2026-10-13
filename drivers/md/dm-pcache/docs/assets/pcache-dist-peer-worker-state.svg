@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 720" font-family="Menlo, Consolas, monospace" font-size="12">
+  <style>
+    .title { font-size: 17px; font-weight: bold; fill: #f1f5f9; }
+    .subtitle { font-size: 12px; fill: #94a3b8; }
+    .state { stroke-width: 1.5; }
+    .s-off { fill: #1e293b; stroke: #475569; }
+    .s-conn { fill: #272219; stroke: #f59e0b; }
+    .s-neg { fill: #271c19; stroke: #fbbf24; }
+    .s-bme { fill: #0d2c2c; stroke: #14b8a6; }
+    .s-src { fill: #101a30; stroke: #3b82f6; }
+    .s-tgt { fill: #0c1e30; stroke: #0ea5e9; }
+    .s-est { fill: #0c1f1a; stroke: #22c55e; }
+    .s-halt { fill: #1a1212; stroke: #ef4444; }
+    .label { font-size: 12px; fill: #f1f5f9; font-weight: bold; }
+    .lbl-small { font-size: 11px; fill: #94a3b8; }
+    .edge { stroke: #64748b; stroke-width: 1.2; fill: none; marker-end: url(#a); }
+    .edge-cond { stroke: #94a3b8; stroke-width: 1.2; fill: none; marker-end: url(#a); stroke-dasharray: 5,3; }
+    .edge-lbl { font-size: 10px; fill: #94a3b8; }
+    .ann { font-size: 11px; fill: #cbd5e1; }
+    .box { fill: #0f172a; stroke: #334155; stroke-width: 1; }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="1000" height="720" fill="#0b1220"/>
+
+  <text x="500" y="28" text-anchor="middle" class="title">pcache-dist — Per-peer worker state machine</text>
+  <text x="500" y="46" text-anchor="middle" class="subtitle">Same state graph for primary_worker and secondary_worker; data-flow branch picks send-loop vs recv-loop on entry to ESTABLISHED.</text>
+
+  <!-- OFF -->
+  <rect x="40" y="100" width="120" height="40" class="state s-off" rx="20"/>
+  <text x="100" y="125" text-anchor="middle" class="label">OFF</text>
+  <text x="100" y="156" text-anchor="middle" class="lbl-small">no socket; idle</text>
+
+  <!-- CONNECTING -->
+  <rect x="220" y="100" width="140" height="40" class="state s-conn" rx="20"/>
+  <text x="290" y="120" text-anchor="middle" class="label">CONNECTING</text>
+  <text x="290" y="135" text-anchor="middle" class="lbl-small">initiator: kernel_connect</text>
+  <text x="290" y="156" text-anchor="middle" class="lbl-small">responder: wait_for_socket</text>
+
+  <!-- NEGOTIATING -->
+  <rect x="420" y="100" width="140" height="40" class="state s-neg" rx="20"/>
+  <text x="490" y="120" text-anchor="middle" class="label">NEGOTIATING</text>
+  <text x="490" y="135" text-anchor="middle" class="lbl-small">P_SYNC_PARAMS</text>
+  <text x="490" y="156" text-anchor="middle" class="lbl-small">decide_sync_role()</text>
+
+  <!-- BITMAP_EXCHANGE -->
+  <rect x="620" y="100" width="160" height="40" class="state s-bme" rx="20"/>
+  <text x="700" y="120" text-anchor="middle" class="label">BITMAP_EXCHANGE</text>
+  <text x="700" y="135" text-anchor="middle" class="lbl-small">bilateral P_BITMAP</text>
+  <text x="700" y="156" text-anchor="middle" class="lbl-small">(ENC_RUN encoding)</text>
+
+  <!-- HALT (split-brain) -->
+  <rect x="840" y="100" width="120" height="40" class="state s-halt" rx="20"/>
+  <text x="900" y="125" text-anchor="middle" class="label">HALT</text>
+  <text x="900" y="156" text-anchor="middle" class="lbl-small">split-brain marker</text>
+
+  <!-- SYNC_SOURCE / SYNC_TARGET diamond -->
+  <rect x="380" y="240" width="140" height="40" class="state s-src" rx="20"/>
+  <text x="450" y="263" text-anchor="middle" class="label">SYNC_SOURCE</text>
+  <text x="450" y="296" text-anchor="middle" class="lbl-small">do_resync(): drain bm</text>
+
+  <rect x="580" y="240" width="140" height="40" class="state s-tgt" rx="20"/>
+  <text x="650" y="263" text-anchor="middle" class="label">SYNC_TARGET</text>
+  <text x="650" y="296" text-anchor="middle" class="lbl-small">recv P_RS_DATA</text>
+
+  <!-- ESTABLISHED -->
+  <rect x="430" y="370" width="240" height="40" class="state s-est" rx="20"/>
+  <text x="550" y="395" text-anchor="middle" class="label">ESTABLISHED</text>
+
+  <!-- Data flow split below -->
+  <rect x="60" y="450" width="400" height="220" class="box"/>
+  <text x="260" y="475" text-anchor="middle" class="label">Primary side (pcache->is_primary)</text>
+  <text x="80" y="500" class="lbl-small">  1. spawn primary_receiver kthread</text>
+  <text x="80" y="520" class="lbl-small">     • recv P_ACK / P_NACK</text>
+  <text x="80" y="540" class="lbl-small">     • handle P_DEMOTE_REQ → reply P_DEMOTE_ACK</text>
+  <text x="80" y="565" class="lbl-small">  2. main send-loop:</text>
+  <text x="80" y="585" class="lbl-small">     • timeout-reap (30s ACK timeout)</text>
+  <text x="80" y="605" class="lbl-small">     • iterate pending_list — send P_DATA</text>
+  <text x="80" y="625" class="lbl-small">     • wait_event_timeout(5s heartbeat)</text>
+  <text x="80" y="650" class="lbl-small">  on disconnect → goto connect:</text>
+
+  <rect x="540" y="450" width="400" height="220" class="box"/>
+  <text x="740" y="475" text-anchor="middle" class="label">Secondary side (!pcache->is_primary)</text>
+  <text x="560" y="500" class="lbl-small">  recv loop:</text>
+  <text x="560" y="520" class="lbl-small">    • P_DATA → write_to_cache + ACK</text>
+  <text x="560" y="540" class="lbl-small">    • P_RS_DATA → write + bm_clear_range + RS_ACK</text>
+  <text x="560" y="560" class="lbl-small">    • P_BITMAP_DONE → mark_synced</text>
+  <text x="560" y="580" class="lbl-small">    • P_DEMOTE_REQ → reply P_DEMOTE_ACK</text>
+  <text x="560" y="600" class="lbl-small">    • on -ECONNRESET → goto wait_sock</text>
+  <text x="560" y="625" class="lbl-small">  no send-loop; passive receiver</text>
+
+  <!-- Edges -->
+  <line x1="160" y1="120" x2="220" y2="120" class="edge"/>
+  <text x="190" y="113" text-anchor="middle" class="edge-lbl">start</text>
+
+  <line x1="360" y1="120" x2="420" y2="120" class="edge"/>
+  <text x="390" y="113" text-anchor="middle" class="edge-lbl">handshake OK</text>
+
+  <line x1="560" y1="120" x2="620" y2="120" class="edge"/>
+  <text x="590" y="113" text-anchor="middle" class="edge-lbl">SP exchanged</text>
+
+  <!-- BITMAP_EXCHANGE → SYNC_SOURCE / TARGET -->
+  <line x1="700" y1="140" x2="500" y2="240" class="edge"/>
+  <text x="570" y="195" class="edge-lbl">SOURCE</text>
+
+  <line x1="700" y1="140" x2="640" y2="240" class="edge"/>
+  <text x="685" y="195" class="edge-lbl">TARGET</text>
+
+  <!-- BITMAP_EXCHANGE → HALT -->
+  <line x1="780" y1="120" x2="840" y2="120" class="edge"/>
+  <text x="810" y="113" text-anchor="middle" class="edge-lbl">divergent</text>
+
+  <!-- SOURCE/TARGET → ESTABLISHED -->
+  <line x1="450" y1="280" x2="510" y2="370" class="edge"/>
+  <text x="470" y="335" class="edge-lbl">drain done</text>
+
+  <line x1="650" y1="280" x2="580" y2="370" class="edge"/>
+  <text x="630" y="335" class="edge-lbl">BITMAP_DONE</text>
+
+  <!-- ESTABLISHED → data flow boxes -->
+  <line x1="500" y1="410" x2="260" y2="450" class="edge"/>
+  <line x1="600" y1="410" x2="740" y2="450" class="edge"/>
+
+  <!-- ESTABLISHED → OFF on disconnect -->
+  <path d="M 430 390 Q 200 380 100 140" class="edge-cond" fill="none"/>
+  <text x="230" y="370" class="edge-lbl">disconnect / ECONNRESET</text>
+
+  <!-- HALT loop -->
+  <path d="M 900 140 Q 900 200 900 240 Q 900 280 900 380" class="edge-cond" fill="none"/>
+  <text x="910" y="240" class="edge-lbl">wait kthread_stop</text>
+  <text x="910" y="256" class="edge-lbl">resolve-split-brain</text>
+
+</svg>

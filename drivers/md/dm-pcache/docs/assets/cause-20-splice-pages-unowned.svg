@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 1330" width="1440" height="1330">
+<defs>
+  <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#1e293b"/>
+  </linearGradient>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/>
+  </marker>
+  <marker id="arrow-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#ef4444"/>
+  </marker>
+  <marker id="arrow-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#38bdf8"/>
+  </marker>
+</defs>
+<style>
+  .t     { font-family: 'Segoe UI', Arial, sans-serif; }
+  .title { fill:#f1f5f9; font-size:25px; font-weight:bold; }
+  .sub   { fill:#94a3b8; font-size:14px; }
+  .step  { fill:#1e293b; stroke:#475569; stroke-width:2; rx:10; }
+  .bad   { fill:#3b1113; stroke:#ef4444; stroke-width:2.5; rx:10; }
+  .good  { fill:#0c2a33; stroke:#38bdf8; stroke-width:2; rx:10; stroke-dasharray:9 5; }
+  .card  { fill:#172033; stroke:#64748b; stroke-width:1.5; rx:8; }
+  .h     { fill:#e2e8f0; font-size:16px; font-weight:bold; }
+  .hbad  { fill:#fca5a5; font-size:16px; font-weight:bold; }
+  .hok   { fill:#7dd3fc; font-size:16px; font-weight:bold; }
+  .code  { font-family:'Consolas', monospace; fill:#cbd5e1; font-size:12.5px; }
+  .codeb { font-family:'Consolas', monospace; fill:#fca5a5; font-size:12.5px; font-weight:bold; }
+  .codek { font-family:'Consolas', monospace; fill:#fbbf24; font-size:12.5px; font-weight:bold; }
+  .note  { fill:#94a3b8; font-size:13px; }
+  .noteb { fill:#fca5a5; font-size:13px; }
+  .noteo { fill:#7dd3fc; font-size:13px; }
+  .key   { fill:#fbbf24; font-size:13px; font-weight:bold; }
+  .link  { stroke:#94a3b8; stroke-width:2.5; fill:none; marker-end:url(#arrow); }
+  .linkbad { stroke:#ef4444; stroke-width:3; fill:none; marker-end:url(#arrow-bad); }
+  .linkok  { stroke:#38bdf8; stroke-width:2.5; fill:none; marker-end:url(#arrow-ok); stroke-dasharray:9 5; }
+</style>
+
+<rect width="1440" height="1330" fill="url(#bg)"/>
+<text class="t title" x="40" y="48">#20 — MSG_SPLICE_PAGES hands TCP a page that nothing holds a reference to</text>
+<text class="t sub" x="40" y="74">The sender completes the bio, and its pages are recycled, while the data is still queued for the NIC. Fixed twice: 4f1f6b1c63e8 (copy, to prove the model), 0908ab370b05 (MSG_ZEROCOPY).</text>
+
+<!-- left chain -->
+<rect class="step" x="40" y="100" width="640" height="126"/>
+<text class="t h"    x="62" y="128">1 · pcache_send_bio_pages() — hand the bio's own pages to TCP</text>
+<text class="t code" x="62" y="154">iov_iter_bvec(&amp;iter, ITER_SOURCE, bvec, nr, len);</text>
+<text class="t code" x="62" y="174">sock_sendmsg(sock, &amp;msg);   /* msg_flags |= MSG_SPLICE_PAGES */</text>
+<text class="t note" x="62" y="202">The comment above this code read: "Mirrors DRBD's _drbd_send_page() pattern".</text>
+
+<path class="link" d="M360,226 L360,252"/>
+
+<rect class="bad" x="40" y="254" width="640" height="150"/>
+<text class="t hbad"  x="62" y="282">2 · the splice path takes NO page reference</text>
+<text class="t code"  x="62" y="308">skb_splice_from_iter() → iov_iter_extract_pages()</text>
+<text class="t code"  x="62" y="328">  → iov_iter_extract_bvec_pages():</text>
+<text class="t codeb" x="62" y="352">(*pages)[k++] = bv.bv_page;    /* no get_page() */</text>
+<text class="t noteb" x="62" y="380">The skb frag now points at a bio page that nothing pinned.</text>
+
+<path class="link" d="M360,404 L360,430"/>
+
+<rect class="step" x="40" y="432" width="640" height="130"/>
+<text class="t h"    x="62" y="460">3 · sock_sendmsg() returns — the data is not on the wire</text>
+<text class="t note" x="62" y="486">It is still in the TCP send queue / qdisc / NIC tx ring. The page must stay</text>
+<text class="t note" x="62" y="506">valid until the LAST skb referencing it is released — and under this flag</text>
+<text class="t note" x="62" y="526">the sender is never told when that happens.</text>
+<text class="t key"  x="62" y="550">Rule the sender assumed: sendmsg() returned ⇒ the page is mine again.  ✗</text>
+
+<!-- right card: early completion paths -->
+<rect class="card" x="716" y="100" width="684" height="264"/>
+<text class="t h"     x="738" y="128">Meanwhile — four paths complete the bio early</text>
+<text class="t note"  x="738" y="152">Every one of them was added for a correct reason:</text>
+<text class="t code"  x="738" y="180">1) pcache_req_put(preq, 0) right after the send returns  (6adc8d2a8d08)</text>
+<text class="t code"  x="738" y="206">2) ACK timeout reclaim — 30 s, so that a bio never hangs</text>
+<text class="t code"  x="738" y="232">3) pcache_flush_stream() on link down — completes all pending</text>
+<text class="t code"  x="738" y="258">4) pcache_net_stop() / pcache_flush_pending() teardown</text>
+<text class="t noteb" x="738" y="292">3) can fire milliseconds after sendmsg() returned. That is the worst one.</text>
+<text class="t note"  x="738" y="316">All four are failure paths — which is why steady state never shows this:</text>
+<text class="t note"  x="738" y="336">F41 alone, 10 rounds, completely clean; F41/F42 under churn, always hit.</text>
+
+<path class="linkbad" d="M1058,364 L1058,596"/>
+<text class="t noteb" x="1072" y="486">whichever fires first,</text>
+<text class="t noteb" x="1072" y="504">it lands here</text>
+
+<path class="link" d="M360,562 L360,596"/>
+
+<rect class="bad" x="40" y="600" width="1360" height="118"/>
+<text class="t hbad"  x="62" y="628">4 · bio_endio() — the page is freed and reused while the NIC has not read it yet</text>
+<text class="t note"  x="62" y="656">The last reference to the request goes away → bio_endio() → the page returns to whoever allocated it, and is then written by someone else.</text>
+<text class="t noteb" x="62" y="682">The NIC DMAs whatever the page holds at that moment. What reaches the peer is not what the write contained — frame header included.</text>
+
+<path class="link" d="M720,718 L720,752"/>
+
+<rect class="step" x="40" y="756" width="1360" height="170"/>
+<text class="t h"     x="62" y="784">5 · what it looks like on the peer — full regression run, netconsole capture</text>
+<text class="t code"  x="62" y="812">44513.188576  enp1s0: bad gso: type: 1b, size: 0, flags 24 tunnel 0</text>
+<text class="t code"  x="62" y="838">44513.198732  dm-pcache: secondary: unknown packet type          (+10 ms)</text>
+<text class="t code"  x="62" y="864">44550.689146  VM_BUG_ON_PAGE(page_ref_count(page) == 0) → panic  (+37.5 s)</text>
+<text class="t note"  x="640" y="812">virtio_net rejects the frame: its GSO header is illegal — exactly what a rewritten page produces</text>
+<text class="t note"  x="640" y="838">the byte stream is now desynced; 15100 such errors followed</text>
+<text class="t noteb" x="640" y="864">NOT this defect — the receiver never sends bio pages. See #23.</text>
+<text class="t key"   x="62" y="900">The copy fix drove bad gso 1 → 0 and stream corruption 15100 → 2, and the run went 166/4 → 180 PASS / 0 FAIL.</text>
+
+<!-- bottom left: DRBD premise -->
+<rect class="card" x="40" y="964" width="660" height="232"/>
+<text class="t h"     x="62" y="992">Why the same mechanism is safe in DRBD: the premise, not the code</text>
+<text class="t code"  x="62" y="1018">/* We may not do this for protocol A, where we could</text>
+<text class="t code"  x="62" y="1038"> * complete a write before the network stack sends the data. */</text>
+<text class="t codek" x="62" y="1062">msg_flags = proto_b_or_c &amp;&amp; !digest_size ? MSG_SPLICE_PAGES : 0;</text>
+<text class="t note"  x="62" y="1090">DRBD splices only where the protocol forbids completing a write before</text>
+<text class="t note"  x="62" y="1110">the data is out. Protocol A always copies. Plus per-page sendpage_ok(),</text>
+<text class="t note"  x="62" y="1130">a drbd_disable_sendpage switch, and a copy whenever a digest is on.</text>
+<text class="t noteb" x="62" y="1160">pcache-dist is Protocol C — on paper it qualifies. The four paths above</text>
+<text class="t noteb" x="62" y="1180">break the premise, so the mechanism was never safe here.</text>
+
+<!-- bottom right: the fix -->
+<rect class="good" x="740" y="964" width="660" height="232"/>
+<text class="t hok"   x="762" y="992">Fix — MSG_ZEROCOPY (0908ab370b05): the path that does pin the page</text>
+<text class="t code"  x="762" y="1018">zerocopy_fill_skb_from_iter() → iov_iter_get_pages2()</text>
+<text class="t codek" x="762" y="1038">  bvec branch: folio_get()   ← the reference splice never took</text>
+<text class="t code"  x="762" y="1062">msg.msg_ubuf = &amp;uarg;  msg.msg_flags |= MSG_ZEROCOPY;</text>
+<text class="t codek" x="762" y="1082">uarg.flags = SKBFL_ZEROCOPY_FRAG | SKBFL_DONT_ORPHAN;</text>
+<text class="t note"  x="762" y="1110">The stack calls uarg-&gt;ops-&gt;complete() when the last skb holding the page</text>
+<text class="t note"  x="762" y="1130">is released, so the sender is finally told. Leave those flags at 0 and</text>
+<text class="t note"  x="762" y="1150">skb_zcopy() never sees the skb: complete() never runs, first write hangs.</text>
+<text class="t key"   x="762" y="1180">2641 MiB/s vs 2646 for the unsafe splice, vs 1959 copying — cost recovered.</text>
+
+<path class="linkok" d="M700,1080 L736,1080"/>
+
+<rect class="card" x="40" y="1220" width="1360" height="78"/>
+<text class="t key"  x="62" y="1250">Reading: borrowing a mechanism from DRBD without its guard condition is more dangerous than an explicit divergence — it looks consistent.</text>
+<text class="t note" x="62" y="1276">Scope: the bad gso signal is this defect. The page BUG that first pointed here is not — four builds, with and without splice, died alike (#23).</text>
+</svg>

@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 720" font-family="Menlo, Consolas, monospace" font-size="12">
+  <style>
+    .title { font-size: 18px; font-weight: bold; fill: #f1f5f9; }
+    .section { font-size: 14px; font-weight: bold; fill: #f1f5f9; }
+    .label { font-size: 11px; fill: #cbd5e1; }
+    .small { font-size: 10px; fill: #94a3b8; }
+    .addr { font-size: 10px; fill: #64748b; font-family: monospace; }
+    .meta-region { fill: #101a30; stroke: #3b82f6; stroke-width: 1.5; }
+    .registry-region { fill: #16101f; stroke: #a855f7; stroke-width: 1.5; }
+    .bitmap-region { fill: #022c22; stroke: #059669; stroke-width: 1.5; }
+    .bitmap-slot { fill: #064e3b; stroke: #059669; stroke-width: 0.8; }
+    .bitmap-hdr { fill: #0f766e; stroke: #0d9488; stroke-width: 0.8; }
+    .seg-region { fill: #1a1212; stroke: #ef4444; stroke-width: 1.5; }
+    .arrow { stroke: #94a3b8; stroke-width: 1.2; fill: none; marker-end: url(#a); }
+    .crc { fill: #16101f; stroke: #a855f7; stroke-width: 0.6; }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="900" height="720" fill="#0b1220"/>
+
+  <text x="450" y="28" text-anchor="middle" class="title">pcache-dist — PMEM on-disk layout</text>
+  <text x="450" y="48" text-anchor="middle" class="small">Every peer owns one fixed 32 MiB bitmap slot (32 max), indexed by its peer registry slot.</text>
+
+  <!-- Outer device frame -->
+  <rect x="60" y="70" width="780" height="610" fill="none" stroke="#334155" stroke-width="2"/>
+  <text x="68" y="86" class="section">/dev/pmem0 (cache_dev)</text>
+  <text x="800" y="86" text-anchor="end" class="addr">offset → addr</text>
+
+  <!-- Reserved/zero header 0x0000-0x1000 -->
+  <rect x="80" y="100" width="500" height="22" fill="#1e293b" stroke="#334155"/>
+  <text x="90" y="116" class="label">reserved / zero</text>
+  <text x="570" y="116" text-anchor="end" class="addr">0x0000</text>
+
+  <!-- SB -->
+  <rect x="80" y="125" width="500" height="32" class="meta-region"/>
+  <text x="90" y="146" class="label">PCACHE_SB (4 KiB) — magic + flags + seg_num + CRC</text>
+  <text x="570" y="146" text-anchor="end" class="addr">0x1000</text>
+
+  <!-- Cache info (double-copy) -->
+  <rect x="80" y="160" width="500" height="44" class="meta-region"/>
+  <text x="90" y="180" class="label">PCACHE_CACHE_INFO (2 × 4 KiB double-copy)</text>
+  <text x="90" y="196" class="small">  per-target cache configuration; cache_segment count, GC params</text>
+  <text x="570" y="180" text-anchor="end" class="addr">0x2000</text>
+
+  <!-- Cache ctrl -->
+  <rect x="80" y="207" width="500" height="32" class="meta-region"/>
+  <text x="90" y="228" class="label">PCACHE_CACHE_CTRL (4 KiB) — runtime cache state</text>
+  <text x="570" y="228" text-anchor="end" class="addr">0x4000</text>
+
+  <!-- Peer registry (added by pcache-dist) -->
+  <rect x="80" y="242" width="500" height="50" class="registry-region"/>
+  <text x="90" y="262" class="label">PCACHE_PEER_REGISTRY (2 × 4 KiB double-copy)</text>
+  <text x="90" y="278" class="small">  my_node_id + 32 × (node_id, flags, addr, added_gen) — slot 0..31</text>
+  <text x="570" y="262" text-anchor="end" class="addr">0x5000</text>
+
+  <!-- Bitmap region (1 GiB) -->
+  <rect x="80" y="296" width="500" height="320" class="bitmap-region"/>
+  <text x="90" y="316" class="label">PCACHE_BITMAP_REGION (1 GiB = 32 slots × 32 MiB)</text>
+  <text x="90" y="332" class="small">  Each slot = 8 KiB header (2× double-copy) + 32 MiB - 8 KiB bitmap data</text>
+  <text x="570" y="316" text-anchor="end" class="addr">0x7000</text>
+
+  <!-- Individual slots (just show 3 + ellipsis + last) -->
+  <!-- slot 0 -->
+  <rect x="100" y="345" width="460" height="34" class="bitmap-slot"/>
+  <rect x="100" y="345" width="80" height="34" class="bitmap-hdr"/>
+  <text x="108" y="361" class="small">hdr 8K</text>
+  <text x="108" y="374" class="small">node_id=N</text>
+  <text x="200" y="368" class="label">slot[0] bitmap data — 32 MiB - 8K = ~32 MiB</text>
+  <text x="555" y="368" text-anchor="end" class="addr">0x7000</text>
+
+  <!-- slot 1 -->
+  <rect x="100" y="382" width="460" height="34" class="bitmap-slot"/>
+  <rect x="100" y="382" width="80" height="34" class="bitmap-hdr"/>
+  <text x="108" y="398" class="small">hdr 8K</text>
+  <text x="108" y="411" class="small">node_id=M</text>
+  <text x="200" y="405" class="label">slot[1] bitmap data</text>
+  <text x="555" y="405" text-anchor="end" class="addr">0x2007000</text>
+
+  <!-- slot 2 -->
+  <rect x="100" y="419" width="460" height="34" class="bitmap-slot"/>
+  <rect x="100" y="419" width="80" height="34" class="bitmap-hdr"/>
+  <text x="108" y="435" class="small">hdr 8K</text>
+  <text x="108" y="448" class="small">(unused)</text>
+  <text x="200" y="442" class="label">slot[2] bitmap data</text>
+  <text x="555" y="442" text-anchor="end" class="addr">0x4007000</text>
+
+  <text x="330" y="475" text-anchor="middle" class="small">...   (29 more slots)   ...</text>
+
+  <!-- slot 31 -->
+  <rect x="100" y="490" width="460" height="34" class="bitmap-slot"/>
+  <rect x="100" y="490" width="80" height="34" class="bitmap-hdr"/>
+  <text x="108" y="506" class="small">hdr 8K</text>
+  <text x="108" y="519" class="small">(unused)</text>
+  <text x="200" y="513" class="label">slot[31] bitmap data</text>
+  <text x="555" y="513" text-anchor="end" class="addr">0x3E007000</text>
+
+  <!-- Header detail callout -->
+  <line x1="180" y1="362" x2="650" y2="362" class="arrow"/>
+  <rect x="600" y="345" width="200" height="200" class="crc"/>
+  <text x="700" y="362" text-anchor="middle" class="label">slot header detail</text>
+  <text x="610" y="384" class="small">  copy 0 (4 KiB)</text>
+  <text x="610" y="398" class="small">    crc + seq + version</text>
+  <text x="610" y="412" class="small">    magic (PCACMB1\3)</text>
+  <text x="610" y="426" class="small">    generation (device)</text>
+  <text x="610" y="440" class="small">    peer_gen_at_sync (per-peer)</text>
+  <text x="610" y="454" class="small">    bm_nr_bits</text>
+  <text x="610" y="468" class="small">    flags (FULL_SYNC_NEEDED,</text>
+  <text x="610" y="482" class="small">     RESYNC_IN_PROGRESS)</text>
+  <text x="610" y="500" class="small">  copy 1 (4 KiB, alternating)</text>
+  <text x="610" y="520" class="small">    same fields, different seq</text>
+  <text x="610" y="538" class="small">  → newest valid CRC wins on load</text>
+
+  <!-- Segments -->
+  <rect x="80" y="620" width="500" height="40" class="seg-region"/>
+  <text x="90" y="640" class="label">PCACHE_SEGMENTS (variable size — 16 MiB × seg_num)</text>
+  <text x="90" y="656" class="small">  cache data segments; offset = PCACHE_BITMAP_OFF + 1 GiB</text>
+  <text x="570" y="640" text-anchor="end" class="addr">0x40007000</text>
+
+  <!-- Legend -->
+  <rect x="80" y="680" width="780" height="0" stroke="none"/>
+  <text x="80" y="698" class="small">Original dm-pcache stops after cache_ctrl — the segment ring starts right there. pcache-dist inserts the peer registry and the</text>
+  <text x="80" y="712" class="small">bitmap region ahead of it, so the segment base shifts: zero the superblock before reusing a single-node pmem device.</text>
+</svg>

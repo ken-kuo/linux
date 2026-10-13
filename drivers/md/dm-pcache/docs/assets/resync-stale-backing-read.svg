@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 900">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1e293b"/>
+    </linearGradient>
+    <marker id="a-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#ef4444"/>
+    </marker>
+    <marker id="a-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#10b981"/>
+    </marker>
+    <marker id="a-grey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+
+  <rect width="1180" height="900" fill="url(#bg)"/>
+
+  <text x="40" y="46" font-family="'Segoe UI',Arial,sans-serif" font-size="24" font-weight="600" fill="#e2e8f0">
+    Resync ships stale backing data while the newest writes sit in an open kset
+  </text>
+  <text x="40" y="72" font-family="'Segoe UI',Arial,sans-serif" font-size="14" fill="#94a3b8">
+    dm-pcache fix-history #14 — the dirty bit is cleared, the data never reaches the peer, and nothing records the debt
+  </text>
+
+  <!-- ===================== BEFORE ===================== -->
+  <rect x="30" y="96" width="1120" height="418" rx="10" fill="#0b1220" stroke="#334155"/>
+  <text x="50" y="124" font-family="'Segoe UI',Arial,sans-serif" font-size="17" font-weight="600" fill="#f87171">
+    BEFORE — the per-chunk drain cannot see an unclosed kset
+  </text>
+
+  <!-- lane labels -->
+  <g font-family="'JetBrains Mono','Consolas',monospace" font-size="12.5" fill="#cbd5e1">
+    <text x="50" y="176">application write</text>
+    <text x="50" y="228">PMEM cache</text>
+    <text x="50" y="280">dirty bitmap</text>
+    <text x="50" y="332">backing device</text>
+    <text x="50" y="384">resync sweep</text>
+    <text x="50" y="436">peer (secondary)</text>
+  </g>
+  <g stroke="#1e293b" stroke-width="1">
+    <line x1="210" y1="192" x2="1130" y2="192"/>
+    <line x1="210" y1="244" x2="1130" y2="244"/>
+    <line x1="210" y1="296" x2="1130" y2="296"/>
+    <line x1="210" y1="348" x2="1130" y2="348"/>
+    <line x1="210" y1="400" x2="1130" y2="400"/>
+  </g>
+
+  <!-- time axis -->
+  <line x1="210" y1="462" x2="1130" y2="462" stroke="#475569" stroke-width="1.5" marker-end="url(#a-grey)"/>
+  <text x="1090" y="482" font-family="'Segoe UI',Arial,sans-serif" font-size="12" fill="#64748b">time</text>
+
+  <!-- t1: write commits -->
+  <rect x="222" y="152" width="150" height="34" rx="6" fill="#1d4ed8" stroke="#3b82f6"/>
+  <text x="297" y="174" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="12" fill="#eff6ff">W commits</text>
+  <rect x="222" y="204" width="230" height="34" rx="6" fill="#065f46" stroke="#10b981"/>
+  <text x="337" y="219" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11.5" fill="#ecfdf5">data in PMEM + key in</text>
+  <text x="337" y="233" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11.5" font-weight="700" fill="#fde68a">OPEN kset (not on media)</text>
+
+  <!-- t2: bit set -->
+  <rect x="470" y="256" width="120" height="34" rx="6" fill="#5b21b6" stroke="#a78bfa"/>
+  <text x="530" y="278" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="12" fill="#ede9fe">bit = 1</text>
+  <line x1="452" y1="221" x2="470" y2="266" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#a-grey)"/>
+
+  <!-- t3: clear -->
+  <rect x="620" y="256" width="120" height="34" rx="6" fill="#7f1d1d" stroke="#ef4444"/>
+  <text x="680" y="278" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="12" fill="#fee2e2">bit = 0</text>
+  <rect x="600" y="360" width="160" height="34" rx="6" fill="#1e293b" stroke="#64748b"/>
+  <text x="680" y="382" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11.5" fill="#e2e8f0">clear_range()</text>
+  <line x1="680" y1="360" x2="680" y2="296" stroke="#ef4444" stroke-width="1.4" marker-end="url(#a-red)"/>
+
+  <!-- t4: drain -->
+  <rect x="780" y="360" width="200" height="34" rx="6" fill="#1e293b" stroke="#64748b"/>
+  <text x="880" y="382" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11.5" fill="#e2e8f0">writeback_all() -&gt; 0</text>
+  <rect x="762" y="204" width="236" height="34" rx="6" fill="#3f2020" stroke="#ef4444" stroke-dasharray="4 3"/>
+  <text x="880" y="226" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11.5" fill="#fecaca">open kset is invisible to it</text>
+  <line x1="880" y1="360" x2="880" y2="244" stroke="#ef4444" stroke-width="1.4" marker-end="url(#a-red)"/>
+
+  <!-- t5: read backing -->
+  <rect x="780" y="308" width="200" height="34" rx="6" fill="#78350f" stroke="#f59e0b"/>
+  <text x="880" y="330" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11.5" font-weight="700" fill="#fef3c7">reads OLD data (no W)</text>
+
+  <!-- t6: ship -->
+  <rect x="1000" y="360" width="130" height="34" rx="6" fill="#1e293b" stroke="#64748b"/>
+  <text x="1065" y="382" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11.5" fill="#e2e8f0">send RS_DATA</text>
+  <rect x="1000" y="412" width="130" height="34" rx="6" fill="#7f1d1d" stroke="#ef4444"/>
+  <text x="1065" y="434" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11.5" fill="#fee2e2">stale + ACKed</text>
+  <line x1="1065" y1="394" x2="1065" y2="412" stroke="#ef4444" stroke-width="1.4" marker-end="url(#a-red)"/>
+  <line x1="980" y1="325" x2="1000" y2="368" stroke="#f59e0b" stroke-width="1.4" marker-end="url(#a-grey)"/>
+
+  <!-- outcome -->
+  <rect x="222" y="486" width="908" height="0" fill="none"/>
+  <text x="222" y="500" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#fca5a5">
+    Outcome: bm_dirty = 0 on both nodes · "resync done (dirty=0)" · zero errors · the two nodes differ and never self-heal
+  </text>
+
+  <!-- ===================== AFTER ===================== -->
+  <rect x="30" y="534" width="1120" height="250" rx="10" fill="#0b1220" stroke="#334155"/>
+  <text x="50" y="562" font-family="'Segoe UI',Arial,sans-serif" font-size="17" font-weight="600" fill="#4ade80">
+    AFTER — pcache_cache_writeback_all() flushes first
+  </text>
+
+  <g font-family="'JetBrains Mono','Consolas',monospace" font-size="12.5" fill="#cbd5e1">
+    <text x="50" y="614">PMEM cache</text>
+    <text x="50" y="666">backing device</text>
+    <text x="50" y="718">resync sweep</text>
+  </g>
+  <g stroke="#1e293b" stroke-width="1">
+    <line x1="210" y1="630" x2="1130" y2="630"/>
+    <line x1="210" y1="682" x2="1130" y2="682"/>
+  </g>
+
+  <rect x="222" y="694" width="200" height="34" rx="6" fill="#1e293b" stroke="#64748b"/>
+  <text x="322" y="716" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11.5" fill="#e2e8f0">clear_range()</text>
+
+  <rect x="450" y="694" width="220" height="34" rx="6" fill="#064e3b" stroke="#10b981"/>
+  <text x="560" y="716" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11.5" fill="#d1fae5">flush -&gt; kset closed</text>
+  <rect x="450" y="590" width="220" height="34" rx="6" fill="#065f46" stroke="#10b981"/>
+  <text x="560" y="612" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11.5" fill="#ecfdf5">key now on media</text>
+  <line x1="560" y1="694" x2="560" y2="630" stroke="#10b981" stroke-width="1.4" marker-end="url(#a-green)"/>
+
+  <rect x="700" y="694" width="200" height="34" rx="6" fill="#1e293b" stroke="#64748b"/>
+  <text x="800" y="716" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11.5" fill="#e2e8f0">drain waits for it</text>
+  <rect x="700" y="642" width="200" height="34" rx="6" fill="#065f46" stroke="#10b981"/>
+  <text x="800" y="664" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11.5" font-weight="700" fill="#ecfdf5">W is on backing</text>
+  <line x1="800" y1="694" x2="800" y2="682" stroke="#10b981" stroke-width="1.4" marker-end="url(#a-green)"/>
+
+  <rect x="930" y="694" width="200" height="34" rx="6" fill="#064e3b" stroke="#10b981"/>
+  <text x="1030" y="716" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11.5" fill="#d1fae5">read is current</text>
+  <line x1="900" y1="659" x2="930" y2="702" stroke="#10b981" stroke-width="1.4" marker-end="url(#a-green)"/>
+
+  <text x="222" y="762" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#86efac">
+    A write that lands after the clear sets its bit again, so it stays owed and a later pass carries it. Nothing is lost silently.
+  </text>
+
+  <!-- footer / invariant -->
+  <rect x="30" y="804" width="1120" height="72" rx="10" fill="#111c31" stroke="#334155"/>
+  <text x="50" y="830" font-family="'Segoe UI',Arial,sans-serif" font-size="13.5" font-weight="600" fill="#e2e8f0">
+    The invariant clear-before-read depends on: "bit is set" must imply "the data is visible to whoever reads the chunk".
+  </text>
+  <text x="50" y="856" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#94a3b8">
+    cache_key_append() closes a kset only when it fills, else after a delayed work — so under a steady writer that window is open almost always.
+  </text>
+</svg>

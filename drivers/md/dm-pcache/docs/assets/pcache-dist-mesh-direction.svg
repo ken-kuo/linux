@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 540" font-family="Menlo, Consolas, monospace" font-size="12">
+  <style>
+    .title { font-size: 17px; font-weight: bold; fill: #f1f5f9; }
+    .subtitle { font-size: 12px; fill: #94a3b8; }
+    .node { stroke-width: 2; }
+    .pri { fill: #1a1212; stroke: #ef4444; }
+    .sec { fill: #0c1f1a; stroke: #22c55e; }
+    .label { font-size: 14px; font-weight: bold; fill: #cbd5e1; }
+    .role { font-size: 11px; fill: #94a3b8; }
+    .id { font-size: 16px; font-weight: bold; fill: #f1f5f9; }
+    .arrow-out { stroke: #0ea5e9; stroke-width: 2; marker-end: url(#out); }
+    .arrow-listen { stroke: #f87171; stroke-width: 2; marker-end: url(#in); stroke-dasharray: 5,3; }
+    .arrow-mesh { stroke: #a855f7; stroke-width: 2; marker-end: url(#mesh); }
+    .ed-lbl { font-size: 10px; fill: #cbd5e1; font-weight: bold; }
+    .rule { font-size: 12px; fill: #cbd5e1; }
+    .box { fill: #0f172a; stroke: #334155; stroke-width: 1; }
+  </style>
+  <defs>
+    <marker id="out" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0ea5e9"/>
+    </marker>
+    <marker id="in" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#f87171"/>
+    </marker>
+    <marker id="mesh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#a855f7"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="880" height="540" fill="#0b1220"/>
+
+  <text x="440" y="28" text-anchor="middle" class="title">pcache-dist — id-based mesh connection direction</text>
+  <text x="440" y="46" text-anchor="middle" class="subtitle">Lower node_id always initiates; higher node_id always accepts. Direction is independent of Primary/Secondary role.</text>
+
+  <!-- Rule box -->
+  <rect x="40" y="70" width="800" height="60" class="box"/>
+  <text x="50" y="93" class="rule">Rule (pcache_peer_is_initiator()):  pcache->my_node_id &lt; (u32)peer->node_id  →  this side calls kernel_connect()</text>
+  <text x="50" y="113" class="rule">Otherwise:                          this side waits on peer->wait_for_socket for accept_thread to deliver the inbound socket</text>
+
+  <!-- Topology: 3-node example -->
+  <text x="440" y="160" text-anchor="middle" class="label">Example: 3-node mesh with node-0 Primary, node-1/2 Secondary</text>
+
+  <!-- Node circles -->
+  <circle cx="200" cy="270" r="58" class="node pri"/>
+  <text x="200" y="262" text-anchor="middle" class="label">node-1</text>
+  <text x="200" y="280" text-anchor="middle" class="id">id=0</text>
+  <text x="200" y="296" text-anchor="middle" class="role">Primary</text>
+
+  <circle cx="600" cy="200" r="58" class="node sec"/>
+  <text x="600" y="192" text-anchor="middle" class="label">node-2</text>
+  <text x="600" y="210" text-anchor="middle" class="id">id=1</text>
+  <text x="600" y="226" text-anchor="middle" class="role">Secondary</text>
+
+  <circle cx="600" cy="380" r="58" class="node sec"/>
+  <text x="600" y="372" text-anchor="middle" class="label">node-3</text>
+  <text x="600" y="390" text-anchor="middle" class="id">id=2</text>
+  <text x="600" y="406" text-anchor="middle" class="role">Secondary</text>
+
+  <!-- Connections -->
+  <!-- node-0 → node-1 -->
+  <line x1="258" y1="248" x2="542" y2="208" class="arrow-out"/>
+  <text x="420" y="217" text-anchor="middle" class="ed-lbl">node-1 initiates (0&lt;1)</text>
+
+  <!-- node-0 → node-2 -->
+  <line x1="258" y1="296" x2="542" y2="365" class="arrow-out"/>
+  <text x="420" y="345" text-anchor="middle" class="ed-lbl">node-1 initiates (0&lt;2)</text>
+
+  <!-- node-1 → node-2 (Sec ↔ Sec)  — node-1 (id 1) initiates -->
+  <path d="M 600 258 Q 700 290 600 322" class="arrow-mesh" fill="none"/>
+  <text x="715" y="294" text-anchor="middle" class="ed-lbl">node-2 initiates</text>
+  <text x="715" y="308" text-anchor="middle" class="ed-lbl">(1&lt;2)</text>
+
+  <!-- Annotations explaining direction is decoupled from role -->
+  <rect x="40" y="440" width="800" height="90" class="box"/>
+  <text x="50" y="463" class="rule">Key insight: connection DIRECTION (who calls connect vs who accepts) is per-pair from id comparison.</text>
+  <text x="50" y="481" class="rule">Data flow ROLE (Primary sends P_DATA vs Secondary receives) is per-NODE from pcache->is_primary.</text>
+  <text x="50" y="501" class="rule">Two orthogonal axes — needed for a full mesh, including Secondary↔Secondary links (quorum visibility).</text>
+  <text x="50" y="519" class="rule">Role-based direction (Primary always connects) would leave both-Secondary peer pairs with nobody to connect.</text>
+
+</svg>

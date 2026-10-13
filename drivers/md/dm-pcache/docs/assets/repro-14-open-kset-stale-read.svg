@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1060 1577">
+<defs>
+<linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+<stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#1e293b"/>
+</linearGradient>
+<marker id="a-drv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#60a5fa"/></marker>
+<marker id="a-pri" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#34d399"/></marker>
+<marker id="a-sec" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#fbbf24"/></marker>
+<marker id="a-bug" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#f87171"/></marker>
+<marker id="a-fix" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2dd4bf"/></marker>
+<marker id="a-dec" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#c4b5fd"/></marker>
+<marker id="a-gr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"/></marker>
+</defs>
+<rect width="1060" height="1577" fill="url(#bg)"/>
+<text x="36" y="44" font-family="'Segoe UI',Arial,sans-serif" font-size="22" font-weight="600" fill="#e2e8f0">#14 — Reproducing: the resync reads backing and misses writes still in an open kset</text>
+<text x="36" y="70" font-family="'Segoe UI',Arial,sans-serif" font-size="13.5" fill="#94a3b8">repro/f39_silent_loss.sh · the rate limit is the whole trick: an unthrottled writer never reaches this code</text>
+<rect x="36" y="92" width="336" height="1429" rx="8" fill="#0b1220" stroke="#243044"/>
+<text x="204" y="116" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="600" fill="#94a3b8">test driver</text>
+<line x1="36" y1="126" x2="372" y2="126" stroke="#243044"/>
+<rect x="382" y="92" width="336" height="1429" rx="8" fill="#0b1220" stroke="#243044"/>
+<text x="550" y="116" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="600" fill="#94a3b8">Primary (node-1)</text>
+<line x1="382" y1="126" x2="718" y2="126" stroke="#243044"/>
+<rect x="728" y="92" width="296" height="1429" rx="8" fill="#0b1220" stroke="#243044"/>
+<text x="876" y="116" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="600" fill="#94a3b8">Secondary (node-2)</text>
+<line x1="728" y1="126" x2="1024" y2="126" stroke="#243044"/>
+<circle cx="204" cy="150" r="8" fill="#e2e8f0"/>
+<line x1="204" y1="158" x2="204" y2="176" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="70" y="176" width="268" height="60" rx="9" fill="#1d4ed8" stroke="#60a5fa"/>
+<text x="204" y="198" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#eff6ff">writer: 64K randwrite, direct,</text>
+<text x="204" y="215" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#eff6ff">--rate_iops=400  (~25 MiB/s)</text>
+<line x1="204" y1="236" x2="204" y2="262" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<path d="M 204 262 L 341 304 L 204 347 L 67 304 Z" fill="#4c1d95" stroke="#c4b5fd"/>
+<text x="204" y="286" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11" fill="#ede9fe">unthrottled instead?</text>
+<text x="204" y="303" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11" fill="#ede9fe">-&gt; every drain times out,</text>
+<text x="204" y="320" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11" fill="#ede9fe">the sweep ships nothing</text>
+<line x1="204" y1="347" x2="204" y2="373" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<text x="212" y="360" text-anchor="start" font-family="'JetBrains Mono',monospace" font-size="10.5" fill="#94a3b8">[throttled]</text>
+<rect x="70" y="373" width="268" height="60" rx="9" fill="#1d4ed8" stroke="#60a5fa"/>
+<text x="204" y="395" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#eff6ff">link_shape 10ms, then force-resync</text>
+<text x="204" y="412" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#eff6ff">with the writer running</text>
+<path d="M 204 433 L 204 447 L 550 447 L 550 459" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="416" y="459" width="268" height="60" rx="9" fill="#065f46" stroke="#34d399"/>
+<text x="550" y="481" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ecfdf5">W commits: data -&gt; PMEM,</text>
+<text x="550" y="498" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ecfdf5">key -&gt; OPEN kset (not on media)</text>
+<line x1="550" y1="519" x2="550" y2="545" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="416" y="545" width="268" height="43" rx="9" fill="#065f46" stroke="#34d399"/>
+<text x="550" y="567" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ecfdf5">mark_all_peers_dirty(): bit = 1</text>
+<line x1="550" y1="588" x2="550" y2="614" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="416" y="614" width="268" height="60" rx="9" fill="#065f46" stroke="#34d399"/>
+<text x="550" y="636" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ecfdf5">sweep reaches the chunk:</text>
+<text x="550" y="653" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ecfdf5">pcache_bm_clear_range(): bit = 0</text>
+<line x1="550" y1="674" x2="550" y2="700" stroke="#f87171" stroke-width="1.6" marker-end="url(#a-bug)"/>
+<rect x="416" y="700" width="268" height="77" rx="9" fill="#7f1d1d" stroke="#f87171"/>
+<text x="550" y="722" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">pcache_cache_writeback_all():</text>
+<text x="550" y="739" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">is_cache_clean(dirty_tail) cannot</text>
+<text x="550" y="756" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#fee2e2">see the open kset -&gt; returns 0</text>
+<line x1="550" y1="777" x2="550" y2="803" stroke="#f87171" stroke-width="1.6" marker-end="url(#a-bug)"/>
+<rect x="416" y="803" width="268" height="60" rx="9" fill="#7f1d1d" stroke="#f87171"/>
+<text x="550" y="825" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">read backing = stale, send RS_DATA,</text>
+<text x="550" y="842" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#fee2e2">ACKed, and the bit stays clear</text>
+<path d="M 550 863 L 550 877 L 204 877 L 204 889" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="70" y="889" width="268" height="77" rx="9" fill="#1d4ed8" stroke="#60a5fa"/>
+<text x="204" y="911" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#eff6ff">kill the writer AT the verdict</text>
+<text x="204" y="928" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#eff6ff">(pkill -x fio) -- closes the window</text>
+<text x="204" y="945" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#eff6ff">where later writes paper over it</text>
+<line x1="204" y1="966" x2="204" y2="992" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="70" y="992" width="268" height="60" rx="9" fill="#1d4ed8" stroke="#60a5fa"/>
+<text x="204" y="1014" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#eff6ff">settle the RECORDED debt with one</text>
+<text x="204" y="1031" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#eff6ff">quiescent resync (dirty=0)</text>
+<line x1="204" y1="1052" x2="204" y2="1078" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<path d="M 204 1078 L 341 1112 L 204 1146 L 67 1112 Z" fill="#4c1d95" stroke="#c4b5fd"/>
+<text x="204" y="1102" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11" fill="#ede9fe">still divergent</text>
+<text x="204" y="1119" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11" fill="#ede9fe">AND bm_dirty == 0 ?</text>
+<line x1="204" y1="1146" x2="204" y2="1172" stroke="#f87171" stroke-width="1.6" marker-end="url(#a-bug)"/>
+<text x="212" y="1159" text-anchor="start" font-family="'JetBrains Mono',monospace" font-size="10.5" fill="#94a3b8">[yes]</text>
+<rect x="70" y="1172" width="268" height="77" rx="9" fill="#7f1d1d" stroke="#f87171"/>
+<text x="204" y="1194" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#fee2e2">SILENT LOSS: neither shipped</text>
+<text x="204" y="1211" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">nor recorded. Before: 2/2 runs,</text>
+<text x="204" y="1228" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">all 8 chunks, no error anywhere</text>
+<line x1="204" y1="1249" x2="204" y2="1275" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="70" y="1275" width="268" height="60" rx="9" fill="#134e4a" stroke="#2dd4bf" stroke-dasharray="5 3"/>
+<text x="204" y="1297" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ccfbf1">after the fix: 3/3 converged;</text>
+<text x="204" y="1314" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ccfbf1">flush folded into writeback_all()</text>
+<line x1="204" y1="1335" x2="204" y2="1363" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<circle cx="204" cy="1374" r="11" fill="none" stroke="#e2e8f0" stroke-width="2"/>
+<circle cx="204" cy="1374" r="6" fill="#e2e8f0"/>
+<path d="M 60 1407 h 444 l 14 14 v 88 h -458 v -102 z" fill="#111c31" stroke="#fbbf24" stroke-dasharray="4 3"/>
+<text x="72" y="1427" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#fbbf24">Why 30 blind runs never caught it:</text>
+<text x="72" y="1443" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#fbbf24">at 530 MiB/s the per-chunk drain never</text>
+<text x="72" y="1459" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#fbbf24">sees a clean cache, so the sweep ends</text>
+<text x="72" y="1475" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#fbbf24">before chunk 0. Not low probability --</text>
+<text x="72" y="1491" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#fbbf24">the path was never executed.</text>
+<path d="M 542 1407 h 444 l 14 14 v 56 h -458 v -70 z" fill="#111c31" stroke="#2dd4bf" stroke-dasharray="4 3"/>
+<text x="554" y="1427" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#2dd4bf">The invariant clear-before-read needs:</text>
+<text x="554" y="1443" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#2dd4bf">"bit is set" must imply "the data is</text>
+<text x="554" y="1459" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#2dd4bf">visible to whoever reads the chunk".</text>
+<text x="36" y="1555" font-family="'Segoe UI',Arial,sans-serif" font-size="12.5" fill="#64748b">Fixed in b4f4d9672490 — see assets/resync-stale-backing-read.svg for the mechanism itself.</text>
+</svg>

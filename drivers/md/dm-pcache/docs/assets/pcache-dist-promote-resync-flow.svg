@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 720" font-family="Menlo, Consolas, monospace" font-size="11">
+  <style>
+    .title { font-size: 17px; font-weight: bold; fill: #f1f5f9; }
+    .subtitle { font-size: 12px; fill: #94a3b8; }
+    .lane-h { font-size: 13px; font-weight: bold; fill: #f1f5f9; }
+    .lane { fill: #0d1727; stroke: #2a3344; stroke-width: 1.5; }
+    .step { stroke: #475569; stroke-width: 1.2; fill: #1e293b; rx: 4; }
+    .step-init { fill: #272219; stroke: #f59e0b; }
+    .step-ok { fill: #0c1f1a; stroke: #22c55e; }
+    .step-net { fill: #101a30; stroke: #3b82f6; }
+    .step-bad { fill: #1a1212; stroke: #ef4444; }
+    .label { font-size: 11px; fill: #cbd5e1; }
+    .arrow { stroke: #64748b; stroke-width: 1.2; fill: none; marker-end: url(#a); }
+    .pkt { stroke: #c084fc; stroke-width: 1.6; fill: none; marker-end: url(#b); }
+    .pkt-lbl { font-size: 10px; fill: #c084fc; font-weight: bold; }
+    .note { font-size: 10px; fill: #94a3b8; font-style: italic; }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64748b"/>
+    </marker>
+    <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c084fc"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="1000" height="720" fill="#0b1220"/>
+
+  <text x="500" y="28" text-anchor="middle" class="title">pcache-dist — set-role primary flow with P_DEMOTE_REQ/ACK + per-peer full resync</text>
+  <text x="500" y="46" text-anchor="middle" class="subtitle">Coordinated promote: notify peers via DEMOTE_REQ, swap worker role, set FULL_SYNC_NEEDED on every peer's bm, drain on reconnect.</text>
+
+  <!-- Lane: Operator -->
+  <rect x="20" y="70" width="200" height="600" class="lane"/>
+  <text x="120" y="92" text-anchor="middle" class="lane-h">Operator (user-space)</text>
+
+  <!-- Lane: New-Primary kernel -->
+  <rect x="240" y="70" width="280" height="600" class="lane"/>
+  <text x="380" y="92" text-anchor="middle" class="lane-h">node-2 (becoming Primary)</text>
+
+  <!-- Lane: Old-Primary kernel -->
+  <rect x="540" y="70" width="280" height="600" class="lane"/>
+  <text x="680" y="92" text-anchor="middle" class="lane-h">node-1 (current Primary)</text>
+
+  <!-- Lane: Time/notes -->
+  <rect x="840" y="70" width="140" height="600" class="lane"/>
+  <text x="910" y="92" text-anchor="middle" class="lane-h">Notes</text>
+
+  <!-- Step 1: operator issues set-role primary -->
+  <rect x="40" y="115" width="160" height="40" class="step step-init"/>
+  <text x="120" y="132" text-anchor="middle" class="label">dmsetup message</text>
+  <text x="120" y="146" text-anchor="middle" class="label">set-role primary</text>
+
+  <line x1="200" y1="135" x2="240" y2="135" class="arrow"/>
+
+  <!-- Step 2: pcache_set_role -->
+  <rect x="260" y="115" width="240" height="40" class="step step-init"/>
+  <text x="380" y="132" text-anchor="middle" class="label">pcache_set_role(primary, !force)</text>
+  <text x="380" y="146" text-anchor="middle" class="label">→ check pcache_has_quorum()</text>
+
+  <text x="910" y="135" text-anchor="middle" class="note">Refused without</text>
+  <text x="910" y="149" text-anchor="middle" class="note">quorum (unless force).</text>
+
+  <!-- Step 3: broadcast DEMOTE_REQ to peers -->
+  <rect x="260" y="170" width="240" height="40" class="step step-net"/>
+  <text x="380" y="187" text-anchor="middle" class="label">for_each_active_peer:</text>
+  <text x="380" y="201" text-anchor="middle" class="label">send P_DEMOTE_REQ(initiator_node_id=1)</text>
+
+  <!-- P_DEMOTE_REQ wire -->
+  <line x1="500" y1="190" x2="540" y2="190" class="pkt"/>
+  <text x="520" y="183" text-anchor="middle" class="pkt-lbl">P_DEMOTE_REQ</text>
+
+  <!-- old primary receives -->
+  <rect x="560" y="170" width="240" height="40" class="step step-net"/>
+  <text x="680" y="187" text-anchor="middle" class="label">primary_receiver sees</text>
+  <text x="680" y="201" text-anchor="middle" class="label">P_DEMOTE_REQ → ACK</text>
+
+  <!-- ACK back -->
+  <line x1="560" y1="225" x2="500" y2="225" class="pkt"/>
+  <text x="530" y="218" text-anchor="middle" class="pkt-lbl">P_DEMOTE_ACK</text>
+
+  <text x="910" y="190" text-anchor="middle" class="note">Best-effort: no</text>
+  <text x="910" y="204" text-anchor="middle" class="note">block on ACK (avoids</text>
+  <text x="910" y="218" text-anchor="middle" class="note">lock complexity).</text>
+
+  <!-- Step 4: per-peer FULL_SYNC + worker swap -->
+  <rect x="260" y="240" width="240" height="60" class="step step-init"/>
+  <text x="380" y="258" text-anchor="middle" class="label">pcache->is_primary = true</text>
+  <text x="380" y="274" text-anchor="middle" class="label">for each peer->bm: set FULL_SYNC</text>
+  <text x="380" y="290" text-anchor="middle" class="label">       bm_set_all + flush</text>
+
+  <text x="910" y="270" text-anchor="middle" class="note">Each peer's own</text>
+  <text x="910" y="284" text-anchor="middle" class="note">bitmap marked dirty.</text>
+
+  <!-- Step 5: swap workers -->
+  <rect x="260" y="315" width="240" height="40" class="step step-init"/>
+  <text x="380" y="332" text-anchor="middle" class="label">pcache_set_role_swap_workers()</text>
+  <text x="380" y="346" text-anchor="middle" class="label">stop secondary_worker, start primary_worker</text>
+
+
+  <!-- Step 6: reconnect via accept_thread -->
+  <rect x="260" y="365" width="240" height="40" class="step step-net"/>
+  <text x="380" y="382" text-anchor="middle" class="label">new primary_worker (initiator-based)</text>
+  <text x="380" y="396" text-anchor="middle" class="label">kernel_connect → handshake → SP</text>
+
+  <line x1="500" y1="385" x2="540" y2="385" class="pkt"/>
+  <text x="520" y="378" text-anchor="middle" class="pkt-lbl">handshake + SP</text>
+
+  <rect x="560" y="365" width="240" height="40" class="step step-net"/>
+  <text x="680" y="382" text-anchor="middle" class="label">old primary_worker reconnects</text>
+  <text x="680" y="396" text-anchor="middle" class="label">(may continue as Primary; operator demotes)</text>
+
+  <!-- Step 7: decide_sync_role => SOURCE -->
+  <rect x="260" y="425" width="240" height="40" class="step step-ok"/>
+  <text x="380" y="442" text-anchor="middle" class="label">decide_sync_role():</text>
+  <text x="380" y="456" text-anchor="middle" class="label">FULL_SYNC_NEEDED → SYNC_SOURCE</text>
+
+  <!-- Step 8: bilateral bitmap exchange -->
+  <rect x="260" y="475" width="240" height="40" class="step step-net"/>
+  <text x="380" y="492" text-anchor="middle" class="label">BITMAP_EXCHANGE</text>
+  <text x="380" y="506" text-anchor="middle" class="label">(per-peer bm content)</text>
+
+  <line x1="500" y1="495" x2="540" y2="495" class="pkt"/>
+  <text x="520" y="488" text-anchor="middle" class="pkt-lbl">P_BITMAP × 2</text>
+
+  <!-- Step 9: do_resync -->
+  <rect x="260" y="525" width="240" height="60" class="step step-ok"/>
+  <text x="380" y="544" text-anchor="middle" class="label">pcache_do_resync(peer)</text>
+  <text x="380" y="558" text-anchor="middle" class="label">set RESYNC_IN_PROGRESS</text>
+  <text x="380" y="572" text-anchor="middle" class="label">walk dirty bits → send P_RS_DATA</text>
+
+  <line x1="500" y1="555" x2="540" y2="555" class="pkt"/>
+  <text x="520" y="548" text-anchor="middle" class="pkt-lbl">P_RS_DATA</text>
+
+  <line x1="560" y1="575" x2="500" y2="575" class="pkt"/>
+  <text x="530" y="568" text-anchor="middle" class="pkt-lbl">P_RS_ACK</text>
+
+  <rect x="560" y="525" width="240" height="60" class="step step-net"/>
+  <text x="680" y="544" text-anchor="middle" class="label">handle_rs_data_recv()</text>
+  <text x="680" y="558" text-anchor="middle" class="label">write to local cache</text>
+  <text x="680" y="572" text-anchor="middle" class="label">bm_clear_range + send ACK</text>
+
+  <text x="910" y="555" text-anchor="middle" class="note">RESYNC_IN_PROGRESS</text>
+  <text x="910" y="569" text-anchor="middle" class="note">survives crash</text>
+
+  <!-- Step 10: ESTABLISHED -->
+  <rect x="260" y="600" width="240" height="40" class="step step-ok"/>
+  <text x="380" y="617" text-anchor="middle" class="label">P_BITMAP_DONE → mark_synced</text>
+  <text x="380" y="631" text-anchor="middle" class="label">RESYNC_IN_PROGRESS cleared</text>
+
+  <rect x="560" y="600" width="240" height="40" class="step step-ok"/>
+  <text x="680" y="617" text-anchor="middle" class="label">recv BITMAP_DONE</text>
+  <text x="680" y="631" text-anchor="middle" class="label">mark_synced → ESTABLISHED</text>
+
+  <line x1="500" y1="620" x2="540" y2="620" class="pkt"/>
+  <text x="520" y="613" text-anchor="middle" class="pkt-lbl">P_BITMAP_DONE</text>
+
+</svg>

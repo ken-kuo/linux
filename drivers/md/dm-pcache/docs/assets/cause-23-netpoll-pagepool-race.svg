@@ -1,0 +1,187 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1720 1545" width="1720" height="1545">
+<defs>
+  <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#1e293b"/></linearGradient>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/></marker>
+  <marker id="arrow-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#ef4444"/></marker>
+  <marker id="arrow-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#38bdf8"/></marker>
+</defs>
+<style>
+  .t { font-family: 'DejaVu Sans', 'Segoe UI', Arial, sans-serif; }
+  .title { fill:#f1f5f9; font-size:22px; font-weight:bold; }
+  .sub { fill:#94a3b8; font-size:13.5px; }
+  .lane { fill:#111a2e; stroke:#334155; stroke-width:1.5; }
+  .fixlane { fill:#0b1f2a; stroke:#38bdf8; stroke-width:1.5; stroke-dasharray:9 5; }
+  .step { fill:#1e293b; stroke:#475569; stroke-width:1.8; rx:8; }
+  .bad { fill:#3b1113; stroke:#ef4444; stroke-width:2.4; rx:8; }
+  .good { fill:#0c2a33; stroke:#38bdf8; stroke-width:1.8; stroke-dasharray:9 5; rx:8; }
+  .card { fill:#172033; stroke:#64748b; stroke-width:1.5; rx:8; }
+  .h { fill:#e2e8f0; font-size:14.5px; font-weight:bold; }
+  .hok { fill:#7dd3fc; font-size:13.5px; font-weight:bold; }
+  .d { fill:#cbd5e1; font-size:12.5px; }
+  .k { fill:#fbbf24; font-size:12.5px; font-weight:bold; }
+  .bd { fill:#fca5a5; font-size:12.5px; font-weight:bold; }
+  .n { fill:#8b9bb4; font-size:11.5px; }
+  .m { fill:#a5b4fc; font-size:12px; font-family:'DejaVu Sans Mono', monospace; }
+</style>
+<rect width="1720" height="1545" fill="url(#bg)"/>
+<text class="t title" x="40" y="42" text-anchor="start">#23: netconsole&#x27;s netpoll refills virtio_net&#x27;s RX ring from the page pool, racing the NAPI owner&#x27;s direct recycling</text>
+<text class="t sub" x="40" y="68" text-anchor="start">One page ends up handed out twice with a single page_pool reference. Only when heavy RX shares the NIC netconsole is bound to (enp1s0), under a kernel-log burst.</text>
+<rect class="lane" x="40" y="100" width="232" height="1050"/>
+<text class="t h" x="156.0" y="122" text-anchor="middle">dm-pcache / F41</text>
+<text class="t n" x="156.0" y="139" text-anchor="middle">Secondary, fault injection</text>
+<rect class="lane" x="272" y="100" width="232" height="1050"/>
+<text class="t h" x="388.0" y="122" text-anchor="middle">netconsole</text>
+<text class="t n" x="388.0" y="139" text-anchor="middle">pr/netcon0, task, any CPU</text>
+<rect class="lane" x="504" y="100" width="232" height="1050"/>
+<text class="t h" x="620.0" y="122" text-anchor="middle">virtio_net enp1s0</text>
+<text class="t n" x="620.0" y="139" text-anchor="middle">virtnet_poll()</text>
+<rect class="lane" x="736" y="100" width="232" height="1050"/>
+<text class="t h" x="852.0" y="122" text-anchor="middle">pool-&gt;alloc.cache</text>
+<text class="t n" x="852.0" y="139" text-anchor="middle">array + alloc.count</text>
+<rect class="lane" x="968" y="100" width="232" height="1050"/>
+<text class="t h" x="1084.0" y="122" text-anchor="middle">NAPI owner CPU</text>
+<text class="t n" x="1084.0" y="139" text-anchor="middle">softirq, list_owner == cpu</text>
+<rect class="step" x="978" y="160" width="212" height="58"/>
+<text class="t d" x="988" y="180" text-anchor="start">heavy replication RX</text>
+<text class="t d" x="988" y="197" text-anchor="start">lands on enp1s0</text>
+<text class="t n" x="988" y="214" text-anchor="start"></text>
+<rect class="step" x="978" y="245" width="212" height="76"/>
+<text class="t d" x="988" y="265" text-anchor="start">skb_defer_free_flush()</text>
+<text class="t d" x="988" y="282" text-anchor="start">napi_pp_put_page()</text>
+<text class="t n" x="988" y="299" text-anchor="start">page_pool_napi_local():</text>
+<text class="t n" x="988" y="316" text-anchor="start">list_owner == this cpu</text>
+<path d="M1084.0,218 L1084.0,245" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+<rect class="step" x="50" y="160" width="212" height="58"/>
+<text class="t d" x="60" y="180" text-anchor="start">F41: injected Secondary</text>
+<text class="t d" x="60" y="197" text-anchor="start">write failures</text>
+<rect class="step" x="50" y="245" width="212" height="58"/>
+<text class="t d" x="60" y="265" text-anchor="start">pr_warn + write-failure</text>
+<text class="t d" x="60" y="282" text-anchor="start">messages flood printk</text>
+<path d="M156.0,218 L156.0,245" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+<rect class="step" x="282" y="330" width="212" height="58"/>
+<text class="t d" x="292" y="350" text-anchor="start">netcon0 console flushes</text>
+<text class="t d" x="292" y="367" text-anchor="start">each message</text>
+<path d="M156.0,303 L156.0,359 L282,359" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+<rect class="step" x="282" y="415" width="212" height="76"/>
+<text class="t d" x="292" y="435" text-anchor="start">netpoll_poll_dev()</text>
+<text class="t d" x="292" y="452" text-anchor="start">poll_one_napi():</text>
+<text class="t k" x="292" y="469" text-anchor="start">napi-&gt;poll(napi, 0)</text>
+<text class="t n" x="292" y="486" text-anchor="start">&quot;Tx path only&quot;</text>
+<path d="M388.0,388 L388.0,415" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+<rect class="step" x="514" y="415" width="212" height="58"/>
+<text class="t d" x="524" y="435" text-anchor="start">virtnet_poll(budget = 0)</text>
+<text class="t d" x="524" y="452" text-anchor="start">virtnet_receive(rq, 0)</text>
+<path d="M494,444 L514,444" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+<rect class="bad" x="514" y="505" width="212" height="110"/>
+<text class="t bd" x="524" y="525" text-anchor="start">refill threshold:</text>
+<text class="t bd" x="524" y="542" text-anchor="start">num_free &gt; min(0,N)/2</text>
+<text class="t bd" x="524" y="559" text-anchor="start">= num_free &gt; 0 (always)</text>
+<text class="t bd" x="524" y="576" text-anchor="start">try_fill_recv()</text>
+<text class="t bd" x="524" y="593" text-anchor="start">page pool API at budget 0</text>
+<text class="t bd" x="524" y="610" text-anchor="start">-- forbidden by napi.rst</text>
+<path d="M620.0,473 L620.0,505" fill="none" stroke="#ef4444" stroke-width="2" marker-end="url(#arrow-bad)"/>
+<rect class="bad" x="746" y="650" width="212" height="76"/>
+<text class="t bd" x="756" y="670" text-anchor="start">POP (netpoll, task)</text>
+<text class="t bd" x="756" y="687" text-anchor="start">netmem =</text>
+<text class="t bd" x="756" y="704" text-anchor="start">cache[--count]</text>
+<text class="t n" x="756" y="721" text-anchor="start">on the netconsole CPU</text>
+<rect class="bad" x="978" y="650" width="212" height="76"/>
+<text class="t bd" x="988" y="670" text-anchor="start">PUSH (NAPI, softirq)</text>
+<text class="t bd" x="988" y="687" text-anchor="start">cache[count++] = P</text>
+<text class="t n" x="988" y="704" text-anchor="start">direct recycle</text>
+<text class="t n" x="988" y="721" text-anchor="start">same pool, same moment</text>
+<path d="M620.0,615 L620.0,688 L746,688" fill="none" stroke="#ef4444" stroke-width="2" marker-end="url(#arrow-bad)"/>
+<path d="M1084.0,321 L1084.0,650" fill="none" stroke="#ef4444" stroke-width="2" marker-end="url(#arrow-bad)"/>
+<text class="t bd" x="750" y="640" text-anchor="start">overlap measured by an xchg marker</text>
+<rect class="bad" x="746" y="760" width="212" height="94"/>
+<text class="t bd" x="756" y="780" text-anchor="start">both are plain RMWs of</text>
+<text class="t bd" x="756" y="797" text-anchor="start">alloc.count: they</text>
+<text class="t bd" x="756" y="814" text-anchor="start">interleave, and P is</text>
+<text class="t bd" x="756" y="831" text-anchor="start">handed out while it is</text>
+<text class="t bd" x="756" y="848" text-anchor="start">still in the cache</text>
+<path d="M852.0,726 L852.0,760" fill="none" stroke="#ef4444" stroke-width="2" marker-end="url(#arrow-bad)"/>
+<path d="M998,726 L998,807 L958,807" fill="none" stroke="#ef4444" stroke-width="2" marker-end="url(#arrow-bad)"/>
+<rect class="bad" x="514" y="880" width="444" height="94"/>
+<text class="t bd" x="524" y="900" text-anchor="start">P handed out again from</text>
+<text class="t bd" x="524" y="917" text-anchor="start">the cache: two RX buffers</text>
+<text class="t bd" x="524" y="934" text-anchor="start">on one page, pp_ref = 1</text>
+<text class="t bd" x="524" y="951" text-anchor="start">-&gt; skb A and skb B</text>
+<text class="t bd" x="524" y="968" text-anchor="start">both own P</text>
+<path d="M852.0,854 L852.0,880" fill="none" stroke="#ef4444" stroke-width="2" marker-end="url(#arrow-bad)"/>
+<rect class="bad" x="50" y="1000" width="676" height="130"/>
+<text class="t bd" x="60" y="1020" text-anchor="start">skb A released: pp_ref 1 -&gt; 0,</text>
+<text class="t bd" x="60" y="1037" text-anchor="start">P returned to the buddy allocator</text>
+<text class="t bd" x="60" y="1054" text-anchor="start">skb B released:</text>
+<text class="t bd" x="60" y="1071" text-anchor="start">VM_BUG_ON_PAGE(page_ref_count == 0)</text>
+<text class="t bd" x="60" y="1088" text-anchor="start">in skb_release_data(), or its</text>
+<text class="t bd" x="60" y="1105" text-anchor="start">skb_shared_info overwritten -&gt;</text>
+<text class="t bd" x="60" y="1122" text-anchor="start">nr_frags=173 and a GP fault</text>
+<path d="M554,974 L554,1000" fill="none" stroke="#ef4444" stroke-width="2" marker-end="url(#arrow-bad)"/>
+<rect class="fixlane" x="1240" y="100" width="440" height="1050"/>
+<text class="t hok" x="1460.0" y="122" text-anchor="middle">Fixed path  (b26aaa3ee25f)</text>
+<text class="t n" x="1460.0" y="139" text-anchor="middle">virtio_net: no refill on a zero-budget poll</text>
+<rect class="good" x="1260" y="505" width="400" height="62"/>
+<text class="t hok" x="1272" y="530" text-anchor="start">virtnet_receive():</text>
+<text class="t n" x="1272" y="551" text-anchor="start">if (budget &amp;&amp; num_free &gt; ...)</text>
+<rect class="good" x="1260" y="617" width="400" height="62"/>
+<text class="t d" x="1272" y="642" text-anchor="start">netpoll poll, budget 0:</text>
+<text class="t n" x="1272" y="663" text-anchor="start">no try_fill_recv(), no page pool call</text>
+<path d="M1460.0,567 L1460.0,617" fill="none" stroke="#38bdf8" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-ok)"/>
+<rect class="good" x="1260" y="729" width="400" height="62"/>
+<text class="t d" x="1272" y="754" text-anchor="start">only Tx is cleaned, as</text>
+<text class="t n" x="1272" y="775" text-anchor="start">Documentation/networking/napi.rst requires</text>
+<path d="M1460.0,679 L1460.0,729" fill="none" stroke="#38bdf8" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-ok)"/>
+<rect class="good" x="1260" y="841" width="400" height="62"/>
+<text class="t d" x="1272" y="866" text-anchor="start">alloc.cache touched only by</text>
+<text class="t n" x="1272" y="887" text-anchor="start">the NAPI owner CPU again</text>
+<path d="M1460.0,791 L1460.0,841" fill="none" stroke="#38bdf8" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-ok)"/>
+<rect class="good" x="1260" y="953" width="400" height="62"/>
+<text class="t hok" x="1272" y="978" text-anchor="start">measured: 0 overlaps,</text>
+<text class="t n" x="1272" y="999" text-anchor="start">0 crashes in 3 cycles on enp1s0</text>
+<path d="M1460.0,903 L1460.0,953" fill="none" stroke="#38bdf8" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-ok)"/>
+<path d="M726,529 L1244,529 L1244,536 L1260,536" fill="none" stroke="#38bdf8" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-ok)"/>
+<text class="t hok" x="734" y="521" text-anchor="start">with the fix: skipped at budget 0</text>
+<rect class="card" x="40" y="1175" width="1640" height="340"/>
+<text class="t h" x="60" y="1205" text-anchor="start">Evidence (7.3.0-rc3+, node-2 receiving 32-34 GB per cycle)</text>
+<text class="t h" x="60" y="1235" text-anchor="start">RX lands on</text>
+<text class="t h" x="190" y="1235" text-anchor="start">fix</text>
+<text class="t h" x="260" y="1235" text-anchor="start">cycles hit</text>
+<text class="t h" x="380" y="1235" text-anchor="start">alloc.cache overlaps</text>
+<text class="t h" x="560" y="1235" text-anchor="start">crash</text>
+<text class="t d" x="60" y="1259" text-anchor="start">enp8s0</text>
+<text class="t d" x="190" y="1259" text-anchor="start">no</text>
+<text class="t d" x="260" y="1259" text-anchor="start">0 / 9</text>
+<text class="t d" x="380" y="1259" text-anchor="start">0 (45 shots)</text>
+<text class="t d" x="560" y="1259" text-anchor="start">0</text>
+<text class="t d" x="60" y="1283" text-anchor="start">enp1s0</text>
+<text class="t d" x="190" y="1283" text-anchor="start">no</text>
+<text class="t bd" x="260" y="1283" text-anchor="start">4 / 4</text>
+<text class="t bd" x="380" y="1283" text-anchor="start">dozens per cycle</text>
+<text class="t bd" x="560" y="1283" text-anchor="start">yes</text>
+<text class="t d" x="60" y="1307" text-anchor="start">enp1s0</text>
+<text class="t d" x="190" y="1307" text-anchor="start">yes</text>
+<text class="t hok" x="260" y="1307" text-anchor="start">0 / 3</text>
+<text class="t hok" x="380" y="1307" text-anchor="start">0 (15 shots)</text>
+<text class="t hok" x="560" y="1307" text-anchor="start">0</text>
+<text class="t h" x="60" y="1347" text-anchor="start">Both parties, named by the probe at the moment of overlap:</text>
+<text class="t m" x="60" y="1370" text-anchor="start">entrant  cpu4 / softirq    page_pool_put_unrefed_netmem &lt;- napi_pp_put_page &lt;- skb_defer_free_flush</text>
+<text class="t m" x="60" y="1389" text-anchor="start">inside   cpu2 / task [pr/netcon0]   try_fill_recv [virtio_net]  &lt;- virtnet_poll(budget 0) &lt;- netpoll</text>
+<text class="t n" x="60" y="1419" text-anchor="start">Same class fixed before: f8321fa75102 (virtio_net Tx side),</text>
+<text class="t n" x="60" y="1437" text-anchor="start">afbed3f74830 mlx5e, 37b61cda9c16 bnxt, 8fdeafd66eda mlx4, 15cec633fc7b fec.</text>
+<text class="t n" x="60" y="1465" text-anchor="start">netconsole on node-2: modprobe.d netconsole=6662@/enp1s0,...; console loglevel 7.</text>
+<text class="t h" x="880" y="1205" text-anchor="start">Why each earlier puzzle fits</text>
+<text class="t d" x="880" y="1233" text-anchor="start">only enp1s0 ever crashed</text>
+<text class="t n" x="894" y="1250" text-anchor="start">netconsole is bound to it; RX elsewhere never meets netpoll&#x27;s pool</text>
+<text class="t d" x="880" y="1269" text-anchor="start">F41 is the lethal demo</text>
+<text class="t n" x="894" y="1286" text-anchor="start">fault injection makes dm-pcache log in bursts -&gt; netpoll polls hot</text>
+<text class="t d" x="880" y="1305" text-anchor="start">dm-pcache seemed required</text>
+<text class="t n" x="894" y="1322" text-anchor="start">needs heavy RX and a kernel-log flood at the same time</text>
+<text class="t d" x="880" y="1341" text-anchor="start">10 TiB synthetic load: nothing</text>
+<text class="t n" x="894" y="1358" text-anchor="start">no log flood, so netpoll never polled</text>
+<text class="t d" x="880" y="1377" text-anchor="start">needs memory pressure</text>
+<text class="t n" x="894" y="1394" text-anchor="start">ring stays short of buffers, so the refill really allocates</text>
+<text class="t d" x="880" y="1413" text-anchor="start">ARP pin: 0 crashes in 45 shots</text>
+<text class="t n" x="894" y="1430" text-anchor="start">traffic left the NIC netconsole uses</text>
+<text class="t d" x="880" y="1449" text-anchor="start">&#x27;probes suppress it&#x27;</text>
+<text class="t n" x="894" y="1466" text-anchor="start">withdrawn: an xchg probe on the hot path caught it</text>
+</svg>

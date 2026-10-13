@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 986">
+<defs>
+<linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#1e293b"/></linearGradient>
+<marker id="a-gr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"/></marker>
+<marker id="a-bug" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#f87171"/></marker>
+</defs>
+<rect width="1100" height="986" fill="url(#bg)"/>
+<text x="36" y="44" font-family="'Segoe UI',Arial,sans-serif" font-size="22" font-weight="600" fill="#e2e8f0">#19 — Why an unfinished resync leaves debt that nothing will ever pay</text>
+<text x="36" y="70" font-family="'Segoe UI',Arial,sans-serif" font-size="13.5" fill="#94a3b8">The cause, not the recipe: the sweep stops replicating while it runs, gives up when the writer outruns it, and then declares the link healthy anyway</text>
+<rect x="36" y="92" width="330" height="697" rx="8" fill="#0b1220" stroke="#243044"/>
+<text x="201.0" y="116" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="600" fill="#94a3b8">Primary: repl_state</text>
+<line x1="36" y1="126" x2="366" y2="126" stroke="#243044"/>
+<rect x="396" y="92" width="330" height="697" rx="8" fill="#0b1220" stroke="#243044"/>
+<text x="561.0" y="116" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="600" fill="#94a3b8">peer-&gt;bm (dirty bitmap)</text>
+<line x1="396" y1="126" x2="726" y2="126" stroke="#243044"/>
+<rect x="766" y="92" width="300" height="697" rx="8" fill="#0b1220" stroke="#243044"/>
+<text x="916.0" y="116" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="600" fill="#94a3b8">what an operator sees</text>
+<line x1="766" y1="126" x2="1066" y2="126" stroke="#243044"/>
+<circle cx="201" cy="150" r="8" fill="#e2e8f0"/>
+<line x1="201" y1="158" x2="201" y2="176" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="51" y="176" width="300" height="69" rx="9" fill="#065f46" stroke="#34d399"/>
+<text x="201.0" y="197" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ecfdf5">peer reconnects -&gt;</text>
+<text x="201.0" y="214" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ecfdf5">NEGOTIATING -&gt; BITMAP_EXCHANGE</text>
+<text x="201.0" y="231" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ecfdf5">-&gt; SYNC_SOURCE</text>
+<line x1="201.0" y1="245" x2="201.0" y2="269" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="51" y="269" width="300" height="52" rx="9" fill="#065f46" stroke="#34d399"/>
+<text x="201.0" y="290" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ecfdf5">pcache_do_resync() sweeps</text>
+<text x="201.0" y="307" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ecfdf5">the bits the bitmap holds</text>
+<path d="M 201 321 L 201 337 L 561 337 L 561 351" fill="none" stroke="#f87171" stroke-width="1.6" marker-end="url(#a-bug)"/>
+<rect x="411" y="351" width="300" height="103" rx="9" fill="#7f1d1d" stroke="#f87171"/>
+<text x="561.0" y="372" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">pcache_peer_can_replicate() requires</text>
+<text x="561.0" y="389" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">repl_state == ESTABLISHED, so EVERY</text>
+<text x="561.0" y="406" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">application write during the sweep</text>
+<text x="561.0" y="423" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">goes to the bitmap, not the wire.</text>
+<text x="561.0" y="440" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#fee2e2">The debt only grows.</text>
+<rect x="51" y="478" width="300" height="69" rx="9" fill="#78350f" stroke="#fbbf24"/>
+<text x="201.0" y="499" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fef3c7">"resync incomplete, 90336 bit(s)</text>
+<text x="201.0" y="516" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fef3c7">still owed (writer outran resync);</text>
+<text x="201.0" y="533" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#fef3c7">left dirty for the next pass"</text>
+<line x1="201" y1="321" x2="201" y2="478" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="51" y="573" width="300" height="52" rx="9" fill="#7f1d1d" stroke="#f87171"/>
+<text x="201.0" y="594" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#fee2e2">repl_state SYNC_SOURCE -&gt; ESTABLISHED</text>
+<text x="201.0" y="611" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">5 ms later</text>
+<line x1="201" y1="547" x2="201" y2="573" stroke="#f87171" stroke-width="1.6" marker-end="url(#a-bug)"/>
+<path d="M 201 625 L 201 641 L 561 641 L 561 655" fill="none" stroke="#f87171" stroke-width="1.6" marker-end="url(#a-bug)"/>
+<rect x="411" y="655" width="300" height="120" rx="9" fill="#7f1d1d" stroke="#f87171"/>
+<text x="561.0" y="676" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#fee2e2">the 90336 bits stay set.</text>
+<text x="561.0" y="693" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2"></text>
+<text x="561.0" y="710" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">pcache_do_resync() has ONE caller,</text>
+<text x="561.0" y="727" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">reached only on (re)connect;</text>
+<text x="561.0" y="744" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">mark_synced() clears no bits.</text>
+<text x="561.0" y="761" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#fee2e2">=&gt; NOTHING will sweep them again.</text>
+<circle cx="916" cy="150" r="8" fill="#e2e8f0"/>
+<line x1="916" y1="158" x2="916" y2="655" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="776" y="655" width="280" height="103" rx="9" fill="#7f1d1d" stroke="#f87171"/>
+<text x="916.0" y="676" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">a healthy, ESTABLISHED</text>
+<text x="916.0" y="693" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">replication link</text>
+<text x="916.0" y="710" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2"></text>
+<text x="916.0" y="727" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#fee2e2">node-1 md5 != node-2 md5</text>
+<text x="916.0" y="744" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#fee2e2">354 MiB never delivered</text>
+<rect x="60" y="809" width="980" height="137" rx="9" fill="#134e4a" stroke="#2dd4bf"/>
+<text x="550.0" y="830" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#ccfbf1">DRBD does all three differently (drbd_should_do_remote(), drbd_req.c):</text>
+<text x="550.0" y="847" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ccfbf1">  peer_disk_state == D_UP_TO_DATE || (D_INCONSISTENT &amp;&amp; replication &amp;&amp;</text>
+<text x="550.0" y="864" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ccfbf1">     (repl_state == L_ESTABLISHED || (repl_state &gt;= L_WF_BITMAP_T &amp;&amp; repl_state &lt; L_AHEAD)))</text>
+<text x="550.0" y="881" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#ccfbf1">The range L_WF_BITMAP_T..L_AHEAD includes L_SYNC_SOURCE: application writes keep flowing to a peer</text>
+<text x="550.0" y="898" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ccfbf1">that is being resynced. The peer stays D_INCONSISTENT until the resync really finishes, and</text>
+<text x="550.0" y="915" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ccfbf1">drbd_start_resync() is driven by after_state_ch(), not by the connect path -- so a resync that</text>
+<text x="550.0" y="932" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ccfbf1">could not finish is still owed, and something restarts it without waiting for a reconnect.</text>
+</svg>

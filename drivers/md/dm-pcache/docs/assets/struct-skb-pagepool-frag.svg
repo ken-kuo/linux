@@ -1,0 +1,219 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1560 1330" width="1560" height="1330">
+<defs>
+  <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#1e293b"/>
+  </linearGradient>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/>
+  </marker>
+  <marker id="arrow-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#ef4444"/>
+  </marker>
+  <marker id="arrow-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#38bdf8"/>
+  </marker>
+</defs>
+<style>
+  .t     { font-family: 'Segoe UI', Arial, sans-serif; }
+  .m     { font-family: 'Consolas', 'DejaVu Sans Mono', monospace; }
+  .title { fill:#f1f5f9; font-size:25px; font-weight:bold; }
+  .sub   { fill:#94a3b8; font-size:13.5px; }
+  .box   { fill:#1e293b; stroke:#64748b; stroke-width:2; rx:10; }
+  .boxok { fill:#0c2a33; stroke:#38bdf8; stroke-width:2; rx:10; }
+  .boxbad{ fill:#3b1113; stroke:#ef4444; stroke-width:2.5; rx:10; }
+  .hdr   { fill:#0b1220; stroke:#64748b; stroke-width:2; rx:10; }
+  .seg   { fill:#172033; stroke:#475569; stroke-width:1.5; rx:5; }
+  .segpp { fill:#0c2a33; stroke:#38bdf8; stroke-width:1.5; rx:5; }
+  .segsh { fill:#3b2a11; stroke:#f59e0b; stroke-width:1.5; rx:5; }
+  .h     { fill:#e2e8f0; font-size:16px; font-weight:bold; }
+  .hok   { fill:#7dd3fc; font-size:16px; font-weight:bold; }
+  .hbad  { fill:#fca5a5; font-size:16px; font-weight:bold; }
+  .f     { fill:#cbd5e1; font-size:12.5px; }
+  .off   { fill:#64748b; font-size:11.5px; }
+  .key   { fill:#fbbf24; font-size:12.5px; font-weight:bold; }
+  .keyb  { fill:#f87171; font-size:12.5px; font-weight:bold; }
+  .d     { fill:#cbd5e1; font-size:13px; }
+  .n     { fill:#64748b; font-size:12px; }
+  .lbl   { fill:#94a3b8; font-size:12px; font-style:italic; }
+</style>
+
+<rect width="1560" height="1330" fill="url(#bg)"/>
+<text class="t title" x="40" y="42">sk_buff / skb_shared_info / skb_frag_t / page / page_pool — how an RX page is owned</text>
+<text class="t sub" x="40" y="68">Offsets and sizes read from vmlinux debug info, 7.3.0-rc3+ (CONFIG_MAX_SKB_FRAGS = 17). Yellow = the fields that decide ownership.</text>
+
+<!-- ===== A: struct sk_buff ===== -->
+<rect class="box" x="40" y="96" width="330" height="352"/>
+<rect class="hdr" x="40" y="96" width="330" height="34"/>
+<text class="t h" x="56" y="120">struct sk_buff</text>
+<text class="t m off" x="56" y="152">off  size</text>
+<text class="t m f"   x="56" y="174">112   4   len</text>
+<text class="t m f"   x="56" y="194">116   4   data_len</text>
+<text class="t m f"   x="56" y="214">126  :1   cloned</text>
+<text class="t m key" x="56" y="234">126  :1   head_frag</text>
+<text class="t m key" x="56" y="254">126  :1   pp_recycle</text>
+<text class="t m f"   x="56" y="274">188   4   tail</text>
+<text class="t m key" x="56" y="294">192   4   end</text>
+<text class="t m key" x="56" y="314">200   8   head    -----&gt;</text>
+<text class="t m f"   x="56" y="334">208   8   data</text>
+<text class="t m f"   x="56" y="354">216   4   truesize</text>
+<text class="t lbl"   x="56" y="384">head_frag = 1: head points into a</text>
+<text class="t lbl"   x="56" y="402">page_pool page. = 0: kmalloc'd, the</text>
+<text class="t lbl"   x="56" y="420">copy path in page_to_skb().</text>
+<text class="t lbl"   x="56" y="438">pp_recycle = 1: release via page_pool.</text>
+
+<!-- ===== B: skb_shared_info ===== -->
+<rect class="box" x="412" y="96" width="420" height="472"/>
+<rect class="hdr" x="412" y="96" width="420" height="34"/>
+<text class="t h" x="428" y="120">struct skb_shared_info      total 320 B</text>
+<text class="t m off" x="428" y="152">off  size</text>
+<text class="t m f"   x="428" y="174">  0   1   flags</text>
+<text class="t m key" x="428" y="194">  2   1   nr_frags</text>
+<text class="t m f"   x="428" y="214">  8   8   frag_list</text>
+<text class="t m key" x="428" y="234"> 32   4   dataref</text>
+<text class="t m key" x="428" y="254"> 48 272   frags[17]      &lt;- 17 x 16 B</text>
+
+<rect class="seg" x="428" y="272" width="388" height="26"/>
+<text class="t m f" x="438" y="290">frags[0]  netmem  len  offset</text>
+<rect class="segpp" x="428" y="302" width="388" height="26"/>
+<text class="t m key" x="438" y="320">frags[i]  netmem --&gt; page P   len  offset</text>
+<rect class="seg" x="428" y="332" width="388" height="26"/>
+<text class="t m f" x="438" y="350">frags[..] ...</text>
+<rect class="segpp" x="428" y="362" width="388" height="26"/>
+<text class="t m keyb" x="438" y="380">frags[j]  netmem --&gt; page P   len  offset</text>
+<text class="t n" x="438" y="404">skb_frag_t is 16 B: netmem@0, len@8, offset@12.</text>
+<text class="t n" x="438" y="422">netmem_ref is a page pointer with low tag bits.</text>
+
+<text class="t lbl" x="428" y="450">Reached as skb_shinfo(skb) =</text>
+<text class="t m key" x="428" y="470">(struct skb_shared_info *)(skb-&gt;head + skb-&gt;end)</text>
+<text class="t lbl" x="428" y="492">so for head_frag = 1 it lives INSIDE the same</text>
+<text class="t lbl" x="428" y="510">page_pool buffer as the packet data.</text>
+<text class="t lbl" x="428" y="534">__skb_fill_netmem_desc() writes frags[i] and</text>
+<text class="t lbl" x="428" y="552">takes NO reference: the caller's one is the skb's.</text>
+
+<!-- ===== C: struct page ===== -->
+<rect class="box" x="874" y="96" width="320" height="302"/>
+<rect class="hdr" x="874" y="96" width="320" height="34"/>
+<text class="t h" x="890" y="120">struct page   (page_pool fields)</text>
+<text class="t m off" x="890" y="152">off  size</text>
+<text class="t m key" x="890" y="174">  8   8   pp_magic</text>
+<text class="t m key" x="890" y="194"> 16   8   pp      -----&gt;</text>
+<text class="t m f"   x="890" y="214"> 32   8   dma_addr</text>
+<text class="t m key" x="890" y="234"> 40   8   pp_ref_count</text>
+<text class="t m key" x="890" y="254"> 52   4   _refcount</text>
+<text class="t lbl" x="890" y="284">page_pool_page_is_pp():</text>
+<text class="t m n" x="890" y="303">(pp_magic &amp; PP_MAGIC_MASK) == PP_SIGNATURE</text>
+<text class="t lbl" x="890" y="328">pp_ref_count = how many skb frags hold</text>
+<text class="t lbl" x="890" y="346">this page. It is NOT the page _refcount:</text>
+<text class="t lbl" x="890" y="364">a pooled page is frozen, _refcount stays 1</text>
+<text class="t lbl" x="890" y="382">until page_pool gives it back to the buddy.</text>
+
+<!-- ===== D: struct page_pool ===== -->
+<rect class="box" x="1236" y="96" width="284" height="472"/>
+<rect class="hdr" x="1236" y="96" width="284" height="34"/>
+<text class="t h" x="1252" y="120">struct page_pool</text>
+<text class="t m off" x="1252" y="152">off  size</text>
+<text class="t m f"   x="1252" y="174">  0  48  p (params_fast)</text>
+<text class="t m f"   x="1252" y="194">        .order  .pool_size</text>
+<text class="t m f"   x="1252" y="214"> 52   4  hold_cnt</text>
+<text class="t m key" x="1252" y="234">     alloc.cache[]</text>
+<text class="t m key" x="1252" y="254"> 64   8  frag_users</text>
+<text class="t m key" x="1252" y="274"> 72   8  frag_page</text>
+<text class="t m key" x="1252" y="294"> 80   4  frag_offset</text>
+<text class="t m key" x="1252" y="314">     ring (ptr_ring)</text>
+<text class="t m f"   x="1252" y="334">1640  4  release_cnt</text>
+<text class="t lbl" x="1252" y="364">alloc.cache: per-NAPI, lockless,</text>
+<text class="t lbl" x="1252" y="382">the direct-recycle fast path.</text>
+<text class="t lbl" x="1252" y="406">ring: ptr_ring, for pages coming</text>
+<text class="t lbl" x="1252" y="424">back on another CPU.</text>
+<text class="t lbl" x="1252" y="448">frag_* : fragment mode, several</text>
+<text class="t lbl" x="1252" y="466">buffers per page, biased by</text>
+<text class="t m n" x="1252" y="486">BIAS_MAX = LONG_MAX &gt;&gt; 1</text>
+<text class="t lbl" x="1252" y="510">and corrected in</text>
+<text class="t m n" x="1252" y="529">page_pool_drain_frag()</text>
+<text class="t lbl" x="1252" y="552">when the page fills up.</text>
+
+<!-- arrows -->
+<path d="M330,310 L404,310" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrow)"/>
+<text class="t n" x="332" y="302">head</text>
+<path d="M820,315 L866,315" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrow)"/>
+<text class="t n" x="822" y="307">netmem</text>
+<path d="M1182,195 L1228,195" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrow)"/>
+<text class="t n" x="1184" y="187">pp</text>
+
+<!-- ===== E: the RX buffer in memory ===== -->
+<rect class="box" x="40" y="600" width="792" height="252"/>
+<rect class="hdr" x="40" y="600" width="792" height="34"/>
+<text class="t h" x="56" y="624">The RX buffer inside one order-0 page_pool page (4096 B)</text>
+
+<rect class="seg"   x="56" y="656" width="90"  height="46"/>
+<text class="t m f" x="64" y="676">head-</text>
+<text class="t m f" x="64" y="694">room</text>
+<rect class="segpp" x="146" y="656" width="118" height="46"/>
+<text class="t m f" x="154" y="676">virtio_net_hdr</text>
+<text class="t m f" x="154" y="694">_mrg_rxbuf 12B</text>
+<rect class="seg"   x="264" y="656" width="330" height="46"/>
+<text class="t m f" x="272" y="676">packet data</text>
+<text class="t m f" x="272" y="694">eth / ip / tcp / payload</text>
+<rect class="segsh" x="594" y="656" width="222" height="46"/>
+<text class="t m f" x="602" y="676">skb_shared_info</text>
+<text class="t m f" x="602" y="694">320 B  (nr_frags, frags[])</text>
+
+<path d="M146,716 L146,730" stroke="#94a3b8" stroke-width="1.5"/>
+<text class="t n" x="120" y="746">skb-&gt;head</text>
+<path d="M264,716 L264,730" stroke="#94a3b8" stroke-width="1.5"/>
+<text class="t n" x="240" y="746">skb-&gt;data</text>
+<path d="M594,716 L594,730" stroke="#f59e0b" stroke-width="1.5"/>
+<text class="t n" x="536" y="746">skb-&gt;head + skb-&gt;end</text>
+
+<text class="t d" x="56" y="780">The frag bookkeeping lives in the packet buffer. So a buffer reused while an skb still</text>
+<text class="t d" x="56" y="800">references it corrupts that skb's own frag array: one dump showed nr_frags = 173 and</text>
+<text class="t d" x="56" y="820">skb_release_data() then took a GP fault walking those bogus frags. The same overwrite</text>
+<text class="t d" x="56" y="840">explains the "bad csum" / "bad gso" warnings — virtnet_receive_done() reads the header here.</text>
+
+<!-- ===== F: the defect ===== -->
+<rect class="boxbad" x="874" y="600" width="646" height="252"/>
+<rect class="hdr" x="874" y="600" width="646" height="34"/>
+<text class="t hbad" x="890" y="624">Where the #23 defect sits in this picture</text>
+<text class="t d"   x="890" y="654">Two frag entries resolve to the SAME page P — in one skb, or in two</text>
+<text class="t d"   x="890" y="674">different skbs — while P-&gt;pp_ref_count is 1.</text>
+<text class="t m keyb" x="890" y="700">skb A frags[i].netmem -&gt; P      pp_ref_count(P) = 1</text>
+<text class="t m keyb" x="890" y="720">skb B frags[j].netmem -&gt; P      (one reference, two owners)</text>
+<text class="t d"   x="890" y="748">Release order does the damage:</text>
+<text class="t m f" x="890" y="772">1st: napi_pp_put_page() -&gt; pp_ref 1-&gt;0 -&gt; __free_frozen_pages()</text>
+<text class="t m f" x="890" y="792">     P leaves the pool for the buddy allocator, _refcount = 0</text>
+<text class="t m f" x="890" y="812">2nd: VM_BUG_ON_PAGE(page_ref_count(page) == 0) in skb_release_data()</text>
+<text class="t n"   x="890" y="838">Measured: posts == gets for P, so the virtqueue is balanced — P is handed out twice.</text>
+
+<!-- ===== G: lifecycle paths ===== -->
+<rect class="box" x="40" y="880" width="1480" height="416"/>
+<rect class="hdr" x="40" y="880" width="1480" height="34"/>
+<text class="t h" x="56" y="904">The two directions a page moves, and who touches which field</text>
+
+<rect class="boxok" x="60" y="928" width="700" height="172"/>
+<text class="t hok" x="76" y="952">OUT of the pool — allocation</text>
+<text class="t m f" x="76" y="976">try_fill_recv()                       [virtio_net]</text>
+<text class="t m f" x="76" y="996">  add_recvbuf_mergeable()</text>
+<text class="t m f" x="76" y="1016">    page_pool_alloc_va() -&gt; page_pool_alloc()</text>
+<text class="t m f" x="76" y="1036">      (*size &lt;&lt; 1) &gt; max_size ? whole page : fragment</text>
+<text class="t m f" x="76" y="1056">        page_pool_alloc_netmems()         sets pp_ref_count = 1</text>
+<text class="t m f" x="76" y="1076">        page_pool_alloc_frag_netmem()     biases with BIAS_MAX</text>
+<text class="t n"   x="76" y="1094">get_mergeable_buf_len() drives the choice from an EWMA of packet length.</text>
+
+<rect class="boxok" x="790" y="928" width="710" height="172"/>
+<text class="t hok" x="806" y="952">BACK INTO the pool — release</text>
+<text class="t m f" x="806" y="976">skb_release_data()                    [net/core/skbuff.c]</text>
+<text class="t m f" x="806" y="996">  __skb_frag_unref(frag, skb-&gt;pp_recycle)</text>
+<text class="t m f" x="806" y="1016">    napi_pp_put_page()</text>
+<text class="t m f" x="806" y="1036">      page_pool_unref_netmem()          pp_ref_count -= 1</text>
+<text class="t m f" x="806" y="1056">      reaches 0 -&gt; page_pool_recycle_in_cache()  alloc.cache</text>
+<text class="t m f" x="806" y="1076">                  or ptr_ring, or page_pool_return_netmem()</text>
+<text class="t n"   x="806" y="1094">Only page_pool_return_netmem() gives the page back to the buddy allocator.</text>
+
+<text class="t d" x="60" y="1136">Reading a dump: a frag whose page went back into alloc.cache still looks pristine — pp_magic = PP_SIGNATURE, _refcount 1, pp_ref_count 1 — so</text>
+<text class="t d" x="60" y="1158">only the frag whose page overflowed all the way to the buddy allocator shows the damage. That is why the crashing frag index varies (1, 9, 14, 15, 16)</text>
+<text class="t d" x="60" y="1180">and why the other frags of the same skb look fine. It makes the shape easy to misread as "a single frag went bad".</text>
+<text class="t d" x="60" y="1210">Ownership rules worth stating plainly, because every confusion in this investigation came from mixing them up:</text>
+<text class="t d" x="60" y="1236">  - pp_ref_count counts skb frag references. page _refcount does not: a pooled page is frozen and its _refcount stays 1 the whole time.</text>
+<text class="t d" x="60" y="1258">  - Installing a frag takes no reference. __skb_fill_netmem_desc() only writes the descriptor; the reference is the one the allocation produced.</text>
+<text class="t d" x="60" y="1280">  - skb_try_coalesce()'s fragstolen path MOVES that single reference between skbs, and it runs with GRO off via tcp_add_backlog().</text>
+</svg>

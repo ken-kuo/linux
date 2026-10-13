@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 680" font-family="Menlo, Consolas, monospace" font-size="11">
+  <style>
+    .title { font-size: 17px; font-weight: bold; fill: #f1f5f9; }
+    .subtitle { font-size: 12px; fill: #94a3b8; }
+    .struct { stroke: #334155; stroke-width: 1.5; }
+    .struct-h { font-size: 13px; font-weight: bold; fill: #f1f5f9; }
+    .field { font-size: 11px; fill: #cbd5e1; font-family: monospace; }
+    .new { fill: #0c1f1a; stroke: #22c55e; stroke-width: 1; }
+    .changed { fill: #272219; stroke: #fbbf24; stroke-width: 1; }
+    .existing { fill: #0f172a; stroke: #334155; stroke-width: 1; }
+    .ptr { stroke: #94a3b8; stroke-width: 1.4; fill: none; marker-end: url(#a); }
+    .ptr-dot { stroke: #64748b; stroke-width: 1.2; stroke-dasharray: 4,2; fill: none; }
+    .ptr-lbl { font-size: 10px; fill: #94a3b8; }
+    .legend { font-size: 11px; fill: #cbd5e1; }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="1000" height="680" fill="#0b1220"/>
+
+  <text x="500" y="28" text-anchor="middle" class="title">pcache-dist — Per-peer data structures</text>
+  <text x="500" y="46" text-anchor="middle" class="subtitle">Generation is device-wide; dirty bits, peer_gen_at_sync and flags are per peer.</text>
+
+  <!-- Legend -->
+  <rect x="40" y="65" width="14" height="14" class="existing"/>
+  <text x="62" y="77" class="legend">original dm-pcache</text>
+  <rect x="240" y="65" width="14" height="14" class="new"/>
+  <text x="262" y="77" class="legend">added by pcache-dist</text>
+
+  <!-- dm_pcache struct -->
+  <rect x="40" y="105" width="280" height="250" class="struct existing"/>
+  <text x="180" y="125" text-anchor="middle" class="struct-h">struct dm_pcache</text>
+  <line x1="50" y1="132" x2="310" y2="132" stroke="#334155"/>
+  <text x="55" y="148" class="field">struct dm_target *ti;</text>
+  <text x="55" y="164" class="field">struct pcache_cache_dev cache_dev;</text>
+  <text x="55" y="180" class="field">struct pcache_backing_dev backing_dev;</text>
+  <text x="55" y="196" class="field">struct pcache_cache cache;</text>
+  <!-- fields added by pcache-dist -->
+  <rect x="48" y="202" width="264" height="144" class="new"/>
+  <text x="55" y="216" class="field" font-weight="bold">struct pcache_network *net;</text>
+  <text x="55" y="232" class="field">bool is_primary;</text>
+  <text x="55" y="246" class="field">u32 my_node_id;</text>
+  <text x="55" y="260" class="field">u32 listen_port;</text>
+  <text x="55" y="274" class="field">u32 quorum_min;</text>
+  <text x="55" y="288" class="field">bool quorum_majority;</text>
+  <text x="55" y="306" class="field">u64 generation;            // device-wide</text>
+  <text x="55" y="320" class="field">bool gen_dirty;            // device-wide</text>
+  <text x="55" y="334" class="field">spinlock_t gen_lock;       // protects above</text>
+
+  <!-- pcache_network -->
+  <rect x="360" y="105" width="280" height="150" class="struct new"/>
+  <text x="500" y="125" text-anchor="middle" class="struct-h">struct pcache_network</text>
+  <line x1="370" y1="132" x2="630" y2="132" stroke="#334155"/>
+  <text x="375" y="150" class="field">struct mutex peers_lock;</text>
+  <text x="375" y="166" class="field">struct pcache_peer *peers[32];</text>
+  <text x="375" y="182" class="field">struct socket *listen_sock;</text>
+  <text x="375" y="198" class="field">struct task_struct *accept_thread;</text>
+  <text x="375" y="214" class="field">u32 protocol_version;  // = 3</text>
+  <text x="375" y="230" class="field">mempool_t *req_pool;</text>
+  <text x="375" y="246" class="field">struct kmem_cache *req_cache;</text>
+
+  <!-- pcache_peer -->
+  <rect x="680" y="105" width="280" height="290" class="struct new"/>
+  <text x="820" y="125" text-anchor="middle" class="struct-h">struct pcache_peer</text>
+  <line x1="690" y1="132" x2="950" y2="132" stroke="#334155"/>
+  <text x="695" y="150" class="field">struct dm_pcache *pcache;</text>
+  <text x="695" y="166" class="field">int node_id;</text>
+  <text x="695" y="182" class="field">char remote_addr[64];</text>
+  <text x="695" y="198" class="field">struct socket *sock;</text>
+  <text x="695" y="214" class="field">struct task_struct *sender, *receiver;</text>
+  <text x="695" y="230" class="field">struct list_head pending_list;</text>
+  <text x="695" y="246" class="field">spinlock_t sock_lock, pending_lock;</text>
+  <text x="695" y="262" class="field">enum pcache_conn_state state;</text>
+  <text x="695" y="278" class="field">enum pcache_repl_state repl_state;</text>
+  <text x="695" y="294" class="field">bool is_primary;</text>
+  <text x="695" y="310" class="field">u64 peer_generation;</text>
+  <text x="695" y="326" class="field">bool split_brain;</text>
+  <text x="695" y="346" class="field" font-weight="bold">struct pcache_bitmap *bm;</text>
+  <text x="695" y="360" class="field">       └─ this peer's dirty tracking</text>
+
+  <!-- pcache_bitmap -->
+  <rect x="200" y="430" width="380" height="220" class="struct new"/>
+  <text x="390" y="450" text-anchor="middle" class="struct-h">struct pcache_bitmap  (one per peer)</text>
+  <line x1="210" y1="457" x2="570" y2="457" stroke="#334155"/>
+  <text x="215" y="474" class="field">struct pcache_peer *peer;       // back-ref</text>
+  <text x="215" y="488" class="field">struct dm_pcache *pcache;       // cached</text>
+  <text x="215" y="502" class="field">int slot_idx;                   // 0..31 PMEM slot</text>
+  <text x="215" y="516" class="field">unsigned long *cache;           // RAM dirty bits</text>
+  <text x="215" y="530" class="field">u64 nr_bits, nr_words;</text>
+  <text x="215" y="544" class="field">spinlock_t lock;</text>
+  <text x="215" y="558" class="field">atomic64_t dirty_count;</text>
+  <text x="215" y="572" class="field">void *pmem_base, *pmem_data;    // CACHE_DEV_BITMAP_SLOT</text>
+  <text x="215" y="586" class="field">unsigned long *dirty_pages;</text>
+  <text x="215" y="600" class="field">u8 meta_seq, meta_index;</text>
+  <text x="215" y="616" class="field">u64 generation;                 // mirror device gen</text>
+  <text x="215" y="630" class="field" font-weight="bold">u64 peer_gen_at_sync;         // last mark_synced</text>
+  <text x="215" y="644" class="field" font-weight="bold">u32 flags;                    // FULL_SYNC_NEEDED, ...</text>
+
+  <!-- relationships / arrows -->
+  <line x1="320" y1="212" x2="360" y2="212" class="ptr"/>
+  <text x="340" y="206" text-anchor="middle" class="ptr-lbl">net</text>
+
+  <line x1="640" y1="166" x2="680" y2="195" class="ptr"/>
+  <text x="660" y="172" text-anchor="middle" class="ptr-lbl">[slot]</text>
+
+  <path d="M 695 348 Q 500 380 460 430" class="ptr" fill="none"/>
+  <text x="540" y="396" text-anchor="middle" class="ptr-lbl">peer-&gt;bm</text>
+
+  <path d="M 280 474 Q 690 430 760 320" class="ptr-dot" fill="none"/>
+  <text x="630" y="430" text-anchor="middle" class="ptr-lbl">bm-&gt;peer (back-ref)</text>
+
+</svg>

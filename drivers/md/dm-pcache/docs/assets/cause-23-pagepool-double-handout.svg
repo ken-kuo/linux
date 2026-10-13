@@ -1,0 +1,155 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 1310" width="1500" height="1310">
+<defs>
+  <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#1e293b"/>
+  </linearGradient>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/>
+  </marker>
+  <marker id="arrow-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#ef4444"/>
+  </marker>
+  <marker id="arrow-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#38bdf8"/>
+  </marker>
+</defs>
+<style>
+  .t     { font-family: 'Segoe UI', Arial, sans-serif; }
+  .m     { font-family: 'Consolas', 'DejaVu Sans Mono', monospace; }
+  .title { fill:#f1f5f9; font-size:26px; font-weight:bold; }
+  .sub   { fill:#94a3b8; font-size:14px; }
+  .step  { fill:#1e293b; stroke:#475569; stroke-width:2; rx:10; }
+  .ok    { fill:#0c2a33; stroke:#38bdf8; stroke-width:2; rx:10; }
+  .bad   { fill:#3b1113; stroke:#ef4444; stroke-width:2.5; rx:10; }
+  .card  { fill:#172033; stroke:#64748b; stroke-width:1.5; rx:8; }
+  .colhd { fill:#0b1220; stroke:#64748b; stroke-width:2; rx:10; }
+  .h     { fill:#e2e8f0; font-size:16px; font-weight:bold; }
+  .hok   { fill:#7dd3fc; font-size:16px; font-weight:bold; }
+  .hbad  { fill:#fca5a5; font-size:16px; font-weight:bold; }
+  .d     { fill:#cbd5e1; font-size:13px; }
+  .dm    { fill:#a5b4fc; font-size:12.5px; }
+  .ref   { fill:#fbbf24; font-size:13px; font-weight:bold; }
+  .refb  { fill:#f87171; font-size:13px; font-weight:bold; }
+  .n     { fill:#64748b; font-size:12px; }
+  .lbl   { fill:#94a3b8; font-size:13px; font-weight:bold; }
+</style>
+
+<rect width="1500" height="1310" fill="url(#bg)"/>
+<text class="t title" x="40" y="44">virtio_net / page_pool: one RX page reaches two skbs while page_pool counts one reference</text>
+<text class="t sub" x="40" y="70">ddm-pcache fix-history #23. Measured with a per-pfn owner table that records which skb installed each page_pool page into a frag array.</text>
+
+<!-- ============ LEFT: correct ============ -->
+<rect class="colhd" x="40" y="96" width="680" height="40"/>
+<text class="t hok" x="60" y="122">CORRECT LIFECYCLE — the allocation's single reference IS the skb's</text>
+
+<rect class="ok" x="40" y="156" width="680" height="76"/>
+<text class="t h" x="60" y="181">1. page_pool hands out page P</text>
+<text class="t m dm" x="60" y="202">try_fill_recv() -&gt; page_pool_alloc_va() -&gt; __page_pool_alloc_netmems_slow()</text>
+<text class="t ref" x="60" y="222">pp_ref_count(P) = 1        page _refcount = 1</text>
+
+<rect class="step" x="40" y="248" width="680" height="66"/>
+<text class="t h" x="60" y="273">2. posted to the receive virtqueue</text>
+<text class="t m dm" x="60" y="294">add_recvbuf_mergeable() -&gt; virtnet_rq_submit() -&gt; virtqueue_add_inbuf_ctx()</text>
+
+<rect class="step" x="40" y="330" width="680" height="66"/>
+<text class="t h" x="60" y="355">3. returned by the device, one packet's buffer chain</text>
+<text class="t m dm" x="60" y="376">receive_mergeable() -&gt; virtnet_rq_get_buf() -&gt; virtqueue_get_buf_ctx()</text>
+
+<rect class="ok" x="40" y="412" width="680" height="86"/>
+<text class="t h" x="60" y="437">4. installed into skb A's frag array — NO reference taken</text>
+<text class="t m dm" x="60" y="458">__skb_fill_netmem_desc()  "Does not take any additional reference"</text>
+<text class="t ref" x="60" y="478">skb A frag[i] -&gt; P         pp_ref_count(P) still 1  (it is A's)</text>
+
+<rect class="ok" x="40" y="514" width="680" height="96"/>
+<text class="t h" x="60" y="539">5. skb A released — P goes back to the pool, not to the buddy</text>
+<text class="t m dm" x="60" y="560">skb_release_data() -&gt; __skb_frag_unref() -&gt; napi_pp_put_page()</text>
+<text class="t ref" x="60" y="580">pp_ref_count 1 -&gt; 0  =&gt; recycled into pool-&gt;alloc.cache / ptr_ring</text>
+<text class="t d" x="60" y="599">P is reusable, still owned by the pool. This is the steady state.</text>
+
+<path d="M380,232 L380,246" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrow-ok)"/>
+<path d="M380,314 L380,328" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M380,396 L380,410" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M380,498 L380,512" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrow-ok)"/>
+
+<!-- ============ RIGHT: fault ============ -->
+<rect class="colhd" x="780" y="96" width="680" height="40"/>
+<text class="t hbad" x="800" y="122">WHAT THE DUMPS SHOW — P is handed out again while skb A still holds it</text>
+
+<rect class="ok" x="780" y="156" width="680" height="66"/>
+<text class="t h" x="800" y="181">1-4. same as the left: P installed into skb A frag[i]</text>
+<text class="t ref" x="800" y="202">pp_ref_count(P) = 1        skb A owns that one reference</text>
+
+<rect class="bad" x="780" y="238" width="680" height="106"/>
+<text class="t hbad" x="800" y="263">5. THE DEFECT — page_pool hands P out a second time</text>
+<text class="t d" x="800" y="284">P is handed out as a fresh buffer while skb A's frag still points at it.</text>
+<text class="t refb" x="800" y="304">pp_ref_count(P) is STILL 1 — the second hand-out took no reference</text>
+<text class="t d" x="800" y="324">The pool's own cache and ptr_ring show no duplicate entry at crash time.</text>
+
+<rect class="step" x="780" y="360" width="680" height="86"/>
+<text class="t h" x="800" y="385">6. posted and returned again — the virtqueue stays balanced</text>
+<text class="t m dm" x="800" y="406">measured for the offending page: posts=1889 gets=1889 outstanding=0</text>
+<text class="t d" x="800" y="426">So it is NOT a double post, and NOT the same token returned twice.</text>
+
+<rect class="bad" x="780" y="462" width="680" height="86"/>
+<text class="t hbad" x="800" y="487">7. installed into skb B frag[j] — two owners, one reference</text>
+<text class="t m dm" x="800" y="508">__skb_fill_netmem_desc() again — again taking no reference</text>
+<text class="t refb" x="800" y="528">skb A frag[i] -&gt; P    and    skb B frag[j] -&gt; P    pp_ref_count = 1</text>
+
+<rect class="bad" x="780" y="564" width="680" height="96"/>
+<text class="t hbad" x="800" y="589">8. skb A released — P is freed to the BUDDY ALLOCATOR</text>
+<text class="t m dm" x="800" y="610">napi_pp_put_page() -&gt; pp_ref 1-&gt;0 -&gt; page_pool_return_page()</text>
+<text class="t m dm" x="800" y="630">-&gt; __free_frozen_pages()   page _refcount = 0, PP_SIGNATURE cleared</text>
+<text class="t refb" x="800" y="650">P now belongs to nobody. skb B's frag[j] is a dangling pointer.</text>
+
+<rect class="bad" x="780" y="676" width="680" height="106"/>
+<text class="t hbad" x="800" y="701">9. skb B released 24 us later — BUG</text>
+<text class="t m dm" x="800" y="722">skb_defer_free_flush() -&gt; napi_consume_skb() -&gt; skb_release_data()</text>
+<text class="t m dm" x="800" y="742">VM_BUG_ON_PAGE(page_ref_count(page) == 0)</text>
+<text class="t m dm" x="800" y="762">kernel BUG at ./include/linux/mm.h  RIP: skb_release_data+0x...</text>
+
+<path d="M1120,222 L1120,236" stroke="#ef4444" stroke-width="2.5" marker-end="url(#arrow-bad)"/>
+<path d="M1120,344 L1120,358" stroke="#ef4444" stroke-width="2.5" marker-end="url(#arrow-bad)"/>
+<path d="M1120,446 L1120,460" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M1120,548 L1120,562" stroke="#ef4444" stroke-width="2.5" marker-end="url(#arrow-bad)"/>
+<path d="M1120,660 L1120,674" stroke="#ef4444" stroke-width="2.5" marker-end="url(#arrow-bad)"/>
+
+<!-- divergence marker -->
+<path d="M720,290 L778,290" stroke="#ef4444" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#arrow-bad)"/>
+<text class="t n" x="722" y="280">diverges here</text>
+
+<!-- ============ bottom: evidence ============ -->
+<rect class="card" x="40" y="812" width="1420" height="214"/>
+<text class="t h" x="60" y="840">What the per-pfn owner probe recorded (four reproductions, 7.3.0-rc3+)</text>
+<text class="t m dm" x="60" y="866">PP_OWNER: pfn 0x10bf82 has refcount 0 while skb ffff888106716000 frag 15 still points at it</text>
+<text class="t m dm" x="60" y="886">PP_OWNER:   installer[0] skb=0000888106717100 cpu=7 from receive_mergeable+0x153 [virtio_net]</text>
+<text class="t m dm" x="60" y="906">PP_OWNER:   installer[1] skb=0000888104782000 cpu=7 from receive_mergeable+0x153 [virtio_net]</text>
+<text class="t m dm" x="60" y="926">PP_OWNER:   virtqueue posts=1889 gets=1889 outstanding=0</text>
+<text class="t m dm" x="60" y="946">PP_OWNER:   totals: posts=12159356 gets=12158862 dropped=0</text>
+<text class="t d" x="60" y="972">Two different skbs, and the crashing skb is a third one — the page was installed at least three times.</text>
+<text class="t d" x="60" y="992">The per-page post/get counts are equal, which is what moves the fault off the virtqueue and onto the pool.</text>
+<text class="t d" x="60" y="1012">Earlier dumps show the same shape inside a single skb (frag 4 and frag 9, or frag 0 and frag 2).</text>
+
+<rect class="card" x="40" y="1046" width="700" height="230"/>
+<text class="t h" x="60" y="1074">The installing code differs every time — installers are victims</text>
+<text class="t d" x="60" y="1098">pfn 0x16b3eb   page_to_skb + virtnet_skb_append_frag</text>
+<text class="t m dm" x="60" y="1117">frag[0] off=26 len=4070   frag[2] off=0 len=4096</text>
+<text class="t d" x="60" y="1141">pfn 0x10a0bd   virtnet_skb_append_frag, twice</text>
+<text class="t m dm" x="60" y="1160">frag[3] off=0 len=4096    frag[8] off=0 len=4096</text>
+<text class="t d" x="60" y="1184">pfn 0x13c092   tcp_try_coalesce, twice</text>
+<text class="t m dm" x="60" y="1203">frag[6] off=0 len=4096    frag[8] off=0 len=822</text>
+<text class="t d" x="60" y="1231">Three unrelated paths, each doing the ordinary thing with a page it</text>
+<text class="t d" x="60" y="1250">was handed. Their only common factor is the page arriving twice.</text>
+<text class="t n" x="60" y="1268">off=26 is 12 (virtio hdr) + 14 (eth hdr): page_to_skb took its copy path.</text>
+
+<rect class="card" x="760" y="1046" width="700" height="230"/>
+<text class="t h" x="780" y="1074">Ruled out by instrumentation that stayed silent while the BUG fired</text>
+<text class="t d" x="780" y="1098">- a buffer posted to the virtqueue twice (probe v1, and posts==gets)</text>
+<text class="t d" x="780" y="1118">- the virtqueue returning a token that was never posted</text>
+<text class="t d" x="780" y="1138">- receive_mergeable()'s err_skb / mergeable_buf_free() error paths</text>
+<text class="t d" x="780" y="1158">- the same data buffer released twice in place</text>
+<text class="t d" x="780" y="1178">- the same skb released twice, or queued twice for deferred free</text>
+<text class="t d" x="780" y="1198">- GRO (reproduces with gro off; note tcp_try_coalesce runs anyway)</text>
+<text class="t d" x="780" y="1218">- the page_type change db359fccf212 (its revert is already in 7.3-rc3)</text>
+<text class="t n" x="780" y="1246">Caution: per-packet instrumentation suppresses the reproduction, so a</text>
+<text class="t n" x="780" y="1264">silent probe is only evidence if the BUG fired in that same run.</text>
+</svg>

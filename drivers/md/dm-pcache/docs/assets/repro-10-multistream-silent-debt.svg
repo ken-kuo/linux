@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1060 1406">
+<defs>
+<linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+<stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#1e293b"/>
+</linearGradient>
+<marker id="a-drv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#60a5fa"/></marker>
+<marker id="a-pri" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#34d399"/></marker>
+<marker id="a-sec" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#fbbf24"/></marker>
+<marker id="a-bug" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#f87171"/></marker>
+<marker id="a-fix" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2dd4bf"/></marker>
+<marker id="a-dec" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#c4b5fd"/></marker>
+<marker id="a-gr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"/></marker>
+</defs>
+<rect width="1060" height="1406" fill="url(#bg)"/>
+<text x="36" y="44" font-family="'Segoe UI',Arial,sans-serif" font-size="22" font-weight="600" fill="#e2e8f0">#10 — Reproducing: writes silently deferred to the dirty bitmap (multi-stream)</text>
+<text x="36" y="70" font-family="'Segoe UI',Arial,sans-serif" font-size="13.5" fill="#94a3b8">demo_features.sh f40 · streams=2 · the Primary logs nothing, which is what made this hard to find</text>
+<rect x="36" y="92" width="336" height="1258" rx="8" fill="#0b1220" stroke="#243044"/>
+<text x="204" y="116" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="600" fill="#94a3b8">test driver</text>
+<line x1="36" y1="126" x2="372" y2="126" stroke="#243044"/>
+<rect x="382" y="92" width="336" height="1258" rx="8" fill="#0b1220" stroke="#243044"/>
+<text x="550" y="116" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="600" fill="#94a3b8">Primary (node-1)</text>
+<line x1="382" y1="126" x2="718" y2="126" stroke="#243044"/>
+<rect x="728" y="92" width="296" height="1258" rx="8" fill="#0b1220" stroke="#243044"/>
+<text x="876" y="116" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="600" fill="#94a3b8">Secondary (node-2)</text>
+<line x1="728" y1="126" x2="1024" y2="126" stroke="#243044"/>
+<circle cx="204" cy="150" r="8" fill="#e2e8f0"/>
+<line x1="204" y1="158" x2="204" y2="176" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="70" y="176" width="268" height="60" rx="9" fill="#1d4ed8" stroke="#60a5fa"/>
+<text x="204" y="198" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#eff6ff">recreate_streams 2</text>
+<text x="204" y="215" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#eff6ff">(pcache-dsend threads must exist)</text>
+<line x1="204" y1="236" x2="204" y2="262" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<path d="M 204 262 L 341 296 L 204 330 L 67 296 Z" fill="#4c1d95" stroke="#c4b5fd"/>
+<text x="204" y="286" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11" fill="#ede9fe">wait_established:</text>
+<text x="204" y="303" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11" fill="#ede9fe">bm_dirty == 0 ?</text>
+<line x1="204" y1="330" x2="204" y2="356" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<text x="212" y="343" text-anchor="start" font-family="'JetBrains Mono',monospace" font-size="10.5" fill="#94a3b8">[settled]</text>
+<rect x="70" y="356" width="268" height="60" rx="9" fill="#1d4ed8" stroke="#60a5fa"/>
+<text x="204" y="378" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#eff6ff">4 fio jobs x 4K randwrite</text>
+<text x="204" y="395" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#eff6ff">over ONE 8 MiB region, 25 s</text>
+<path d="M 204 416 L 204 430 L 876 430 L 876 442" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="742" y="442" width="268" height="77" rx="9" fill="#78350f" stroke="#fbbf24"/>
+<text x="876" y="464" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fef3c7">pcache_net_write_to_cache</text>
+<text x="876" y="481" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fef3c7">wait_seg() absorbs -EBUSY</text>
+<text x="876" y="498" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fef3c7">from cache_data_alloc</text>
+<line x1="876" y1="519" x2="876" y2="545" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="742" y="545" width="268" height="77" rx="9" fill="#78350f" stroke="#fbbf24"/>
+<text x="876" y="567" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fef3c7">cache_key_append()</text>
+<text x="876" y="584" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fef3c7">kset full (128 keys)</text>
+<text x="876" y="601" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fef3c7">-&gt; cache_kset_close()</text>
+<line x1="876" y1="622" x2="876" y2="648" stroke="#f87171" stroke-width="1.6" marker-end="url(#a-bug)"/>
+<rect x="742" y="648" width="268" height="77" rx="9" fill="#7f1d1d" stroke="#f87171"/>
+<text x="876" y="670" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">get_cache_segment() -&gt; no segment</text>
+<text x="876" y="687" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#fee2e2">-EBUSY returned, no wait</text>
+<text x="876" y="704" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">backpressure covered alloc only</text>
+<line x1="876" y1="725" x2="876" y2="751" stroke="#f87171" stroke-width="1.6" marker-end="url(#a-bug)"/>
+<rect x="742" y="751" width="268" height="60" rx="9" fill="#7f1d1d" stroke="#f87171"/>
+<text x="876" y="773" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">reply P_NACK</text>
+<text x="876" y="790" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">dmesg: write to cache failed: -16</text>
+<path d="M 876 811 L 876 825 L 550 825 L 550 837" fill="none" stroke="#f87171" stroke-width="1.6" marker-end="url(#a-bug)"/>
+<rect x="416" y="837" width="268" height="77" rx="9" fill="#7f1d1d" stroke="#f87171"/>
+<text x="550" y="859" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">pcache_handle_ack: NACK</text>
+<text x="550" y="876" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">-&gt; pcache_bm_set_range()</text>
+<text x="550" y="893" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#fee2e2">silently, with no log line</text>
+<path d="M 550 914 L 550 928 L 204 928 L 204 940" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<path d="M 204 940 L 341 974 L 204 1008 L 67 974 Z" fill="#4c1d95" stroke="#c4b5fd"/>
+<text x="204" y="964" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11" fill="#ede9fe">Primary dmesg empty?</text>
+<text x="204" y="981" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11" fill="#ede9fe">read the SECONDARY's</text>
+<line x1="204" y1="1008" x2="204" y2="1034" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<text x="212" y="1021" text-anchor="start" font-family="'JetBrains Mono',monospace" font-size="10.5" fill="#94a3b8">[yes]</text>
+<rect x="70" y="1034" width="268" height="60" rx="9" fill="#1d4ed8" stroke="#60a5fa"/>
+<text x="204" y="1056" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#eff6ff">result: bm_dirty = 36, md5 differs</text>
+<text x="204" y="1073" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#eff6ff">streams=1 control: identical</text>
+<line x1="204" y1="1094" x2="204" y2="1120" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="70" y="1120" width="268" height="60" rx="9" fill="#134e4a" stroke="#2dd4bf" stroke-dasharray="5 3"/>
+<text x="204" y="1142" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ccfbf1">after fix: retry the chunk on -EBUSY</text>
+<text x="204" y="1159" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ccfbf1">0 failures / bm_dirty 0 / identical</text>
+<line x1="204" y1="1180" x2="204" y2="1208" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<circle cx="204" cy="1219" r="11" fill="none" stroke="#e2e8f0" stroke-width="2"/>
+<circle cx="204" cy="1219" r="6" fill="#e2e8f0"/>
+<path d="M 60 1252 h 926 l 14 14 v 72 h -940 v -86 z" fill="#111c31" stroke="#fbbf24" stroke-dasharray="4 3"/>
+<text x="72" y="1272" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#fbbf24">Diagnosis rule learned here:</text>
+<text x="72" y="1288" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#fbbf24">a defect with no log on the node you</text>
+<text x="72" y="1304" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#fbbf24">suspect is a reason to read the peer's</text>
+<text x="72" y="1320" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#fbbf24">log, not a reason to doubt the report.</text>
+<text x="36" y="1384" font-family="'Segoe UI',Arial,sans-serif" font-size="12.5" fill="#64748b">Fixed in 281a75149622 — cache_key_append()'s -EBUSY now takes the same seg_wait backpressure as cache_data_alloc.</text>
+</svg>

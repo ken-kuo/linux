@@ -1,0 +1,156 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1140" width="1600" height="1140">
+<defs>
+  <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#1e293b"/>
+  </linearGradient>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/></marker>
+  <marker id="arrow-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#ef4444"/></marker>
+  <marker id="arrow-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#38bdf8"/></marker>
+</defs>
+<style>
+  .t     { font-family: 'DejaVu Sans', 'Segoe UI', Arial, sans-serif; }
+  .title { fill:#f1f5f9; font-size:23px; font-weight:bold; }
+  .sub   { fill:#94a3b8; font-size:13.5px; }
+  .lane  { fill:#111a2e; stroke:#334155; stroke-width:1.5; }
+  .fixlane { fill:#0b1f2a; stroke:#38bdf8; stroke-width:1.5; stroke-dasharray:9 5; }
+  .step  { fill:#1e293b; stroke:#475569; stroke-width:1.8; rx:8; }
+  .bad   { fill:#3b1113; stroke:#ef4444; stroke-width:2.4; rx:8; }
+  .good  { fill:#0c2a33; stroke:#38bdf8; stroke-width:1.8; stroke-dasharray:9 5; rx:8; }
+  .card  { fill:#172033; stroke:#64748b; stroke-width:1.5; rx:8; }
+  .h     { fill:#e2e8f0; font-size:14.5px; font-weight:bold; }
+  .hok   { fill:#7dd3fc; font-size:14px; font-weight:bold; }
+  .d     { fill:#cbd5e1; font-size:12.5px; }
+  .k     { fill:#fbbf24; font-size:12.5px; font-weight:bold; }
+  .bd    { fill:#fca5a5; font-size:12.5px; font-weight:bold; }
+  .n     { fill:#8b9bb4; font-size:11.5px; }
+</style>
+<rect width="1600" height="1140" fill="url(#bg)"/>
+<text class="t title" x="40" y="42" text-anchor="start">#21a (corrected): overlapping writes in flight at once get different winners on the two nodes</text>
+<text class="t sub" x="40" y="68" text-anchor="start">Not a stream-routing problem: it fails on one TCP stream too. The Primary copies locally and hands to the sender as two steps, so its local order and its send order can differ.</text>
+<rect class="lane" x="40" y="100" width="220" height="750"/>
+<text class="t h" x="150.0" y="122" text-anchor="middle">Application</text>
+<text class="t n" x="150.0" y="139" text-anchor="middle">fio: 4 jobs x iodepth 16</text>
+<rect class="lane" x="260" y="100" width="220" height="750"/>
+<text class="t h" x="370.0" y="122" text-anchor="middle">Primary  CPU0</text>
+<text class="t n" x="370.0" y="139" text-anchor="middle">pcache_submit_req(A)</text>
+<rect class="lane" x="480" y="100" width="220" height="750"/>
+<text class="t h" x="590.0" y="122" text-anchor="middle">Primary  CPU1</text>
+<text class="t n" x="590.0" y="139" text-anchor="middle">pcache_submit_req(B)</text>
+<rect class="lane" x="700" y="100" width="220" height="750"/>
+<text class="t h" x="810.0" y="122" text-anchor="middle">Wire</text>
+<text class="t n" x="810.0" y="139" text-anchor="middle">TCP, stream s or 0</text>
+<rect class="lane" x="920" y="100" width="220" height="750"/>
+<text class="t h" x="1030.0" y="122" text-anchor="middle">Secondary</text>
+<text class="t n" x="1030.0" y="139" text-anchor="middle">pcache_handle_data_recv</text>
+<rect class="step" x="50" y="160" width="200" height="58"/>
+<text class="t d" x="60" y="180" text-anchor="start">bio A  sectors [0,16)</text>
+<text class="t d" x="60" y="197" text-anchor="start">bio B  sectors [8,24)</text>
+<text class="t n" x="60" y="214" text-anchor="start">both submitted at once</text>
+<rect class="step" x="270" y="255" width="200" height="58"/>
+<text class="t n" x="280" y="275" text-anchor="start">no overlap check</text>
+<text class="t d" x="280" y="292" text-anchor="start">reserve + local copy A</text>
+<rect class="step" x="490" y="330" width="200" height="58"/>
+<text class="t d" x="500" y="350" text-anchor="start">reserve + local copy B</text>
+<text class="t k" x="500" y="367" text-anchor="start">[8,16) := B on Primary</text>
+<path d="M120.0,218 L120.0,238 L370.0,238 L370.0,255" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M180.0,218 L180.0,230 L590.0,230 L590.0,330" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+<rect class="step" x="490" y="410" width="200" height="58"/>
+<text class="t d" x="500" y="430" text-anchor="start">net_submit B</text>
+<text class="t n" x="500" y="447" text-anchor="start">B handed to the sender first</text>
+<path d="M590.0,388 L590.0,410" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+<rect class="bad" x="270" y="490" width="200" height="72"/>
+<text class="t bd" x="280" y="510" text-anchor="start">net_submit A</text>
+<text class="t bd" x="280" y="527" text-anchor="start">handed over AFTER B:</text>
+<text class="t bd" x="280" y="544" text-anchor="start">send order B, A</text>
+<path d="M370.0,313 L370.0,490" fill="none" stroke="#ef4444" stroke-width="2" marker-end="url(#arrow-bad)"/>
+<rect class="step" x="710" y="490" width="200" height="40"/>
+<text class="t d" x="720" y="510" text-anchor="start">B on the wire</text>
+<rect class="step" x="710" y="560" width="200" height="40"/>
+<text class="t d" x="720" y="580" text-anchor="start">A on the wire</text>
+<path d="M690,440 L810.0,440 L810.0,490" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M470,545 L688,545 L688,580 L710,580" fill="none" stroke="#ef4444" stroke-width="2" marker-end="url(#arrow-bad)"/>
+<rect class="step" x="930" y="600" width="200" height="58"/>
+<text class="t d" x="940" y="620" text-anchor="start">apply B, then ACK</text>
+<text class="t n" x="940" y="637" text-anchor="start">applied before the ACK is sent</text>
+<rect class="bad" x="930" y="700" width="200" height="72"/>
+<text class="t bd" x="940" y="720" text-anchor="start">apply A, then ACK</text>
+<text class="t bd" x="940" y="737" text-anchor="start">[8,16) := A on Secondary</text>
+<text class="t bd" x="940" y="754" text-anchor="start">the nodes diverge</text>
+<path d="M910,510 L1030.0,510 L1030.0,600" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M810.0,600 L810.0,675 L990.0,675 L990.0,700" fill="none" stroke="#ef4444" stroke-width="2" marker-end="url(#arrow-bad)"/>
+<rect class="bad" x="50" y="750" width="200" height="90"/>
+<text class="t d" x="60" y="770" text-anchor="start">Primary   [8,16) = B</text>
+<text class="t bd" x="60" y="787" text-anchor="start">Secondary [8,16) = A</text>
+<text class="t n" x="60" y="804" text-anchor="start">bm_dirty = 0: both writes</text>
+<text class="t n" x="60" y="821" text-anchor="start">replicated, order lost</text>
+<path d="M1030.0,772 L1030.0,810 L250,810" fill="none" stroke="#ef4444" stroke-width="2" marker-end="url(#arrow-bad)"/>
+<rect class="fixlane" x="1190" y="100" width="370" height="750"/>
+<text class="t hok" x="1375.0" y="122" text-anchor="middle">Fixed path  (e594a613f4c0)</text>
+<text class="t n" x="1375.0" y="139" text-anchor="middle">DRBD drbd_conflict_submit_write() rule</text>
+<rect class="good" x="1210" y="160" width="330" height="62"/>
+<text class="t d" x="1222" y="185" text-anchor="start">pcache_wr_admit(A): no overlap</text>
+<text class="t n" x="1222" y="206" text-anchor="start">insert [0,15] into wr_tree</text>
+<rect class="good" x="1210" y="272" width="330" height="62"/>
+<text class="t hok" x="1222" y="297" text-anchor="start">pcache_wr_admit(B): overlaps A</text>
+<text class="t n" x="1222" y="318" text-anchor="start">park B on wr_waiters (PARKED)</text>
+<path d="M1375.0,222 L1375.0,272" stroke="#38bdf8" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-ok)"/>
+<rect class="good" x="1210" y="384" width="330" height="62"/>
+<text class="t d" x="1222" y="409" text-anchor="start">A: reserve, copy, send</text>
+<text class="t n" x="1222" y="430" text-anchor="start">Secondary applies A, then ACKs</text>
+<path d="M1375.0,334 L1375.0,384" stroke="#38bdf8" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-ok)"/>
+<rect class="good" x="1210" y="496" width="330" height="62"/>
+<text class="t hok" x="1222" y="521" text-anchor="start">end_req(A): local + every ACK in</text>
+<text class="t n" x="1222" y="542" text-anchor="start">pcache_wr_release(A): requeue B</text>
+<path d="M1375.0,446 L1375.0,496" stroke="#38bdf8" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-ok)"/>
+<rect class="good" x="1210" y="608" width="330" height="62"/>
+<text class="t d" x="1222" y="633" text-anchor="start">B: admit, reserve, copy, send</text>
+<text class="t n" x="1222" y="654" text-anchor="start">Secondary applies B after A</text>
+<path d="M1375.0,558 L1375.0,608" stroke="#38bdf8" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-ok)"/>
+<rect class="good" x="1210" y="720" width="330" height="62"/>
+<text class="t hok" x="1222" y="745" text-anchor="start">Both nodes [8,16) = B</text>
+<text class="t n" x="1222" y="766" text-anchor="start">same order on both sides</text>
+<path d="M1375.0,670 L1375.0,720" stroke="#38bdf8" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-ok)"/>
+<path d="M690,344 L1194,344 L1194,303 L1210,303" fill="none" stroke="#38bdf8" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-ok)"/>
+<text class="t hok" x="706" y="328" text-anchor="start">with the fix: B is admitted first</text>
+<rect class="card" x="40" y="875" width="1520" height="235"/>
+<text class="t h" x="60" y="905" text-anchor="start">Evidence: F40 A/B, interleaved, 5 runs per cell (all with bm_dirty = 0, i.e. every write replicated inline)</text>
+<text class="t h" x="60" y="937" text-anchor="start">variant</text>
+<text class="t h" x="170" y="937" text-anchor="start">concurrency</text>
+<text class="t h" x="390" y="937" text-anchor="start">block size</text>
+<text class="t h" x="570" y="937" text-anchor="start">streams</text>
+<text class="t h" x="690" y="937" text-anchor="start">before</text>
+<text class="t h" x="830" y="937" text-anchor="start">after</text>
+<text class="t d" x="60" y="961" text-anchor="start">A</text>
+<text class="t d" x="170" y="961" text-anchor="start">4 jobs x iodepth 16</text>
+<text class="t d" x="390" y="961" text-anchor="start">4k-64k mixed</text>
+<text class="t d" x="570" y="961" text-anchor="start">2</text>
+<text class="t bd" x="690" y="961" text-anchor="start">5/5 fail</text>
+<text class="t d" x="830" y="961" text-anchor="start">0/5</text>
+<text class="t d" x="60" y="985" text-anchor="start">B</text>
+<text class="t d" x="170" y="985" text-anchor="start">4 jobs x iodepth 16</text>
+<text class="t d" x="390" y="985" text-anchor="start">4k-64k mixed</text>
+<text class="t d" x="570" y="985" text-anchor="start">1</text>
+<text class="t bd" x="690" y="985" text-anchor="start">3/5 fail</text>
+<text class="t d" x="830" y="985" text-anchor="start">0/5</text>
+<text class="t d" x="60" y="1009" text-anchor="start">C</text>
+<text class="t d" x="170" y="1009" text-anchor="start">4 jobs x iodepth 16</text>
+<text class="t d" x="390" y="1009" text-anchor="start">4k</text>
+<text class="t d" x="570" y="1009" text-anchor="start">2</text>
+<text class="t d" x="690" y="1009" text-anchor="start">0/5</text>
+<text class="t d" x="830" y="1009" text-anchor="start">0/5</text>
+<text class="t d" x="60" y="1033" text-anchor="start">serial</text>
+<text class="t d" x="170" y="1033" text-anchor="start">1 job x iodepth 1</text>
+<text class="t d" x="390" y="1033" text-anchor="start">4k-64k mixed</text>
+<text class="t d" x="570" y="1033" text-anchor="start">1</text>
+<text class="t d" x="690" y="1033" text-anchor="start">0/5</text>
+<text class="t d" x="830" y="1033" text-anchor="start">--</text>
+<text class="t h" x="960" y="913" text-anchor="start">Reading</text>
+<text class="t n" x="960" y="937" text-anchor="start">- B fails on a single TCP stream, which cannot reorder: cross-stream routing is</text>
+<text class="t n" x="972" y="956" text-anchor="start">at most a second source of reordering.</text>
+<text class="t n" x="960" y="980" text-anchor="start">- The serialised control never diverges: partial overlaps are stored correctly;</text>
+<text class="t n" x="972" y="999" text-anchor="start">the fault is the missing order.</text>
+<text class="t n" x="960" y="1023" text-anchor="start">- C (uniform 4k) rarely overlaps except on identical ranges -- which is why F40,</text>
+<text class="t n" x="972" y="1042" text-anchor="start">written with bs=4k, passed on its own.</text>
+<text class="t n" x="960" y="1066" text-anchor="start">- The Secondary ACKs only after pcache_net_write_to_cache(), so waiting for</text>
+<text class="t n" x="972" y="1085" text-anchor="start">every ACK means waiting until applied.</text>
+</svg>

@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1060 1741">
+<defs>
+<linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+<stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#1e293b"/>
+</linearGradient>
+<marker id="a-drv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#60a5fa"/></marker>
+<marker id="a-pri" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#34d399"/></marker>
+<marker id="a-sec" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#fbbf24"/></marker>
+<marker id="a-bug" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#f87171"/></marker>
+<marker id="a-fix" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2dd4bf"/></marker>
+<marker id="a-dec" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#c4b5fd"/></marker>
+<marker id="a-gr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"/></marker>
+</defs>
+<rect width="1060" height="1741" fill="url(#bg)"/>
+<text x="36" y="44" font-family="'Segoe UI',Arial,sans-serif" font-size="22" font-weight="600" fill="#e2e8f0">#16 — Why a half-closed socket wedges the peer forever</text>
+<text x="36" y="70" font-family="'Segoe UI',Arial,sans-serif" font-size="13.5" fill="#94a3b8">The cause, not the recipe: TCP liveness is not application liveness, and the accept path trusts the wrong side</text>
+<rect x="36" y="92" width="336" height="1593" rx="8" fill="#0b1220" stroke="#243044"/>
+<text x="204" y="116" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="600" fill="#94a3b8">Primary (node-1)</text>
+<line x1="36" y1="126" x2="372" y2="126" stroke="#243044"/>
+<rect x="382" y="92" width="336" height="1593" rx="8" fill="#0b1220" stroke="#243044"/>
+<text x="550" y="116" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="600" fill="#94a3b8">TCP / socket layer</text>
+<line x1="382" y1="126" x2="718" y2="126" stroke="#243044"/>
+<rect x="728" y="92" width="296" height="1593" rx="8" fill="#0b1220" stroke="#243044"/>
+<text x="876" y="116" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="600" fill="#94a3b8">Secondary (node-2)</text>
+<line x1="728" y1="126" x2="1024" y2="126" stroke="#243044"/>
+<circle cx="204" cy="150" r="8" fill="#e2e8f0"/>
+<line x1="204" y1="158" x2="204" y2="176" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="70" y="176" width="268" height="77" rx="9" fill="#065f46" stroke="#34d399"/>
+<text x="204" y="198" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ecfdf5">the link to the peer breaks in</text>
+<text x="204" y="215" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#ecfdf5">ONE direction only</text>
+<text x="204" y="232" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ecfdf5">(firewall rule, asymmetric route)</text>
+<line x1="204" y1="253" x2="204" y2="279" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="70" y="279" width="268" height="60" rx="9" fill="#065f46" stroke="#34d399"/>
+<text x="204" y="301" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ecfdf5">teardown closes the socket</text>
+<text x="204" y="318" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ecfdf5">(abort-resync, worker restart, ...)</text>
+<path d="M 204 339 L 204 353 L 550 353 L 550 365" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="416" y="365" width="268" height="60" rx="9" fill="#78350f" stroke="#fbbf24"/>
+<text x="550" y="387" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fef3c7">Primary socket -&gt; FIN-WAIT-1;</text>
+<text x="550" y="404" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#fef3c7">the FIN cannot reach the peer</text>
+<line x1="550" y1="425" x2="550" y2="451" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="416" y="451" width="268" height="60" rx="9" fill="#78350f" stroke="#fbbf24"/>
+<text x="550" y="473" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fef3c7">Secondary's socket stays ESTAB:</text>
+<text x="550" y="490" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fef3c7">it never learned anything happened</text>
+<path d="M 550 511 L 550 525 L 876 525 L 876 537" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="742" y="537" width="268" height="60" rx="9" fill="#78350f" stroke="#fbbf24"/>
+<text x="876" y="559" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fef3c7">keepalive fires after 20s idle</text>
+<text x="876" y="576" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fef3c7">(KEEPIDLE=20, INTVL=10, CNT=3)</text>
+<path d="M 876 597 L 876 611 L 550 611 L 550 623" fill="none" stroke="#f87171" stroke-width="1.6" marker-end="url(#a-bug)"/>
+<rect x="416" y="623" width="268" height="77" rx="9" fill="#7f1d1d" stroke="#f87171"/>
+<text x="550" y="645" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">the FIN-WAIT-1 socket is still a</text>
+<text x="550" y="662" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#fee2e2">live socket -- it ACKs the probe</text>
+<text x="550" y="679" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">half-closed != gone</text>
+<path d="M 550 700 L 550 714 L 876 714 L 876 726" fill="none" stroke="#f87171" stroke-width="1.6" marker-end="url(#a-bug)"/>
+<rect x="742" y="726" width="268" height="77" rx="9" fill="#7f1d1d" stroke="#f87171"/>
+<text x="876" y="748" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">keepalive satisfied, forever.</text>
+<text x="876" y="765" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#fee2e2">the conn is never declared dead</text>
+<text x="876" y="782" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">and stays installed on the stream</text>
+<path d="M 876 803 L 876 817 L 204 817 L 204 829" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="70" y="829" width="268" height="60" rx="9" fill="#065f46" stroke="#34d399"/>
+<text x="204" y="851" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ecfdf5">meanwhile: reconnect, new socket,</text>
+<text x="204" y="868" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ecfdf5">handshake completes</text>
+<path d="M 204 889 L 204 903 L 876 903 L 876 915" fill="none" stroke="#f87171" stroke-width="1.6" marker-end="url(#a-bug)"/>
+<rect x="742" y="915" width="268" height="77" rx="9" fill="#7f1d1d" stroke="#f87171"/>
+<text x="876" y="937" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">accept: pcache_stream_has_conn()</text>
+<text x="876" y="954" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">is true -&gt; *drop dup, sock_release</text>
+<text x="876" y="971" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">(meant for a simultaneous-connect race)</text>
+<path d="M 876 992 L 876 1006 L 204 1006 L 204 1018" fill="none" stroke="#f87171" stroke-width="1.6" marker-end="url(#a-bug)"/>
+<rect x="70" y="1018" width="268" height="60" rx="9" fill="#7f1d1d" stroke="#f87171"/>
+<text x="204" y="1040" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">sync_params exchange failed: -104</text>
+<text x="204" y="1057" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">retry ~1/s ... measured 20+ minutes</text>
+<path d="M 204 1078 L 204 1092 L 876 1092 L 876 1104" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<path d="M 876 1104 L 1013 1138 L 876 1172 L 739 1138 Z" fill="#4c1d95" stroke="#c4b5fd"/>
+<text x="876" y="1128" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11" fill="#ede9fe">anything left that could</text>
+<text x="876" y="1145" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11" fill="#ede9fe">break the loop?</text>
+<line x1="876" y1="1172" x2="876" y2="1198" stroke="#f87171" stroke-width="1.6" marker-end="url(#a-bug)"/>
+<text x="884" y="1185" text-anchor="start" font-family="'JetBrains Mono',monospace" font-size="10.5" fill="#94a3b8">[none]</text>
+<rect x="742" y="1198" width="268" height="94" rx="9" fill="#7f1d1d" stroke="#f87171"/>
+<text x="876" y="1220" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#fee2e2">no. keepalive cannot reap it,</text>
+<text x="876" y="1237" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">accept will not replace it.</text>
+<text x="876" y="1254" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">Reports bm_dirty=0: believes it</text>
+<text x="876" y="1271" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">is in sync while holding old data</text>
+<line x1="876" y1="1292" x2="876" y2="1318" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="742" y="1318" width="268" height="94" rx="9" fill="#134e4a" stroke="#2dd4bf" stroke-dasharray="5 3"/>
+<text x="876" y="1340" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ccfbf1">FIX: if this peer is the side that</text>
+<text x="876" y="1357" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ccfbf1">connects to us, an inbound connect</text>
+<text x="876" y="1374" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#ccfbf1">proves our conn is stale -&gt;</text>
+<text x="876" y="1391" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ccfbf1">conn_drop() and take the newcomer</text>
+<path d="M 876 1412 L 876 1426 L 204 1426 L 204 1438" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="70" y="1438" width="268" height="77" rx="9" fill="#134e4a" stroke="#2dd4bf" stroke-dasharray="5 3"/>
+<text x="204" y="1460" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ccfbf1">operator escape hatch (verified):</text>
+<text x="204" y="1477" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ccfbf1">force-resync drops the Primary's</text>
+<text x="204" y="1494" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ccfbf1">sockets -&gt; recovers in &lt;10s</text>
+<line x1="204" y1="1515" x2="204" y2="1543" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<circle cx="204" cy="1554" r="11" fill="none" stroke="#e2e8f0" stroke-width="2"/>
+<circle cx="204" cy="1554" r="6" fill="#e2e8f0"/>
+<path d="M 60 1587 h 444 l 14 14 v 72 h -458 v -86 z" fill="#111c31" stroke="#2dd4bf" stroke-dasharray="4 3"/>
+<text x="72" y="1607" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#2dd4bf">Why the direction rule is a safe discriminator:</text>
+<text x="72" y="1623" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#2dd4bf">pcache_peer_is_initiator() decides who dials whom, and a</text>
+<text x="72" y="1639" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#2dd4bf">responder never dials out -- so on the responder side an</text>
+<text x="72" y="1655" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#2dd4bf">inbound connect can never be a race, only a reconnect.</text>
+<path d="M 542 1587 h 444 l 14 14 v 72 h -458 v -86 z" fill="#111c31" stroke="#fbbf24" stroke-dasharray="4 3"/>
+<text x="554" y="1607" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#fbbf24">The other half, not fixed here (DRBD's answer):</text>
+<text x="554" y="1623" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#fbbf24">conn_connect() sets rcvtimeo from ping_int / ping_timeo, so</text>
+<text x="554" y="1639" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#fbbf24">each side declares a peer dead in bounded time on its own.</text>
+<text x="554" y="1655" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#fbbf24">That also covers the case where no reconnect ever arrives.</text>
+<text x="36" y="1719" font-family="'Segoe UI',Arial,sans-serif" font-size="12.5" fill="#64748b">Reproduced 3/3 by repro/wedge_half_close.sh — see fix-history #16.</text>
+</svg>

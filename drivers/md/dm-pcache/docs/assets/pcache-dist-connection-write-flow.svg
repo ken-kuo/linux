@@ -1,0 +1,596 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 2280">
+  <defs>
+    <style>
+      .bg { fill: #1e1e1e; }
+      .section-label { font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; font-weight: bold; fill: #e2e8f0; }
+      .section-desc { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; fill: #718096; font-style: italic; }
+      .col-bg-1 { fill: #1a2332; stroke: #3b82f6; stroke-width: 2; rx: 8; }
+      .col-bg-2 { fill: #1a2332; stroke: #22c55e; stroke-width: 2; rx: 8; }
+      .col-bg-net { fill: #1a1a2e; stroke: #475569; stroke-width: 1; stroke-dasharray: 6,4; rx: 8; }
+      .node-fn { fill: #1e293b; stroke: #6366f1; stroke-width: 2; rx: 6; }
+      .node-fn-blue { fill: #1e293b; stroke: #3b82f6; stroke-width: 2; rx: 6; }
+      .node-fn-green { fill: #1e293b; stroke: #22c55e; stroke-width: 2; rx: 6; }
+      .node-fn-orange { fill: #1e293b; stroke: #f97316; stroke-width: 2; rx: 6; }
+      .node-fn-cyan { fill: #1e293b; stroke: #06b6d4; stroke-width: 2; rx: 6; }
+      .node-kernel { fill: #1e293b; stroke: #8b5cf6; stroke-width: 2; rx: 6; }
+      .node-data { fill: #1e293b; stroke: #f97316; stroke-width: 2; rx: 6; }
+      .node-done { fill: #052e16; stroke: #22c55e; stroke-width: 2; rx: 6; }
+      .node-fail { fill: #2d1515; stroke: #f87171; stroke-width: 2; rx: 6; }
+      .node-decision { fill: #292524; stroke: #f97316; stroke-width: 2; rx: 20; }
+      .node-header { fill: #1e3a5f; stroke: #3b82f6; stroke-width: 2; rx: 6; }
+      .node-header-green { fill: #14532d; stroke: #22c55e; stroke-width: 2; rx: 6; }
+      .fn-title { font-family: monospace; font-size: 12px; font-weight: bold; fill: #c7d2fe; }
+      .fn-sub { font-family: monospace; font-size: 10px; fill: #94a3b8; }
+      .fn-title-blue { font-family: monospace; font-size: 12px; font-weight: bold; fill: #93c5fd; }
+      .fn-title-green { font-family: monospace; font-size: 12px; font-weight: bold; fill: #86efac; }
+      .fn-title-orange { font-family: monospace; font-size: 12px; font-weight: bold; fill: #fdba74; }
+      .fn-title-cyan { font-family: monospace; font-size: 12px; font-weight: bold; fill: #67e8f9; }
+      .fn-title-white { font-family: monospace; font-size: 12px; font-weight: bold; fill: #e2e8f0; }
+      .label { font-family: 'Segoe UI', Arial, sans-serif; font-size: 12px; fill: #a0aec0; font-weight: bold; }
+      .label-blue { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; fill: #93c5fd; font-weight: bold; }
+      .label-green { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; fill: #86efac; font-weight: bold; }
+      .label-orange { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; fill: #fdba74; font-weight: bold; }
+      .label-cyan { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; fill: #67e8f9; font-weight: bold; }
+      .label-small { font-family: 'Segoe UI', Arial, sans-serif; font-size: 10px; fill: #64748b; }
+      .title { font-family: 'Segoe UI', Arial, sans-serif; font-size: 22px; font-weight: bold; fill: #ffffff; }
+      .subtitle { font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; fill: #718096; }
+    </style>
+
+    <marker id="ma" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"/>
+    </marker>
+    <marker id="ma-blue" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3b82f6"/>
+    </marker>
+    <marker id="ma-green" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#22c55e"/>
+    </marker>
+    <marker id="ma-orange" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#f97316"/>
+    </marker>
+    <marker id="ma-cyan" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#06b6d4"/>
+    </marker>
+    <marker id="ma-purple" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b5cf6"/>
+    </marker>
+  </defs>
+
+  <rect width="1500" height="2280" class="bg"/>
+
+  <!-- Title -->
+  <text x="750" y="40" text-anchor="middle" class="title">pcache-dist — Connection &amp; Write Flow</text>
+  <text x="750" y="60" text-anchor="middle" class="subtitle">Connection + Write Flow with Zero-copy and block_id-matched ACK  (Protocol C)</text>
+
+  <!-- Lane separator lines -->
+  <line x1="480" y1="85" x2="480" y2="2230" stroke="#2d3748" stroke-width="1" stroke-dasharray="4,4"/>
+  <line x1="1020" y1="85" x2="1020" y2="2230" stroke="#2d3748" stroke-width="1" stroke-dasharray="4,4"/>
+
+  <!-- Lane headers -->
+  <rect x="20" y="85" width="440" height="28" class="col-bg-1" style="stroke-width:0; fill:#1e293b;"/>
+  <text x="240" y="104" text-anchor="middle" class="fn-title-blue" style="font-size:13px;">Node-1 (Primary)</text>
+
+  <rect x="500" y="85" width="500" height="28" class="col-bg-net" style="fill:#1a1a2e; stroke:#475569; stroke-width:1;"/>
+  <text x="750" y="104" text-anchor="middle" fill="#718096" font-family="'Segoe UI',Arial,sans-serif" font-size="13px" font-style="italic">Network (TCP — Port 9764, little-endian wire format)</text>
+
+  <rect x="1040" y="85" width="440" height="28" class="col-bg-2" style="stroke-width:0; fill:#1e293b;"/>
+  <text x="1260" y="104" text-anchor="middle" class="fn-title-green" style="font-size:13px;">Node-2 (Secondary)</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- STAGE 0 — Module Init -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+  <rect x="20" y="120" width="200" height="22" rx="4" fill="#312e81" stroke="none"/>
+  <text x="120" y="135" text-anchor="middle" fill="#a5b4fc" font-family="'Segoe UI',Arial,sans-serif" font-size="11px" font-weight="bold">Stage 0 — Module Init</text>
+
+  <!-- N1: dmsetup create -->
+  <rect x="40" y="155" width="380" height="24" class="node-fn" style="stroke:#3b82f6;"/>
+  <text x="230" y="170" text-anchor="middle" class="fn-title-blue">dmsetup create pcache-dist0 ... pcache-dist ...</text>
+
+  <!-- N2: dmsetup create -->
+  <rect x="1060" y="155" width="380" height="24" class="node-fn-green"/>
+  <text x="1250" y="170" text-anchor="middle" class="fn-title-green">dmsetup create pcache-dist0 ... pcache-dist ...</text>
+
+  <line x1="230" y1="179" x2="230" y2="194" stroke="#94a3b8" stroke-width="1" marker-end="url(#ma)"/>
+  <line x1="1250" y1="179" x2="1250" y2="194" stroke="#94a3b8" stroke-width="1" marker-end="url(#ma)"/>
+
+  <!-- pcache_parse_args + parse_net_args -->
+  <rect x="40" y="196" width="380" height="36" class="node-kernel"/>
+  <text x="230" y="210" text-anchor="middle" class="fn-title" style="fill:#c4b5fd;">pcache_parse_args → pcache_parse_net_args</text>
+  <text x="230" y="224" text-anchor="middle" class="fn-sub">my_node_id=0  |  is_primary=1  |  listen_port=9764</text>
+
+  <rect x="1060" y="196" width="380" height="36" class="node-kernel"/>
+  <text x="1250" y="210" text-anchor="middle" class="fn-title" style="fill:#c4b5fd;">pcache_parse_args → pcache_parse_net_args</text>
+  <text x="1250" y="224" text-anchor="middle" class="fn-sub">my_node_id=1  |  is_primary=0  |  listen_port=9764</text>
+
+  <line x1="230" y1="232" x2="230" y2="247" stroke="#94a3b8" stroke-width="1" marker-end="url(#ma)"/>
+  <line x1="1250" y1="232" x2="1250" y2="247" stroke="#94a3b8" stroke-width="1" marker-end="url(#ma)"/>
+
+  <!-- pcache_net_init -->
+  <rect x="40" y="249" width="380" height="42" class="node-kernel"/>
+  <text x="230" y="263" text-anchor="middle" class="fn-title" style="fill:#c4b5fd;">pcache_net_init()</text>
+  <text x="230" y="277" text-anchor="middle" class="fn-sub">alloc pcache_network + mempool (1024 pending_req slabs)</text>
+  <text x="230" y="289" text-anchor="middle" class="fn-sub">init pcache_peer (sock_lock, pending_lock, unsent_cnt, ...)</text>
+
+  <rect x="1060" y="249" width="380" height="42" class="node-kernel"/>
+  <text x="1250" y="263" text-anchor="middle" class="fn-title" style="fill:#c4b5fd;">pcache_net_init()</text>
+  <text x="1250" y="277" text-anchor="middle" class="fn-sub">alloc pcache_network + mempool</text>
+  <text x="1250" y="289" text-anchor="middle" class="fn-sub">pcache_create_server_socket() — bind + listen(1)</text>
+
+  <line x1="230" y1="291" x2="230" y2="306" stroke="#94a3b8" stroke-width="1" marker-end="url(#ma)"/>
+  <line x1="1250" y1="291" x2="1250" y2="306" stroke="#94a3b8" stroke-width="1" marker-end="url(#ma)"/>
+
+  <!-- kthread_run -->
+  <rect x="40" y="308" width="380" height="42" class="node-fn-orange" style="stroke:#f59e0b;"/>
+  <text x="230" y="323" text-anchor="middle" class="fn-title-orange">kthread_run(pcache_primary_worker)</text>
+  <text x="230" y="338" text-anchor="middle" class="fn-sub">peer-&gt;sender = sender kthread (owns its receiver later)</text>
+
+  <rect x="1060" y="308" width="380" height="42" class="node-fn-green"/>
+  <text x="1250" y="323" text-anchor="middle" class="fn-title-green">kthread_run(pcache_secondary_worker)</text>
+  <text x="1250" y="338" text-anchor="middle" class="fn-sub">peer-&gt;receiver = secondary worker (recv + ack sender)</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- STAGE 1 — Connection Establishment -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+  <rect x="20" y="365" width="230" height="22" rx="4" fill="#312e81" stroke="none"/>
+  <text x="135" y="380" text-anchor="middle" fill="#a5b4fc" font-family="'Segoe UI',Arial,sans-serif" font-size="11px" font-weight="bold">Stage 1 — Connection &amp; Handshake</text>
+
+  <!-- TCP 3-way handshake label (network area) -->
+  <rect x="540" y="367" width="130" height="18" rx="3" fill="#1e3a5f" stroke="#3b82f6" stroke-width="1"/>
+  <text x="605" y="379" text-anchor="middle" fill="#93c5fd" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">TCP 3-Way Handshake</text>
+
+  <!-- Primary: worker starts -->
+  <rect x="40" y="395" width="380" height="42" class="node-fn-orange" style="stroke:#f59e0b;"/>
+  <text x="230" y="409" text-anchor="middle" class="fn-title-orange">pcache_primary_worker — connect:</text>
+  <text x="230" y="423" text-anchor="middle" class="fn-sub">pcache_create_peer_socket: kernel_connect(peer-&gt;remote_addr)</text>
+  <text x="230" y="434" text-anchor="middle" class="fn-sub">TCP_NODELAY + TCP_QUICKACK + 4 MiB SO_*BUF</text>
+
+  <!-- Secondary: accept -->
+  <rect x="1060" y="395" width="380" height="42" class="node-fn-green"/>
+  <text x="1250" y="409" text-anchor="middle" class="fn-title-green">pcache_secondary_worker — accept:</text>
+  <text x="1250" y="423" text-anchor="middle" class="fn-sub">kernel_accept(listen_sock, &amp;sock)</text>
+  <text x="1250" y="434" text-anchor="middle" class="fn-sub">apply TCP opts + rcvtimeo = 300s</text>
+
+  <!-- TCP SYN arrow -->
+  <line x1="420" y1="402" x2="520" y2="402" stroke="#3b82f6" stroke-width="2" marker-end="url(#ma-blue)"/>
+  <line x1="520" y1="402" x2="1060" y2="402" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="5,3"/>
+  <line x1="1060" y1="417" x2="520" y2="417" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="5,3"/>
+  <line x1="520" y1="417" x2="420" y2="417" stroke="#3b82f6" stroke-width="2" marker-end="url(#ma-blue)"/>
+  <line x1="420" y1="432" x2="520" y2="432" stroke="#3b82f6" stroke-width="2" marker-end="url(#ma-blue)"/>
+  <line x1="520" y1="432" x2="1060" y2="432" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="5,3"/>
+  <text x="525" y="398" fill="#60a5fa" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">SYN</text>
+  <text x="525" y="413" fill="#60a5fa" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">SYN-ACK</text>
+  <text x="525" y="444" fill="#60a5fa" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">ACK</text>
+
+  <!-- Handshake exchange -->
+  <line x1="230" y1="437" x2="230" y2="452" stroke="#94a3b8" stroke-width="1" marker-end="url(#ma)"/>
+  <rect x="40" y="454" width="380" height="28" class="node-fn-blue"/>
+  <text x="230" y="471" text-anchor="middle" class="fn-title-blue">pcache_send_handshake(node_id=0)  — le-encoded</text>
+
+  <line x1="420" y1="468" x2="500" y2="468" stroke="#22c55e" stroke-width="3" marker-end="url(#ma-green)"/>
+  <line x1="500" y1="468" x2="1060" y2="514" stroke="#22c55e" stroke-width="2" stroke-dasharray="6,3"/>
+  <rect x="620" y="479" width="240" height="18" rx="3" fill="#052e16" stroke="#22c55e" stroke-width="1"/>
+  <text x="740" y="492" text-anchor="middle" fill="#4ade80" font-family="'Segoe UI',Arial,sans-serif" font-size="10px" font-weight="bold">PCACHE_P_HANDSHAKE  (16B hdr + 8B body)</text>
+
+  <line x1="1250" y1="437" x2="1250" y2="498" stroke="#94a3b8" stroke-width="1" marker-end="url(#ma)"/>
+  <rect x="1060" y="500" width="380" height="28" class="node-fn-green"/>
+  <text x="1250" y="517" text-anchor="middle" class="fn-title-green">pcache_recv_handshake → validate version=1</text>
+
+  <line x1="1250" y1="528" x2="1250" y2="543" stroke="#94a3b8" stroke-width="1" marker-end="url(#ma)"/>
+  <rect x="1060" y="545" width="380" height="28" class="node-fn-green"/>
+  <text x="1250" y="562" text-anchor="middle" class="fn-title-green">pcache_send_handshake(node_id=1)  reply</text>
+
+  <line x1="1060" y1="558" x2="980" y2="558" stroke="#22c55e" stroke-width="3" marker-end="url(#ma-green)"/>
+  <line x1="980" y1="558" x2="420" y2="558" stroke="#22c55e" stroke-width="2" stroke-dasharray="6,3"/>
+
+  <line x1="230" y1="482" x2="230" y2="544" stroke="#94a3b8" stroke-width="1"/>
+  <rect x="40" y="546" width="380" height="28" class="node-fn-blue"/>
+  <text x="230" y="563" text-anchor="middle" class="fn-title-blue">pcache_recv_handshake → spawn primary_receiver</text>
+
+  <!-- Both: CONNECTED -->
+  <line x1="230" y1="574" x2="230" y2="589" stroke="#22c55e" stroke-width="2" marker-end="url(#ma-green)"/>
+  <line x1="1250" y1="573" x2="1250" y2="589" stroke="#22c55e" stroke-width="2" marker-end="url(#ma-green)"/>
+  <rect x="40" y="591" width="380" height="26" class="node-done"/>
+  <text x="230" y="609" text-anchor="middle" class="fn-title" style="fill:#4ade80; font-size:12px;">state = PCACHE_C_CONNECTED   (sock_lock-protected)</text>
+
+  <rect x="1060" y="591" width="380" height="26" class="node-done"/>
+  <text x="1250" y="609" text-anchor="middle" class="fn-title" style="fill:#4ade80; font-size:12px;">state = PCACHE_C_CONNECTED</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- STAGE 2 — DM context: map_bio + submit_write -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+  <rect x="20" y="635" width="260" height="22" rx="4" fill="#312e81" stroke="none"/>
+  <text x="150" y="650" text-anchor="middle" fill="#a5b4fc" font-family="'Segoe UI',Arial,sans-serif" font-size="11px" font-weight="bold">Stage 2 — Write Flow  (DM context)</text>
+
+  <!-- App arrow into Primary -->
+  <line x1="10" y1="676" x2="40" y2="676" stroke="#f59e0b" stroke-width="2.5" marker-end="url(#ma-orange)"/>
+  <text x="15" y="671" fill="#fcd34d" font-family="'Segoe UI',Arial,sans-serif" font-size="11px" font-weight="bold">App</text>
+  <text x="15" y="686" fill="#fcd34d" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">Write</text>
+
+  <!-- dm_pcache_map_bio -->
+  <rect x="40" y="662" width="380" height="34" class="node-fn-orange" style="stroke:#f59e0b; stroke-width:2;"/>
+  <text x="230" y="675" text-anchor="middle" class="fn-title-orange" style="font-size:13px;">dm_pcache_map_bio()</text>
+  <text x="230" y="688" text-anchor="middle" class="fn-sub">kref_init(pcache_req-&gt;ref) = 1  |  inflight_reqs++</text>
+
+  <line x1="230" y1="696" x2="230" y2="711" stroke="#94a3b8" stroke-width="1" marker-end="url(#ma)"/>
+
+  <!-- pcache_cache_handle_req -->
+  <rect x="40" y="713" width="380" height="32" class="node-kernel"/>
+  <text x="230" y="726" text-anchor="middle" class="fn-title" style="fill:#c4b5fd;">pcache_cache_handle_req()  → cache_write()</text>
+  <text x="230" y="740" text-anchor="middle" class="fn-sub">memcpy_flushcache → local PMEM, returns 0</text>
+
+  <!-- Branch -->
+  <line x1="230" y1="745" x2="230" y2="760" stroke="#94a3b8" stroke-width="1" marker-end="url(#ma)"/>
+  <rect x="80" y="762" width="300" height="22" rx="14" class="node-decision"/>
+  <text x="230" y="777" text-anchor="middle" class="label-orange" style="font-size:11px;">is_primary &amp;&amp; peer_connected &amp;&amp; WRITE  &amp;&amp; ret==0 ?</text>
+
+  <!-- YES arrow down -->
+  <line x1="230" y1="784" x2="230" y2="803" stroke="#f97316" stroke-width="1.5" marker-end="url(#ma-orange)"/>
+  <text x="240" y="797" fill="#f97316" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">YES</text>
+
+  <!-- NO branch -->
+  <line x1="380" y1="773" x2="408" y2="773" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#ma)"/>
+  <text x="394" y="768" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">NO</text>
+  <rect x="408" y="762" width="60" height="22" class="node-fn" style="stroke:#64748b;"/>
+  <text x="438" y="777" text-anchor="middle" class="fn-sub" style="fill:#64748b; font-size:9px;">single-host</text>
+
+  <!-- pcache_req_get -->
+  <rect x="40" y="805" width="380" height="28" class="node-data" style="stroke:#f97316; stroke-width:2;"/>
+  <text x="230" y="822" text-anchor="middle" class="fn-title-orange" style="font-size:12px;">pcache_req_get(pcache_req)  → kref = 2</text>
+
+  <line x1="230" y1="833" x2="230" y2="848" stroke="#f97316" stroke-width="1.5" marker-end="url(#ma-orange)"/>
+
+  <!-- pcache_net_submit_write -->
+  <rect x="40" y="850" width="380" height="62" class="node-data" style="stroke:#f97316; stroke-width:2;"/>
+  <text x="230" y="865" text-anchor="middle" class="fn-title-orange" style="font-size:13px;">pcache_net_submit_write()</text>
+  <text x="230" y="881" text-anchor="middle" class="fn-sub">mempool_alloc(pending_req)   /* never fails */</text>
+  <text x="230" y="894" text-anchor="middle" class="fn-sub">req-&gt;block_id = atomic64_inc_return(&amp;next_block_id)</text>
+  <text x="230" y="907" text-anchor="middle" class="fn-sub">list_add_tail  |  pending_cnt++  |  unsent_cnt++</text>
+
+  <line x1="230" y1="912" x2="230" y2="927" stroke="#f97316" stroke-width="1.5" marker-end="url(#ma-orange)"/>
+  <rect x="80" y="930" width="300" height="22" class="node-decision" style="rx:6; stroke:#f97316;"/>
+  <text x="230" y="945" text-anchor="middle" class="label-orange">wake_up(peer-&gt;wait_for_work)</text>
+
+  <!-- pcache_req_put -->
+  <line x1="230" y1="952" x2="230" y2="967" stroke="#94a3b8" stroke-width="1" marker-end="url(#ma)"/>
+  <rect x="40" y="969" width="380" height="32" class="node-fn" style="stroke:#94a3b8;"/>
+  <text x="230" y="983" text-anchor="middle" class="fn-sub" style="fill:#94a3b8;">pcache_req_put(pcache_req, ret=0)  → kref = 1</text>
+  <text x="230" y="996" text-anchor="middle" class="fn-sub" style="fill:#94a3b8;">return DM_MAPIO_SUBMITTED  (bio kept alive by extra ref)</text>
+
+  <!-- Cross-lane connector: wake_up triggers sender -->
+  <path d="M 380 941 L 446 941 L 446 1092 L 420 1092" stroke="#f97316" stroke-width="1.2" fill="none" stroke-dasharray="4,3" marker-end="url(#ma-orange)"/>
+  <text x="450" y="1010" fill="#fdba74" font-family="'Segoe UI',Arial,sans-serif" font-size="10px" transform="rotate(90 450 1010)">wake sender</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- PRIMARY SENDER (kthread #1) -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+  <rect x="20" y="1040" width="280" height="22" rx="4" fill="#292524" stroke="#f97316" stroke-width="1"/>
+  <text x="160" y="1055" text-anchor="middle" fill="#fdba74" font-family="'Segoe UI',Arial,sans-serif" font-size="11px" font-weight="bold">Primary kthread #1  —  Sender Loop</text>
+
+  <rect x="40" y="1070" width="380" height="44" class="node-fn-orange" style="stroke:#f59e0b;"/>
+  <text x="230" y="1085" text-anchor="middle" class="fn-title-orange">pcache_primary_worker — main loop</text>
+  <text x="230" y="1099" text-anchor="middle" class="fn-sub">wait_event_interruptible(unsent_cnt &gt; 0</text>
+  <text x="230" y="1110" text-anchor="middle" class="fn-sub">|| state != CONNECTED || kthread_should_stop)</text>
+
+  <line x1="230" y1="1114" x2="230" y2="1129" stroke="#f97316" stroke-width="1.5" marker-end="url(#ma-orange)"/>
+
+  <rect x="40" y="1131" width="380" height="32" class="node-data"/>
+  <text x="230" y="1146" text-anchor="middle" class="fn-title-orange">scan pending_list — reap requests &gt; 30s timeout</text>
+  <text x="230" y="1159" text-anchor="middle" class="fn-sub">pcache_req_put(pcache_req, -ETIMEDOUT)</text>
+
+  <line x1="230" y1="1163" x2="230" y2="1178" stroke="#94a3b8" stroke-width="1" marker-end="url(#ma)"/>
+
+  <rect x="40" y="1180" width="380" height="30" class="node-data"/>
+  <text x="230" y="1194" text-anchor="middle" class="fn-title-orange">find !req-&gt;sent  →  sent=true, unsent_cnt--</text>
+  <text x="230" y="1206" text-anchor="middle" class="fn-sub">req-&gt;send_time = jiffies</text>
+
+  <line x1="230" y1="1210" x2="230" y2="1225" stroke="#f97316" stroke-width="1.5" marker-end="url(#ma-orange)"/>
+
+  <!-- send packet header -->
+  <rect x="40" y="1227" width="380" height="32" class="node-data" style="stroke:#f97316; stroke-width:2;"/>
+  <text x="230" y="1242" text-anchor="middle" class="fn-title-orange" style="font-size:13px;">pcache_send_packet(P_DATA hdr)</text>
+  <text x="230" y="1254" text-anchor="middle" class="fn-sub">28B  |  cpu_to_le*(sector, block_id, size, flags|F_ACK)</text>
+
+  <line x1="230" y1="1259" x2="230" y2="1274" stroke="#f97316" stroke-width="1.5" marker-end="url(#ma-orange)"/>
+
+  <!-- pcache_send_bio_pages -->
+  <rect x="40" y="1276" width="380" height="46" class="node-data" style="stroke:#f97316; stroke-width:2.5;"/>
+  <text x="230" y="1290" text-anchor="middle" class="fn-title-orange" style="font-size:13px;">pcache_send_bio_pages()  — zero-copy</text>
+  <text x="230" y="1304" text-anchor="middle" class="fn-sub">bvec_set_page + iov_iter_bvec(ITER_SOURCE) +</text>
+  <text x="230" y="1316" text-anchor="middle" class="fn-sub">sock_sendmsg(MSG_NOSIGNAL | MSG_SPLICE_PAGES)</text>
+
+  <!-- DATA header arrow across network -->
+  <line x1="420" y1="1243" x2="520" y2="1243" stroke="#f97316" stroke-width="2.5" marker-end="url(#ma-orange)"/>
+  <line x1="520" y1="1243" x2="1060" y2="1275" stroke="#f97316" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <rect x="620" y="1248" width="260" height="18" rx="3" fill="#292524" stroke="#f97316" stroke-width="1"/>
+  <text x="750" y="1261" text-anchor="middle" fill="#fdba74" font-family="'Segoe UI',Arial,sans-serif" font-size="10px" font-weight="bold">PCACHE_P_DATA Header (28B)</text>
+
+  <!-- DATA pages arrow across network (zero-copy) -->
+  <line x1="420" y1="1300" x2="520" y2="1300" stroke="#f97316" stroke-width="3.5" marker-end="url(#ma-orange)"/>
+  <line x1="520" y1="1300" x2="1060" y2="1324" stroke="#f97316" stroke-width="2.5" stroke-dasharray="8,4"/>
+  <rect x="620" y="1302" width="260" height="18" rx="3" fill="#292524" stroke="#f97316" stroke-width="1"/>
+  <text x="750" y="1315" text-anchor="middle" fill="#fdba74" font-family="'Segoe UI',Arial,sans-serif" font-size="10px" font-weight="bold">Data Payload (N-byte bio pages)</text>
+
+  <!-- loop back to wait_event (via small arrow) -->
+  <path d="M 40 1299 L 25 1299 L 25 1092 L 40 1092" stroke="#f97316" stroke-width="1" fill="none" stroke-dasharray="3,2" marker-end="url(#ma-orange)"/>
+  <text x="14" y="1200" fill="#f97316" font-family="'Segoe UI',Arial,sans-serif" font-size="10px" transform="rotate(-90 14 1200)">loop</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- SECONDARY RECEIVER -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+  <rect x="1060" y="1040" width="280" height="22" rx="4" fill="#1a3d2e" stroke="#22c55e" stroke-width="1"/>
+  <text x="1200" y="1055" text-anchor="middle" fill="#86efac" font-family="'Segoe UI',Arial,sans-serif" font-size="11px" font-weight="bold">Secondary kthread  —  Receiver Loop</text>
+
+  <rect x="1060" y="1070" width="380" height="30" class="node-fn-green"/>
+  <text x="1250" y="1083" text-anchor="middle" class="fn-title-green">pcache_secondary_worker — recv loop</text>
+  <text x="1250" y="1095" text-anchor="middle" class="fn-sub">pcache_recv_all(hdr)  →  switch hdr.type</text>
+
+  <!-- Wait until Primary sends P_DATA header -->
+  <line x1="1250" y1="1100" x2="1250" y2="1258" stroke="#94a3b8" stroke-width="1" marker-end="url(#ma)"/>
+
+  <rect x="1060" y="1260" width="380" height="30" class="node-fn-green" style="stroke:#22c55e; stroke-width:2;"/>
+  <text x="1250" y="1274" text-anchor="middle" class="fn-title-green" style="font-size:13px;">pcache_handle_data_recv(hdr)</text>
+  <text x="1250" y="1286" text-anchor="middle" class="fn-sub">size = le32_to_cpu(hdr-&gt;size)</text>
+
+  <!-- Wait until Primary sends zero-copy data pages -->
+  <line x1="1250" y1="1290" x2="1250" y2="1308" stroke="#94a3b8" stroke-width="1" marker-end="url(#ma)"/>
+
+  <rect x="1060" y="1310" width="380" height="28" class="node-fn" style="stroke:#64748b;"/>
+  <text x="1250" y="1327" text-anchor="middle" class="fn-sub">data = kvmalloc(size, GFP_NOIO)  |  pcache_recv_all(data, size)</text>
+
+  <line x1="1250" y1="1338" x2="1250" y2="1348" stroke="#94a3b8" stroke-width="1" marker-end="url(#ma)"/>
+
+  <rect x="1060" y="1350" width="380" height="46" class="node-fn-green" style="stroke:#22c55e; stroke-width:2;"/>
+  <text x="1250" y="1364" text-anchor="middle" class="fn-title-green" style="font-size:13px;">pcache_net_write_to_cache(cache, sector, data, size)</text>
+  <text x="1250" y="1378" text-anchor="middle" class="fn-sub">cache_key_alloc → cache_data_alloc</text>
+  <text x="1250" y="1390" text-anchor="middle" class="fn-sub">memcpy_flushcache → PMEM  |  cache_key_append</text>
+
+  <line x1="1250" y1="1396" x2="1250" y2="1408" stroke="#22c55e" stroke-width="1.5" marker-end="url(#ma-green)"/>
+
+  <rect x="1110" y="1410" width="280" height="22" class="node-done"/>
+  <text x="1250" y="1425" text-anchor="middle" class="fn-title" style="fill:#4ade80; font-size:11px;">Data persisted to PMEM  ✓</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- ACK send -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+  <line x1="1250" y1="1432" x2="1250" y2="1443" stroke="#94a3b8" stroke-width="1" marker-end="url(#ma)"/>
+  <rect x="1060" y="1445" width="380" height="34" class="node-fn-green" style="stroke:#22c55e; stroke-width:2;"/>
+  <text x="1250" y="1459" text-anchor="middle" class="fn-title-green" style="font-size:13px;">pcache_send_packet(P_ACK)</text>
+  <text x="1250" y="1472" text-anchor="middle" class="fn-sub">echo block_id back  |  no payload</text>
+
+  <line x1="1250" y1="1479" x2="1250" y2="1498" stroke="#94a3b8" stroke-width="1" marker-end="url(#ma)"/>
+  <rect x="1100" y="1500" width="300" height="22" class="node-fn" style="stroke:#475569;"/>
+  <text x="1250" y="1515" text-anchor="middle" class="fn-sub" style="fill:#64748b;">kvfree(data)  →  loop back to recv</text>
+
+  <!-- ACK arrow back across network -->
+  <line x1="1060" y1="1462" x2="980" y2="1462" stroke="#22c55e" stroke-width="3" marker-end="url(#ma-green)"/>
+  <line x1="980" y1="1462" x2="420" y2="1505" stroke="#22c55e" stroke-width="2" stroke-dasharray="6,4"/>
+  <rect x="620" y="1471" width="260" height="18" rx="3" fill="#052e16" stroke="#22c55e" stroke-width="1"/>
+  <text x="750" y="1484" text-anchor="middle" fill="#4ade80" font-family="'Segoe UI',Arial,sans-serif" font-size="10px" font-weight="bold">PCACHE_P_ACK (28B hdr, le64 block_id echoed)</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- PRIMARY RECEIVER (kthread #2) -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+  <rect x="20" y="1395" width="310" height="22" rx="4" fill="#0c3a4a" stroke="#06b6d4" stroke-width="1"/>
+  <text x="175" y="1410" text-anchor="middle" fill="#67e8f9" font-family="'Segoe UI',Arial,sans-serif" font-size="11px" font-weight="bold">Primary kthread #2  —  ACK Receiver Loop</text>
+
+  <rect x="40" y="1425" width="380" height="38" class="node-fn-cyan" style="stroke:#06b6d4; stroke-width:2;"/>
+  <text x="230" y="1439" text-anchor="middle" class="fn-title-cyan" style="font-size:13px;">pcache_primary_receiver()  — separate kthread</text>
+  <text x="230" y="1452" text-anchor="middle" class="fn-sub">pcache_recv_all(hdr)  →  switch type:</text>
+  <text x="230" y="1463" text-anchor="middle" class="fn-sub">P_ACK / P_NACK  →  pcache_handle_ack()</text>
+
+  <line x1="230" y1="1463" x2="230" y2="1478" stroke="#06b6d4" stroke-width="1.5" marker-end="url(#ma-cyan)"/>
+
+  <rect x="40" y="1480" width="380" height="60" class="node-fn-cyan" style="stroke:#06b6d4; stroke-width:2;"/>
+  <text x="230" y="1494" text-anchor="middle" class="fn-title-cyan" style="font-size:13px;">pcache_handle_ack(hdr, success)</text>
+  <text x="230" y="1508" text-anchor="middle" class="fn-sub">block_id = le64_to_cpu(hdr-&gt;block_id)</text>
+  <text x="230" y="1520" text-anchor="middle" class="fn-sub">list_for_each: req-&gt;block_id == block_id → list_del</text>
+  <text x="230" y="1532" text-anchor="middle" class="fn-sub">pending_cnt--</text>
+
+  <line x1="230" y1="1540" x2="230" y2="1555" stroke="#06b6d4" stroke-width="1.5" marker-end="url(#ma-cyan)"/>
+
+  <rect x="40" y="1557" width="380" height="32" class="node-done" style="stroke:#4ade80; stroke-width:2;"/>
+  <text x="230" y="1572" text-anchor="middle" class="fn-title" style="fill:#4ade80; font-size:13px;">pcache_req_put(pcache_req, 0)  → kref = 0</text>
+  <text x="230" y="1584" text-anchor="middle" class="fn-sub" style="fill:#86efac;">end_req: bio_endio  +  inflight_reqs--</text>
+
+  <line x1="230" y1="1589" x2="230" y2="1604" stroke="#22c55e" stroke-width="1.5" marker-end="url(#ma-green)"/>
+
+  <rect x="40" y="1606" width="380" height="28" class="node-done" style="stroke:#4ade80; stroke-width:2;"/>
+  <text x="230" y="1621" text-anchor="middle" class="fn-title" style="fill:#4ade80; font-size:12px;">bio complete ✓   App returns from write()</text>
+
+  <line x1="230" y1="1634" x2="230" y2="1649" stroke="#94a3b8" stroke-width="1" marker-end="url(#ma)"/>
+  <rect x="90" y="1651" width="280" height="22" class="node-fn" style="stroke:#475569;"/>
+  <text x="230" y="1666" text-anchor="middle" class="fn-sub" style="fill:#64748b;">mempool_free(pending_req)  →  loop back</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- Stage Banner Dividers -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <line x1="20" y1="148" x2="1480" y2="148" stroke="#2d3748" stroke-width="1" stroke-dasharray="4,4"/>
+  <line x1="20" y1="358" x2="1480" y2="358" stroke="#2d3748" stroke-width="1" stroke-dasharray="4,4"/>
+  <line x1="20" y1="628" x2="1480" y2="628" stroke="#2d3748" stroke-width="1" stroke-dasharray="4,4"/>
+  <line x1="20" y1="1030" x2="1480" y2="1030" stroke="#2d3748" stroke-width="1" stroke-dasharray="4,4"/>
+  <line x1="20" y1="1385" x2="1480" y2="1385" stroke="#2d3748" stroke-width="1" stroke-dasharray="4,4"/>
+  <line x1="20" y1="1690" x2="1480" y2="1690" stroke="#2d3748" stroke-width="1" stroke-dasharray="4,4"/>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- LEGEND -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+  <rect x="40" y="1710" width="440" height="190" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="260" y="1728" text-anchor="middle" fill="#e2e8f0" font-family="'Segoe UI',Arial,sans-serif" font-size="13px" font-weight="bold">Legend</text>
+
+  <rect x="60" y="1738" width="12" height="12" rx="2" fill="#1e293b" stroke="#3b82f6" stroke-width="2"/>
+  <text x="78" y="1749" fill="#93c5fd" font-family="'Segoe UI',Arial,sans-serif" font-size="11px">Primary (Node-1) function</text>
+
+  <rect x="270" y="1738" width="12" height="12" rx="2" fill="#1e293b" stroke="#22c55e" stroke-width="2"/>
+  <text x="288" y="1749" fill="#86efac" font-family="'Segoe UI',Arial,sans-serif" font-size="11px">Secondary (Node-2) function</text>
+
+  <rect x="60" y="1762" width="12" height="12" rx="2" fill="#1e293b" stroke="#06b6d4" stroke-width="2"/>
+  <text x="78" y="1773" fill="#67e8f9" font-family="'Segoe UI',Arial,sans-serif" font-size="11px">Primary ACK-receiver kthread</text>
+
+  <rect x="270" y="1762" width="12" height="12" rx="2" fill="#1e293b" stroke="#8b5cf6" stroke-width="2"/>
+  <text x="288" y="1773" fill="#c4b5fd" font-family="'Segoe UI',Arial,sans-serif" font-size="11px">Cache / kernel function</text>
+
+  <rect x="60" y="1786" width="12" height="12" rx="2" fill="#1e293b" stroke="#f97316" stroke-width="2"/>
+  <text x="78" y="1797" fill="#fdba74" font-family="'Segoe UI',Arial,sans-serif" font-size="11px">Data I/O path  (zero-copy)</text>
+
+  <rect x="270" y="1786" width="12" height="12" rx="2" fill="#052e16" stroke="#22c55e" stroke-width="2"/>
+  <text x="288" y="1797" fill="#e2e8f0" font-family="'Segoe UI',Arial,sans-serif" font-size="11px">Success / Complete</text>
+
+  <line x1="60" y1="1815" x2="73" y2="1815" stroke="#f97316" stroke-width="2.5" marker-end="url(#ma-orange)"/>
+  <text x="78" y="1819" fill="#e2e8f0" font-family="'Segoe UI',Arial,sans-serif" font-size="11px">PCACHE_P_DATA  (header + bio pages)</text>
+
+  <line x1="60" y1="1839" x2="73" y2="1839" stroke="#22c55e" stroke-width="2.5" marker-end="url(#ma-green)"/>
+  <text x="78" y="1843" fill="#e2e8f0" font-family="'Segoe UI',Arial,sans-serif" font-size="11px">PCACHE_P_ACK / HANDSHAKE</text>
+
+  <line x1="60" y1="1863" x2="73" y2="1863" stroke="#3b82f6" stroke-width="2" marker-end="url(#ma-blue)"/>
+  <text x="78" y="1867" fill="#e2e8f0" font-family="'Segoe UI',Arial,sans-serif" font-size="11px">TCP 3-way handshake</text>
+
+  <line x1="60" y1="1885" x2="73" y2="1885" stroke="#06b6d4" stroke-width="2" marker-end="url(#ma-cyan)"/>
+  <text x="78" y="1889" fill="#e2e8f0" font-family="'Segoe UI',Arial,sans-serif" font-size="11px">ACK handling within Primary</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- Packet Wire Format -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+  <rect x="520" y="1710" width="440" height="190" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="740" y="1728" text-anchor="middle" fill="#e2e8f0" font-family="'Segoe UI',Arial,sans-serif" font-size="13px" font-weight="bold">Packet Wire Format (little-endian)</text>
+
+  <!-- header -->
+  <rect x="540" y="1738" width="200" height="18" rx="3" fill="#292524" stroke="#f97316" stroke-width="1"/>
+  <text x="640" y="1751" text-anchor="middle" fill="#fdba74" font-family="'Segoe UI',Arial,sans-serif" font-size="10px" font-weight="bold">pcache_packet_header (28B)</text>
+  <text x="545" y="1768" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">struct pcache_packet_header  {</text>
+  <text x="555" y="1781" fill="#64748b" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">__le16  type;       /* P_DATA/ACK/... */</text>
+  <text x="555" y="1794" fill="#64748b" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">__le16  length;     /* payload bytes  */</text>
+  <text x="555" y="1807" fill="#64748b" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">__le64  sector;</text>
+  <text x="555" y="1820" fill="#64748b" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">__le64  block_id;   /* echoed in ACK  */</text>
+  <text x="555" y="1833" fill="#64748b" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">__le32  size; __le32 flags;</text>
+  <text x="545" y="1846" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">}  __packed</text>
+
+  <!-- handshake -->
+  <rect x="760" y="1738" width="180" height="18" rx="3" fill="#052e16" stroke="#22c55e" stroke-width="1"/>
+  <text x="850" y="1751" text-anchor="middle" fill="#4ade80" font-family="'Segoe UI',Arial,sans-serif" font-size="10px" font-weight="bold">pcache_handshake_pkt (8B)</text>
+  <text x="765" y="1768" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">struct pcache_handshake_pkt  {</text>
+  <text x="775" y="1781" fill="#64748b" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">__le16  protocol_version;</text>
+  <text x="775" y="1794" fill="#64748b" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">__le16  node_id;</text>
+  <text x="775" y="1807" fill="#64748b" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">__le32  reserved;</text>
+  <text x="765" y="1820" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">}  __packed</text>
+  <text x="765" y="1846" fill="#64748b" font-family="'Segoe UI',Arial,sans-serif" font-size="10px" font-style="italic">sent as: hdr(28B) + body(8B) = 36B</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- Thread Model -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+  <rect x="1000" y="1710" width="460" height="190" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="1230" y="1728" text-anchor="middle" fill="#e2e8f0" font-family="'Segoe UI',Arial,sans-serif" font-size="13px" font-weight="bold">Thread Model</text>
+
+  <text x="1020" y="1750" fill="#a0aec0" font-family="'Segoe UI',Arial,sans-serif" font-size="11px" font-weight="bold">kthread</text>
+  <text x="1180" y="1750" fill="#a0aec0" font-family="'Segoe UI',Arial,sans-serif" font-size="11px" font-weight="bold">DRBD analogue</text>
+  <text x="1320" y="1750" fill="#a0aec0" font-family="'Segoe UI',Arial,sans-serif" font-size="11px" font-weight="bold">Responsibility</text>
+  <line x1="1015" y1="1756" x2="1445" y2="1756" stroke="#334155" stroke-width="1"/>
+
+  <text x="1020" y="1772" fill="#fcd34d" font-family="monospace" font-size="10px">map context</text>
+  <text x="1180" y="1772" fill="#64748b" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">drbd_make_request</text>
+  <text x="1320" y="1772" fill="#64748b" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">cache_write + submit_write</text>
+
+  <text x="1020" y="1791" fill="#fdba74" font-family="monospace" font-size="10px">primary_worker</text>
+  <text x="1180" y="1791" fill="#64748b" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">drbd_sender</text>
+  <text x="1320" y="1791" fill="#64748b" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">connect + send DATA pages</text>
+
+  <text x="1020" y="1810" fill="#67e8f9" font-family="monospace" font-size="10px">primary_receiver</text>
+  <text x="1180" y="1810" fill="#64748b" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">drbd_asender</text>
+  <text x="1320" y="1810" fill="#64748b" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">read ACK/NACK + bio_endio</text>
+
+  <text x="1020" y="1829" fill="#86efac" font-family="monospace" font-size="10px">secondary_worker</text>
+  <text x="1180" y="1829" fill="#64748b" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">drbd_receiver</text>
+  <text x="1320" y="1829" fill="#64748b" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">accept + recv DATA + send ACK</text>
+
+  <line x1="1015" y1="1840" x2="1445" y2="1840" stroke="#334155" stroke-width="1"/>
+
+  <text x="1020" y="1858" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px" font-style="italic">Teardown: net_stop kthread_stop's only sender (Primary)</text>
+  <text x="1020" y="1873" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px" font-style="italic">or only receiver (Secondary).  Sender owns its receiver.</text>
+  <text x="1020" y="1888" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px" font-style="italic">Single-owner rule avoids double-stop deadlock.</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- Key design notes -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+  <rect x="40" y="1920" width="1420" height="280" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="750" y="1938" text-anchor="middle" fill="#e2e8f0" font-family="'Segoe UI',Arial,sans-serif" font-size="13px" font-weight="bold">Design Notes</text>
+
+  <!-- column 1 -->
+  <text x="60" y="1960" fill="#fdba74" font-family="'Segoe UI',Arial,sans-serif" font-size="11px" font-weight="bold">Zero-copy send</text>
+  <text x="60" y="1976" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">pcache_send_bio_pages() builds an iov_iter_bvec</text>
+  <text x="60" y="1989" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">on the bio's pages and calls sock_sendmsg with</text>
+  <text x="60" y="2002" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">MSG_SPLICE_PAGES — TCP refs the page directly,</text>
+  <text x="60" y="2015" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">no kmalloc / memcpy.  Mirrors DRBD's path.</text>
+
+  <text x="60" y="2040" fill="#fdba74" font-family="'Segoe UI',Arial,sans-serif" font-size="11px" font-weight="bold">Ref counting (Primary write)</text>
+  <text x="60" y="2056" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">kref_init = 1 → pcache_req_get = 2 (mirror path)</text>
+  <text x="60" y="2069" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">map_bio's final put → 1 (bio held until ACK).</text>
+  <text x="60" y="2082" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">ACK handler → put = 0 → end_req → bio_endio</text>
+  <text x="60" y="2095" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">+ inflight_reqs--  (single-host: only 2 ops).</text>
+
+  <!-- column 2 -->
+  <text x="400" y="1960" fill="#67e8f9" font-family="'Segoe UI',Arial,sans-serif" font-size="11px" font-weight="bold">block_id ACK match</text>
+  <text x="400" y="1976" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">atomic64_inc_return() gives each pending_req</text>
+  <text x="400" y="1989" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">a unique block_id.  Secondary echoes it; primary</text>
+  <text x="400" y="2002" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">receiver looks it up under pending_lock.</text>
+  <text x="400" y="2015" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">Avoids sector+size mis-pairing on repeated writes.</text>
+
+  <text x="400" y="2040" fill="#67e8f9" font-family="'Segoe UI',Arial,sans-serif" font-size="11px" font-weight="bold">unsent_cnt vs pending_cnt</text>
+  <text x="400" y="2056" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">pending_cnt = queued + already-sent-not-ACKed.</text>
+  <text x="400" y="2069" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">unsent_cnt = only the subset still waiting to send.</text>
+  <text x="400" y="2082" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">wait_event uses unsent_cnt &gt; 0; sender sleeps</text>
+  <text x="400" y="2095" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">cleanly between sends instead of busy-looping.</text>
+
+  <!-- column 3 -->
+  <text x="740" y="1960" fill="#86efac" font-family="'Segoe UI',Arial,sans-serif" font-size="11px" font-weight="bold">Mempool back-pressure</text>
+  <text x="740" y="1976" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">mempool_create_slab_pool(1024, ...) preallocates</text>
+  <text x="740" y="1989" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">pending_req slabs; GFP_NOIO submit_write never</text>
+  <text x="740" y="2002" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">silently drops a bio under memory pressure.</text>
+  <text x="740" y="2015" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">Allocation failure → bio completes with the error.</text>
+
+  <text x="740" y="2040" fill="#86efac" font-family="'Segoe UI',Arial,sans-serif" font-size="11px" font-weight="bold">Reconnect &amp; flush</text>
+  <text x="740" y="2056" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">Sock error → state = CONNECTING → wake sender.</text>
+  <text x="740" y="2069" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">Sender drops receiver, reconnects, rehandshakes,</text>
+  <text x="740" y="2082" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">re-marks all in-flight req-&gt;sent = false so they</text>
+  <text x="740" y="2095" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">are re-sent and re-ACKed cleanly.</text>
+
+  <!-- column 4 -->
+  <text x="1080" y="1960" fill="#c4b5fd" font-family="'Segoe UI',Arial,sans-serif" font-size="11px" font-weight="bold">Wire format (LE)</text>
+  <text x="1080" y="1976" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">All multi-byte fields are __le16/32/64.</text>
+  <text x="1080" y="1989" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">Producers use cpu_to_le*(); consumers use</text>
+  <text x="1080" y="2002" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">le*_to_cpu().  Header is 28 bytes.</text>
+  <text x="1080" y="2015" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">Works on mixed-endian peers (BE testing TODO).</text>
+
+  <text x="1080" y="2040" fill="#c4b5fd" font-family="'Segoe UI',Arial,sans-serif" font-size="11px" font-weight="bold">Teardown</text>
+  <text x="1080" y="2056" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">dtr: pcache_net_stop runs BEFORE waiting on</text>
+  <text x="1080" y="2069" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">inflight_reqs == 0, otherwise pending net req's</text>
+  <text x="1080" y="2082" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">would hold inflight refs forever.  net_stop flushes</text>
+  <text x="1080" y="2095" fill="#94a3b8" font-family="'Segoe UI',Arial,sans-serif" font-size="10px">pending list with -EIO and stops only the sender.</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- Performance footer -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+  <rect x="40" y="2130" width="1420" height="80" rx="10" fill="#052e16" stroke="#22c55e" stroke-width="1"/>
+  <text x="750" y="2148" text-anchor="middle" fill="#4ade80" font-family="'Segoe UI',Arial,sans-serif" font-size="13px" font-weight="bold">End-to-end baseline (Fedora VM kernel 7.0.0+, KVM virtio-net)</text>
+
+  <text x="60" y="2172" fill="#86efac" font-family="monospace" font-size="11px" font-weight="bold">4 MB sync write</text>
+  <text x="240" y="2172" fill="#94a3b8" font-family="monospace" font-size="11px">16.0 ms  →  448 MB/s</text>
+  <text x="540" y="2172" fill="#94a3b8" font-family="monospace" font-size="11px">Primary/Secondary MD5 identical</text>
+  <text x="990" y="2172" fill="#94a3b8" font-family="monospace" font-size="11px">Concurrent sequential stress: clean</text>
+
+  <text x="60" y="2192" fill="#86efac" font-family="monospace" font-size="11px" font-weight="bold">Teardown</text>
+  <text x="240" y="2192" fill="#94a3b8" font-family="monospace" font-size="11px">dmsetup remove returns immediately</text>
+  <text x="540" y="2192" fill="#94a3b8" font-family="monospace" font-size="11px">no INFO: blocked-task warnings</text>
+  <text x="990" y="2192" fill="#94a3b8" font-family="monospace" font-size="11px">module unload OK on both nodes</text>
+
+</svg>

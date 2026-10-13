@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1060 1416">
+<defs>
+<linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+<stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#1e293b"/>
+</linearGradient>
+<marker id="a-drv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#60a5fa"/></marker>
+<marker id="a-pri" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#34d399"/></marker>
+<marker id="a-sec" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#fbbf24"/></marker>
+<marker id="a-bug" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#f87171"/></marker>
+<marker id="a-fix" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2dd4bf"/></marker>
+<marker id="a-dec" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#c4b5fd"/></marker>
+<marker id="a-gr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"/></marker>
+</defs>
+<rect width="1060" height="1416" fill="url(#bg)"/>
+<text x="36" y="44" font-family="'Segoe UI',Arial,sans-serif" font-size="22" font-weight="600" fill="#e2e8f0">#12 — Reproducing: a resync block that failed to land is ACKed as delivered</text>
+<text x="36" y="70" font-family="'Segoe UI',Arial,sans-serif" font-size="13.5" fill="#94a3b8">demo_features.sh f42 (from drbd9-tests/tests/io-errors) · without injection this needed an ~8% race to hit</text>
+<rect x="36" y="92" width="336" height="1268" rx="8" fill="#0b1220" stroke="#243044"/>
+<text x="204" y="116" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="600" fill="#94a3b8">test driver</text>
+<line x1="36" y1="126" x2="372" y2="126" stroke="#243044"/>
+<rect x="382" y="92" width="336" height="1268" rx="8" fill="#0b1220" stroke="#243044"/>
+<text x="550" y="116" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="600" fill="#94a3b8">Primary (node-1)</text>
+<line x1="382" y1="126" x2="718" y2="126" stroke="#243044"/>
+<rect x="728" y="92" width="296" height="1268" rx="8" fill="#0b1220" stroke="#243044"/>
+<text x="876" y="116" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="600" fill="#94a3b8">Secondary (node-2)</text>
+<line x1="728" y1="126" x2="1024" y2="126" stroke="#243044"/>
+<circle cx="204" cy="150" r="8" fill="#e2e8f0"/>
+<line x1="204" y1="158" x2="204" y2="176" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="70" y="176" width="268" height="60" rx="9" fill="#1d4ed8" stroke="#60a5fa"/>
+<text x="204" y="198" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#eff6ff">fault_arm node-2 rate=30</text>
+<text x="204" y="215" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#eff6ff">type=PCACHE_FAULT_RS_DATA_WRITE</text>
+<line x1="204" y1="236" x2="204" y2="262" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="70" y="262" width="268" height="43" rx="9" fill="#1d4ed8" stroke="#60a5fa"/>
+<text x="204" y="284" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#eff6ff">dmsetup message ... force-resync</text>
+<path d="M 204 305 L 204 319 L 550 319 L 550 331" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="416" y="331" width="268" height="60" rx="9" fill="#065f46" stroke="#34d399"/>
+<text x="550" y="353" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ecfdf5">sweep: pcache_bm_clear_range()</text>
+<text x="550" y="370" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#ecfdf5">BEFORE the read (from #8)</text>
+<line x1="550" y1="391" x2="550" y2="417" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="416" y="417" width="268" height="43" rx="9" fill="#065f46" stroke="#34d399"/>
+<text x="550" y="439" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ecfdf5">read backing -&gt; send P_RS_DATA</text>
+<path d="M 550 460 L 550 474 L 876 474 L 876 486" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="742" y="486" width="268" height="77" rx="9" fill="#78350f" stroke="#fbbf24"/>
+<text x="876" y="508" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fef3c7">pcache_handle_rs_data_recv()</text>
+<text x="876" y="525" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fef3c7">pcache_net_write_to_cache()</text>
+<text x="876" y="542" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fef3c7">-&gt; injected failure</text>
+<line x1="876" y1="563" x2="876" y2="589" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<path d="M 876 589 L 1013 614 L 876 640 L 739 614 Z" fill="#4c1d95" stroke="#c4b5fd"/>
+<text x="876" y="613" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11" fill="#ede9fe">send P_RS_ACK anyway?</text>
+<line x1="876" y1="640" x2="876" y2="666" stroke="#f87171" stroke-width="1.6" marker-end="url(#a-bug)"/>
+<text x="884" y="653" text-anchor="start" font-family="'JetBrains Mono',monospace" font-size="10.5" fill="#94a3b8">[before fix]</text>
+<rect x="742" y="666" width="268" height="60" rx="9" fill="#7f1d1d" stroke="#f87171"/>
+<text x="876" y="688" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#fee2e2">ACK sent unconditionally</text>
+<text x="876" y="705" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">the failure is only logged</text>
+<path d="M 876 726 L 876 740 L 550 740 L 550 752" fill="none" stroke="#f87171" stroke-width="1.6" marker-end="url(#a-bug)"/>
+<rect x="416" y="752" width="268" height="77" rx="9" fill="#7f1d1d" stroke="#f87171"/>
+<text x="550" y="774" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">treats the chunk as delivered;</text>
+<text x="550" y="791" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">the bit was already cleared</text>
+<text x="550" y="808" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="700" fill="#fee2e2">neither delivered nor owed</text>
+<path d="M 550 829 L 550 843 L 204 843 L 204 855" fill="none" stroke="#f87171" stroke-width="1.6" marker-end="url(#a-bug)"/>
+<rect x="70" y="855" width="268" height="77" rx="9" fill="#7f1d1d" stroke="#f87171"/>
+<text x="204" y="877" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">result: resync done (dirty=0),</text>
+<text x="204" y="894" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">bm_dirty=0 on both, data differs,</text>
+<text x="204" y="911" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#fee2e2">no metric shows anything wrong</text>
+<path d="M 204 932 L 204 946 L 876 946 L 876 958" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<text x="540" y="940" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="10.5" fill="#94a3b8">[after fix]</text>
+<rect x="742" y="958" width="268" height="60" rx="9" fill="#134e4a" stroke="#2dd4bf" stroke-dasharray="5 3"/>
+<text x="876" y="980" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ccfbf1">fix: no ACK on failure -&gt;</text>
+<text x="876" y="997" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ccfbf1">drop the connection</text>
+<path d="M 876 1018 L 876 1032 L 550 1032 L 550 1044" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="416" y="1044" width="268" height="60" rx="9" fill="#134e4a" stroke="#2dd4bf" stroke-dasharray="5 3"/>
+<text x="550" y="1066" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ccfbf1">the error path restores the range,</text>
+<text x="550" y="1083" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ccfbf1">the reconnect resyncs it</text>
+<path d="M 550 1104 L 550 1118 L 204 1118 L 204 1130" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<rect x="70" y="1130" width="268" height="60" rx="9" fill="#134e4a" stroke="#2dd4bf" stroke-dasharray="5 3"/>
+<text x="204" y="1152" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ccfbf1">F42 asserts fault_count &gt; 0 first,</text>
+<text x="204" y="1169" text-anchor="middle" font-family="'JetBrains Mono','Consolas',monospace" font-size="11.5" font-weight="400" fill="#ccfbf1">then convergence</text>
+<line x1="204" y1="1190" x2="204" y2="1218" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a-gr)"/>
+<circle cx="204" cy="1229" r="11" fill="none" stroke="#e2e8f0" stroke-width="2"/>
+<circle cx="204" cy="1229" r="6" fill="#e2e8f0"/>
+<path d="M 60 1262 h 926 l 14 14 v 72 h -940 v -86 z" fill="#111c31" stroke="#2dd4bf" stroke-dasharray="4 3"/>
+<text x="72" y="1282" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#2dd4bf">DRBD has P_RS_NEG_ACK for exactly this.</text>
+<text x="72" y="1298" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#2dd4bf">Dropping the connection buys the same</text>
+<text x="72" y="1314" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#2dd4bf">safety without a protocol bump, at the</text>
+<text x="72" y="1330" font-family="'Segoe UI',Arial,sans-serif" font-size="11.5" fill="#2dd4bf">cost of redoing the in-flight chunks.</text>
+<text x="36" y="1394" font-family="'Segoe UI',Arial,sans-serif" font-size="12.5" fill="#64748b">Fixed in d50fcd955a5e — a failed resync write must never be acknowledged.</text>
+</svg>
