@@ -7,6 +7,7 @@
 # the NVMe backend — this exercises the cache_dev_req bio path,
 # cmedium dispatch, async data writes, and the FLUSH-boundary drain.
 
+# KO=<path to dm-pcache.ko> (default /root/dm-pcache.ko); target name pcache-dist.
 set -e
 set -u
 set -o pipefail
@@ -14,7 +15,7 @@ set -o pipefail
 # ---- config ----
 CACHE_FILE=${CACHE_FILE:-/var/tmp/pcache-cache.img}
 BACKING_FILE=${BACKING_FILE:-/var/tmp/pcache-backing.img}
-CACHE_SIZE_MB=${CACHE_SIZE_MB:-1024}           # 1 GiB cache (min 512 MiB)
+CACHE_SIZE_MB=${CACHE_SIZE_MB:-2048}           # 2 GiB: 1 GiB of it is the peer-bitmap region
 BACKING_SIZE_MB=${BACKING_SIZE_MB:-2048}       # 2 GiB backing
 DM_NAME=${DM_NAME:-pcache_test}
 MNT=${MNT:-/mnt/pcache_test}
@@ -36,11 +37,9 @@ cleanup() {
 
 log "kernel"
 uname -r
-grep -q '^VERSION = 7' /home/lchen/workspace/linux/Makefile || \
-	log "WARNING: tree version differs from a 7.x kernel — check vermagic"
 
 log "T0: load dm-pcache module"
-modprobe dm-pcache
+insmod "${KO:-/root/dm-pcache.ko}"
 lsmod | grep -q dm_pcache || fail "dm_pcache not loaded"
 dmesg | tail -3
 
@@ -61,7 +60,7 @@ cat /sys/block/$(basename $LOOP_CACHE)/queue/logical_block_size
 log "T2: dmsetup create"
 BACKING_SECTORS=$(blockdev --getsz $LOOP_BACKING)
 dmsetup create $DM_NAME --table \
-	"0 $BACKING_SECTORS pcache $LOOP_CACHE $LOOP_BACKING 4 cache_mode writeback data_crc true"
+	"0 $BACKING_SECTORS pcache-dist $LOOP_CACHE $LOOP_BACKING 4 cache_mode writeback data_crc true"
 
 # ---- T3: status + table ----
 log "T3: dmsetup status + table"
@@ -112,7 +111,7 @@ dmsetup remove $DM_NAME
 dmesg | grep -i pcache | tail -5
 
 dmsetup create $DM_NAME --table \
-	"0 $BACKING_SECTORS pcache $LOOP_CACHE $LOOP_BACKING 4 cache_mode writeback data_crc true"
+	"0 $BACKING_SECTORS pcache-dist $LOOP_CACHE $LOOP_BACKING 4 cache_mode writeback data_crc true"
 dmsetup status $DM_NAME
 mount /dev/mapper/$DM_NAME $MNT
 [ -f $MNT/data1 ] || fail "data1 missing after dmsetup recreate"

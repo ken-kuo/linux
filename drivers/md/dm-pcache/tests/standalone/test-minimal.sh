@@ -1,6 +1,8 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0
-# Minimum-viable dm-pcache test. Each step has a hard timeout so we get
+# Minimum-viable dm-pcache test (BIO cache on a loop device).
+# KO=<path to dm-pcache.ko> (default /root/dm-pcache.ko); target name pcache-dist.
+# Each step has a hard timeout so we get
 # diagnostic signal even if a kernel path wedges. Run as root.
 
 set -u
@@ -64,12 +66,12 @@ for l in $(losetup -j /var/tmp/pcache-mini-cache.img | cut -d: -f1) \
 done
 rmmod dm_pcache 2>/dev/null || true
 
-T 5  "load module"      modprobe dm-pcache
+T 5  "load module"      insmod "${KO:-/root/dm-pcache.ko}"
 
 # ---- create backing files (smallest viable) ----
 CACHE_FILE=/var/tmp/pcache-mini-cache.img
 BACKING_FILE=/var/tmp/pcache-mini-backing.img
-T 10 "make cache file (512M)"    truncate -s 512M $CACHE_FILE
+T 10 "make cache file (2G)"    truncate -s 2G $CACHE_FILE
 T 10 "make backing file (1G)"    truncate -s 1G $BACKING_FILE
 T 10 "losetup cache"             losetup -f --show $CACHE_FILE
 LOOP_CACHE=$(losetup -j $CACHE_FILE | cut -d: -f1)
@@ -79,7 +81,7 @@ echo "cache=$LOOP_CACHE  backing=$LOOP_BACKING"
 
 BACKING_SECTORS=$(blockdev --getsz $LOOP_BACKING)
 T 30 "dmsetup create" dmsetup create pcache_mini --table \
-	"0 $BACKING_SECTORS pcache $LOOP_CACHE $LOOP_BACKING 4 cache_mode writeback data_crc true"
+	"0 $BACKING_SECTORS pcache-dist $LOOP_CACHE $LOOP_BACKING 4 cache_mode writeback data_crc true"
 
 T 5  "dmsetup status"  dmsetup status pcache_mini
 
